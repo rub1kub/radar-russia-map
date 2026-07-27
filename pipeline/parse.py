@@ -412,17 +412,26 @@ def candidate_phrases(body: str) -> list[str]:
     """Фрагменты, в которых geocode ищет топонимы.
 
     Телеграфный формат кладет места на отдельные строки, Локатор и РВК —
-    через запятую в одной строке. Режем и по строкам, и по запятым.
+    через запятую в одной строке. Официальные ленты пишут одним длинным
+    предложением с двоеточием: «Курская область: авиационная опасность».
+    Режем по строкам, запятым, двоеточиям и точкам.
     """
     phrases: list[str] = []
     for line in SPLIT_LINE_RE.split(body):
         line = line.strip(" .!?—-•")
         if not line:
             continue
-        for chunk in re.split(r"[,·]| - | — ", line):
-            chunk = chunk.strip(" .!?—-•​")
-            # Отбрасываем куски, состоящие только из служебной лексики.
-            if len(chunk) < 3 or len(chunk) > PHRASE_MAX_LEN:
+        for chunk in re.split(r"[,;:·]|(?<=[а-яё])\.\s+| - | — ", line):
+            if chunk is None:
+                continue
+            chunk = chunk.strip(" .!?—-•\u200b")
+            if len(chunk) < 3:
+                continue
+            # Порог сохранён: в куске длиннее него посторонних слов больше,
+            # чем пользы. Официальный формат чинится не отменой порога, а
+            # добавленным разбиением по двоеточию и точке — «Курская область:
+            # авиационная опасность» распадается на короткие куски сама.
+            if len(chunk) > PHRASE_MAX_LEN:
                 continue
             phrases.append(chunk)
     return phrases
