@@ -160,8 +160,20 @@ def build_state() -> dict:
         # если горит любое поселение внутри него.
         for zone_id in event["zone_path"]:
             bucket = zone_counts.setdefault(
-                zone_id, {"active": 0, "max_severity": 0, "last_active": None})
+                zone_id,
+                {"active": 0, "own": 0, "max_severity": 0, "own_severity": 0,
+                 "last_active": None})
             bucket["active"] += 1
+            # Собственные события зоны — те, что названы именно ею, а не
+            # унаследованы от района внутри. Регион с собственной тревогой
+            # закрашивается на любом масштабе, иначе оповещение «по области»
+            # оставляло на карте одинокую метку и ни одной закрашенной зоны.
+            if zone_id == event["zone_id"]:
+                bucket["own"] += 1
+                # Свой уровень отдельно от общего: иначе красный район внутри
+                # красил бы весь регион, хотя по области объявлена жёлтая
+                # опасность, а красное — точечное и уже нарисовано районом.
+                bucket["own_severity"] = max(bucket["own_severity"], event["severity"])
             bucket["max_severity"] = max(bucket["max_severity"], event["severity"])
             if not bucket["last_active"] or event["last_seen_at"] > bucket["last_active"]:
                 bucket["last_active"] = event["last_seen_at"]
@@ -249,6 +261,8 @@ def event_sources(event_id: str):
         seen.add(row["source_key"])
         stamp = repost_key(strip_footer(row["text"] or ""))
         repost = stamp is not None and said_first.setdefault(stamp, row["source_key"]) != row["source_key"]
+        # Список собирается по времени вперёд — иначе перепостом окажется
+        # оригинал, — а наружу отдаётся в обратном порядке: свежее сверху.
         items.append({
             "source_key": row["source_key"],
             "role": row["role"],
@@ -257,6 +271,7 @@ def event_sources(event_id: str):
             "repost": repost,
             "text": " ".join(row["text"].split())[:220],
         })
+    items.reverse()
     return {"event_id": event_id, "sources": items, "distinct": len(seen)}
 
 

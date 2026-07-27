@@ -1158,13 +1158,30 @@ button {
 
 .analytics-head h2 { margin: 0; font-size: 16px; }
 
-.analytics-head button {
-  margin-left: auto;
-  border: 0;
-  background: none;
-  color: rgba(210, 216, 210, 0.65);
-  cursor: pointer;
+/* Кнопка выхода стоит в углу экрана, а не в шапке карточки: карточка
+   прокручивается, и на длинном списке источников крестик уезжал вверх. */
+.analytics-close {
+  position: fixed;
+  top: var(--edge);
+  right: var(--edge);
+  z-index: 21;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(20, 24, 22, 0.92);
+  backdrop-filter: blur(6px);
+  color: rgba(224, 230, 224, 0.8);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.analytics-close:hover {
+  background: rgba(34, 39, 36, 0.96);
+  color: rgba(240, 245, 240, 0.95);
 }
 
 .analytics-body { display: flex; flex-direction: column; gap: 22px; }

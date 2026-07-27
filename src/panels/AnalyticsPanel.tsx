@@ -52,14 +52,27 @@ export function AnalyticsPanel({ open, onClose }: Props) {
   const maxZone = Math.max(1, ...(zones?.top_zones ?? []).map((item) => item.events));
 
   return (
-    <div className="analytics-overlay" role="dialog" aria-label="Аналитика">
+    // Клик мимо карточки закрывает окно — обычное поведение модального окна.
+    // Проверка на сам оверлей обязательна: без неё закрывало бы и нажатие
+    // внутри карточки, всплывшее до этого обработчика.
+    <div
+      className="analytics-overlay"
+      role="dialog"
+      aria-label="Аналитика"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      {/* Крестик вынесен из карточки и держится в углу экрана: карточка
+          прокручивается, и вместе с ней уезжала единственная кнопка выхода. */}
+      <button className="analytics-close" type="button" onClick={onClose} aria-label="Закрыть">
+        <X size={18} aria-hidden="true" />
+      </button>
+
       <div className="analytics-card">
         <div className="analytics-head">
           <BarChart3 size={17} aria-hidden="true" />
           <h2>Аналитика</h2>
-          <button type="button" onClick={onClose} aria-label="Закрыть">
-            <X size={17} aria-hidden="true" />
-          </button>
         </div>
 
         {failed ? (

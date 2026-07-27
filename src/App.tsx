@@ -258,11 +258,21 @@ function createRegionStyle(
   zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>
 ) {
   return (feature: FeatureLike, resolution: number) => {
-    const paintHere = resolutionToZoom(resolution) < DISTRICT_FILL_ZOOM;
     const selected = selectedKeyRef.current === featureKey(feature);
-    const zone = paintHere ? zoneStateRef.current.get(String(feature.get("id"))) : undefined;
+    const active = zoneStateRef.current.get(String(feature.get("id")));
+    // Ниже порога регион закрашивается по любой тревоге внутри — это обзор.
+    // Выше порога закрашивают районы, но регион со своим собственным
+    // оповещением («опасность по области») закрашивается и здесь: иначе от
+    // него на карте оставалась одна метка и ни одной выделенной зоны.
+    const overview = resolutionToZoom(resolution) < DISTRICT_FILL_ZOOM;
+    const ownHere = (active?.own ?? 0) > 0;
+    const zone = overview || ownHere ? active : undefined;
     const fillColor = zone
-      ? severityColor(zone.max_severity, zoneFillAlpha(zone.active))
+      ? overview
+        ? severityColor(zone.max_severity, zoneFillAlpha(zone.active))
+        // Вблизи регион красится только своим уровнем: точечное красное уже
+        // нарисовано районом поверх, и растягивать его на всю область нельзя.
+        : severityColor(zone.own_severity, zoneFillAlpha(zone.own))
       : selected
         ? "rgba(228, 178, 93, 0.055)"
         : "rgba(255, 255, 255, 0.006)";
@@ -667,9 +677,10 @@ export default function App() {
   const [onlyVisible, setOnlyVisible] = useState(true);
   const [levelFilter, setLevelFilter] = useState<number[]>([]);
   const [threatFilter, setThreatFilter] = useState<string[]>([]);
-  const [rightOpen, setRightOpen] = useState(
-    () => !window.matchMedia(MOBILE_QUERY).matches
-  );
+  // Лента открыта всегда: ради неё сюда и приходят. Свернуть её можно
+  // стрелкой, а вот открывать закрытую панель, чтобы узнать обстановку, —
+  // лишний шаг на каждом заходе.
+  const [rightOpen, setRightOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -776,6 +787,12 @@ export default function App() {
     setSelected(feature ? selectedFromFeature(feature) : emptySelected);
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
+    // Выбор места — это вопрос «что там происходит», и ответ лежит в ленте.
+    // Со свёрнутой панелью нажатие на район не показывало ничего.
+    if (feature) {
+      setRightOpen(true);
+      if (window.matchMedia(MOBILE_QUERY).matches) setLeftOpen(false);
+    }
   }, []);
 
   useEffect(() => {

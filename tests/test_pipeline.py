@@ -952,3 +952,26 @@ def test_official_bump_stays_inside_its_band(text, signal):
     assert observation.signal_type == signal
     low, high = BANDS[signal]
     assert low <= observation.severity <= high
+
+
+@pytest.mark.parametrize("text", [
+    "‼️ ВНИМАНИЕ! Идет массовая атака на регионы России. Для оперативного "
+    "получения всех экстренных оповещений просьба подписаться на канал "
+    "«Рупор России» и включить уведомления. ПОДПИСАТЬСЯ: https://t.me/x",
+    "Этот канал спас миллионы жизней оповещая о тревогах, подпишитесь на канал",
+])
+def test_channel_advertisement_is_not_an_alert(text):
+    """Объявление о самом канале — не оповещение.
+
+    Места в нём нет, и на карту оно попадало по региону источника: красная
+    метка над областью, под которой не выделено ни одного района.
+    """
+    assert parse(text).relevant is False
+
+
+def test_subscription_footer_does_not_kill_a_real_alert():
+    """Обычная подпись в конце — не реклама: её снимает strip_footer."""
+    observation = parse("Балашовский район Саратовская область Фиксация БПЛА\n\n"
+                        "❗️Радар Саратов - @rada_saratov | Подписаться")
+    assert observation.relevant
+    assert observation.signal_type == "detection"

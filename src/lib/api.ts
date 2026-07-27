@@ -25,7 +25,11 @@ export type RadarEvent = {
 
 export type ZoneCount = {
   active: number;
+  /** Сколько событий названо самой этой зоной, а не унаследовано от вложенных. */
+  own: number;
   max_severity: number;
+  /** Уровень только собственных событий зоны. */
+  own_severity: number;
   last_active: string;
   level?: "region" | "district" | "place";
   source_id?: string;
