@@ -36,11 +36,24 @@ from config import sources_from_env  # noqa: E402
 from .db import connect  # noqa: E402
 from .fuse import Event, Fuser  # noqa: E402
 from .geocode import Geocoder  # noqa: E402
+from .networks import load_networks  # noqa: E402
 from .parse import parse  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
+
+
+def resolve_networks(connection) -> dict[str, str | None]:
+    """Сеть канала: сначала вычисленная по совпадениям, потом из конфига.
+
+    Шаблон названия ловит только явные семейства клонов. Каналы одной
+    редакции с разными названиями видно лишь по тому, что они дословно
+    перепечатывают друг друга.
+    """
+    measured = load_networks(connection)
+    return {key: measured.get(key) or NETWORKS.get(key) for key in
+            set(measured) | set(NETWORKS)}
 
 DEFAULT_TIER = "regional"
 

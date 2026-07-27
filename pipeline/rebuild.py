@@ -19,6 +19,7 @@ from config import sources_from_env  # noqa: E402
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
 from .geocode import Geocoder, Resolved  # noqa: E402
+from .networks import load_networks  # noqa: E402
 from .parse import parse  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 from .source_region import build_fallback  # noqa: E402
@@ -26,6 +27,18 @@ from .source_region import build_fallback  # noqa: E402
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
 USERNAME_TO_KEY = {source.username: source.key for source in sources_from_env()}
+
+
+def resolve_networks(connection) -> dict[str, str | None]:
+    """Сеть канала: сначала вычисленная по совпадениям, потом из конфига.
+
+    Шаблон названия ловит только явные семейства клонов. Каналы одной
+    редакции с разными названиями видно лишь по тому, что они дословно
+    перепечатывают друг друга.
+    """
+    measured = load_networks(connection)
+    return {key: measured.get(key) or NETWORKS.get(key) for key in
+            set(measured) | set(NETWORKS)}
 
 
 def import_jsonl(connection, raw_dir: Path) -> int:
@@ -63,6 +76,7 @@ def rebuild(connection) -> dict:
     reset_derived(connection)
     geocoder = Geocoder(connection)
     fallback = build_fallback(connection, sources_from_env())
+    networks = resolve_networks(connection)
     fuser = Fuser()
 
     rows = connection.execute(
@@ -100,7 +114,7 @@ def rebuild(connection) -> dict:
                 raw_id=row["id"],
                 source_key=row["source_key"],
                 tier=TIERS.get(row["source_key"], "regional"),
-                network=NETWORKS.get(row["source_key"]),
+                network=networks.get(row["source_key"]),
                 moment=moment,
                 observation=observation,
                 zone_path=geocoder.zone_path(item.zone_id),
