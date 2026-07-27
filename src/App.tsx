@@ -1331,15 +1331,9 @@ export default function App() {
           className={`sidebar ${leftOpen ? "" : "is-collapsed"}`}
           aria-label="Панель управления картой"
         >
-          <button
-            className="panel-collapse"
-            type="button"
-            onClick={() => setLeftOpen(false)}
-            aria-label="Свернуть панель"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </button>
+
           <section className="tool-section">
+            <div className="search-row">
             <label className="search-box" htmlFor="map-search">
               <Search size={18} aria-hidden="true" />
               <input
@@ -1371,6 +1365,15 @@ export default function App() {
                 }}
               />
             </label>
+            <button
+              className="panel-collapse"
+              type="button"
+              onClick={() => setLeftOpen(false)}
+              aria-label="Свернуть панель"
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+            </button>
+            </div>
             {suggestions.length > 0 ? (
               <div className="suggestions" id="search-suggestions" role="listbox" aria-label="Найденные объекты">
                 {suggestions.map((item, index) => (
@@ -1392,14 +1395,15 @@ export default function App() {
           </section>
 
           <section className="tool-section">
-            <div className="severity-legend">
+            <div
+              className="severity-legend"
+              title="Чем насыщеннее заливка, тем больше активных сообщений в зоне. Незалитая зона — сообщений нет."
+            >
               <span><i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Ракета, взрыв, ПВО</span>
               <span><i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога</span>
               <span><i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность</span>
             </div>
-            <p className="legend-note">
-              Чем насыщеннее заливка, тем больше активных сообщений в зоне. Незалитая зона — сообщений нет.
-            </p>
+
             <button className="ghost-button" type="button" onClick={resetMap}>
               <Home size={17} aria-hidden="true" />
               <span>Сбросить вид</span>
@@ -1435,11 +1439,14 @@ export default function App() {
             </div>
           </details>
 
-          <p className="disclaimer">
-            Карта неофициальная и составлена по публичным сообщениям. Она может
-            опаздывать и ошибаться. Не принимайте по ней решения о личной
-            безопасности — следуйте указаниям экстренных служб.
-          </p>
+          <details className="disclaimer">
+            <summary>Неофициальная карта · о данных</summary>
+            <p>
+              Составлена по публичным сообщениям, может опаздывать и ошибаться.
+              Не принимайте по ней решения о личной безопасности — следуйте
+              указаниям экстренных служб.
+            </p>
+          </details>
         </aside>
 
         <section className="map-panel" aria-label="Интерактивная карта">
