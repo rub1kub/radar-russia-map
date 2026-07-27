@@ -44,11 +44,11 @@ class Source:
 
 # Все 12 каналов папки "Радары", проверены через folders.py 27.07.2026.
 SOURCES: list[Source] = [
-    Source("lpr1_treugolnik", "lpr1_treugolnik", "Lpr 1", "federal", 924_432),
+    Source("lpr1_treugolnik", "lpr1_treugolnik", "Lpr 1", "federal", 924_432, network="lpr1"),
     Source("vrv_radar", "vrv_radar", "Радар ВРВ", "federal", 269_737),
     Source("locatorru", "locatorru", "Локатор России", "federal", 197_377),
     Source("radar_rvk", "radar_rvk", "Радар РВК", "federal", 129_580),
-    Source("lpr1_krasnodar", "lpr1_Krasnodar_alarm", "Краснодарский край оповещения", "regional", 95_761),
+    Source("lpr1_krasnodar", "lpr1_Krasnodar_alarm", "Краснодарский край оповещения", "regional", 95_761, network="lpr1"),
     Source("pra_vo_zn", "PRA_VO_ZN", "ПРАВО ЗНАТЬ", "mixed", 49_602),
     Source("rschs_krd_adygea", "radar_rschs_krd_adygea", "ЧП Кубань и Адыгея", "mixed", 17_884),
     Source("kubanoidici", "kubanoidici24838", "Кубанский Вестник", "regional", 9_909),
@@ -162,6 +162,38 @@ SOURCES: list[Source] = [
     Source("radarrn136", "radarRN136", "ВОРОНЕЖСКИЙ РАДАР", "regional", 2603, region="voronezh", network=None),
     Source("radar_yaroslavl", "radar_yaroslavl", "Радар Ярославль", "regional", 51829, region="yaroslavl", network=None),
     Source("radaryr", "radarYR", "РАДАР. Ярославль. Кострома. Иваново", "regional", 4797, region="yaroslavl", network=None),
+
+    # --- Официальные каналы регионов и федеральный МЧС, 28.07.2026 ----------
+    # Губернаторы и оперштабы объявляют тревогу и подтверждают последствия —
+    # это тот слой, который отличает «канал написал» от «власть объявила».
+    Source("mchs_official", "mchs_official", "МЧС России", "official", 78958, region="other", network=None),
+    Source("mchs_kuban", "mchs_kuban", "МЧС Краснодарского края", "official", 7142, region="krasnodar", network=None),
+    Source("opershtab23", "opershtab23", "Оперативный штаб — Краснодарский край", "official", 51377, region="krasnodar", network=None),
+    Source("vvgladkov", "vvgladkov", "Гладков (Белгородская область)", "official", 433387, region="belgorod", network=None),
+    Source("gusev_36", "gusev_36", "Гусев (Воронежская область)", "official", 127080, region="voronezh", network=None),
+    Source("rostovregion", "RostovRegion", "Правительство Ростовской области", "official", 13906, region="rostov", network=None),
+    Source("aksenov82", "Aksenov82", "Аксёнов (Крым)", "official", 141832, region="crimea", network=None),
+    Source("razvozhaev", "razvozhaev", "Развожаев (Севастополь)", "official", 220990, region="sevastopol", network=None),
+    Source("sevastopolofficial", "sevastopolofficial", "Правительство Севастополя", "official", 13025, region="sevastopol", network=None),
+    # Не радар, а режим проезда по мосту: перекрытия идут рядом с угрозой и
+    # разбираются как инфраструктурное сообщение, а не как тревога.
+    Source("most_official", "most_official", "Крымский мост: оперативная информация", "official", 478182, region="crimea", network=None),
+
+    # --- Федеральные агрегаторы --------------------------------------------
+    Source("kupolrussia", "kupolrussia", "Купол России", "federal", 212299, region="other", network=None),
+    # Ветки сети Lpr 1 по регионам. Сеть распознаётся графом перепостов, но
+    # здесь она названа явно: одному оператору один голос, сколько бы веток
+    # он ни завёл.
+    Source("lpralarm", "LPRalarm", "LPR оповещения", "federal", 156724, region="other", network="lpr1"),
+    Source("lpr1_bryansk", "lpr1_Bryansk_alarm", "Брянская область оповещения", "regional", 43106, region="bryansk", network="lpr1"),
+    Source("lpr1_kursk", "lpr1_Kursk_alarm", "Курская область оповещения", "regional", 25211, region="kursk", network="lpr1"),
+    Source("lpr1_rostov", "lpr1_Rostov_alarm", "Ростовская область оповещения", "regional", 50415, region="rostov", network="lpr1"),
+    Source("lpr1_crimea", "lpr1_Crimea_Alarm", "Крым и Севастополь оповещения", "regional", 195617, region="crimea", network="lpr1"),
+    Source("lpr1_kherson", "lpr1_Kherson_alarm", "Херсонская и Запорожская области оповещения", "regional", 26970, region="kherson", network="lpr1"),
+
+    # --- Региональные ленты -------------------------------------------------
+    Source("radar_rostov", "radar_rostov", "Радар Р.О | Ростовская область", "mixed", 24950, region="rostov", network=None),
+    Source("radar_tatarstann", "radar_tatarstann", "Радар Татарстан", "regional", 44034, region="kazan", network=None),
 ]
 
 

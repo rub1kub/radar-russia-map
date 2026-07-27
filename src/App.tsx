@@ -44,6 +44,7 @@ import {
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
+import { freshness, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
 import type { HistoryDay } from "./lib/api";
 import {
@@ -217,12 +218,6 @@ function severityLevel(severity: number): number {
   return 4;
 }
 
-function zoneFillAlpha(active: number): number {
-  if (active >= 5) return 0.42;
-  if (active >= 3) return 0.3;
-  return 0.19;
-}
-
 const ICON_FADE_MS = 3 * 60 * 60 * 1000;
 const iconStyleCache = new globalThis.Map<string, Style>();
 
@@ -255,7 +250,8 @@ function createEventIconStyle(feature: FeatureLike, resolution: number) {
 
 function createRegionStyle(
   selectedKeyRef: React.MutableRefObject<string | null>,
-  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>
+  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>,
+  momentRef: React.MutableRefObject<number>
 ) {
   return (feature: FeatureLike, resolution: number) => {
     const selected = selectedKeyRef.current === featureKey(feature);
@@ -267,12 +263,19 @@ function createRegionStyle(
     const overview = resolutionToZoom(resolution) < DISTRICT_FILL_ZOOM;
     const ownHere = (active?.own ?? 0) > 0;
     const zone = overview || ownHere ? active : undefined;
+    const fade = zone ? freshness(zone.last_active, momentRef.current) : 1;
     const fillColor = zone
       ? overview
-        ? severityColor(zone.max_severity, zoneFillAlpha(zone.active))
+        // Вес по охвату: регион, подсвеченный одной фиксацией в одном
+        // районе, почти прозрачен, а объявленная по всей области опасность
+        // закрашена в полную силу.
+        ? severityColor(
+            zone.max_severity,
+            zoneFillAlpha(zone.active) * regionWeight(zone.own, zone.active) * fade
+          )
         // Вблизи регион красится только своим уровнем: точечное красное уже
         // нарисовано районом поверх, и растягивать его на всю область нельзя.
-        : severityColor(zone.own_severity, zoneFillAlpha(zone.own))
+        : severityColor(zone.own_severity, zoneFillAlpha(zone.own) * fade)
       : selected
         ? "rgba(228, 178, 93, 0.055)"
         : "rgba(255, 255, 255, 0.006)";
@@ -297,7 +300,8 @@ function createRegionStyle(
 
 function createDistrictStyle(
   selectedKeyRef: React.MutableRefObject<string | null>,
-  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>
+  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>,
+  momentRef: React.MutableRefObject<number>
 ) {
   return (feature: FeatureLike, resolution: number) => {
     const paintHere = resolutionToZoom(resolution) >= DISTRICT_FILL_ZOOM;
@@ -305,12 +309,14 @@ function createDistrictStyle(
     const zone = paintHere ? zoneStateRef.current.get(String(feature.get("id"))) : undefined;
 
     if (zone) {
+      // Свежая тревога горит ярко, часовой давности — вполовину тусклее.
+      const fade = freshness(zone.last_active, momentRef.current);
       return new Style({
         fill: new Fill({
-          color: severityColor(zone.max_severity, zoneFillAlpha(zone.active))
+          color: severityColor(zone.max_severity, zoneFillAlpha(zone.active) * fade)
         }),
         stroke: new Stroke({
-          color: severityColor(zone.max_severity, 0.62),
+          color: severityColor(zone.max_severity, 0.62 * fade),
           width: 1
         })
       });
@@ -633,6 +639,8 @@ export default function App() {
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
+  // Момент, от которого считается свежесть заливки: сейчас или срез истории.
+  const zoneMomentRef = useRef<number>(Date.now());
   const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
   const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
@@ -914,6 +922,9 @@ export default function App() {
       index.set(zone.source_id, zone);
     }
     zoneStateRef.current = index;
+    zoneMomentRef.current = new Date(
+      historyAt ?? radarState?.generated_at ?? Date.now()
+    ).getTime();
 
     // Значки ставятся только там, где у сообщения есть конкретная точка:
     // фиксация, сбитие, взрыв, отбой. Площадная опасность — это заливка.
@@ -1067,14 +1078,14 @@ export default function App() {
       source: regionSource,
       visible: layers.regions,
       zIndex: 28,
-      style: createRegionStyle(selectedKeyRef, zoneStateRef)
+      style: createRegionStyle(selectedKeyRef, zoneStateRef, zoneMomentRef)
     });
     const districtLayer = new VectorLayer({
       source: districtSource,
       visible: layers.districts,
       zIndex: 20,
       minZoom: 4.15,
-      style: createDistrictStyle(selectedKeyRef, zoneStateRef)
+      style: createDistrictStyle(selectedKeyRef, zoneStateRef, zoneMomentRef)
     });
 
     basemapLayerRef.current = basemapLayer;
