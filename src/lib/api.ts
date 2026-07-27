@@ -36,6 +36,9 @@ export type RadarState = {
   generated_at: string;
   last_message_at: string;
   data_age_sec: number;
+  last_event_at: string | null;
+  /** Отставание разбора от сбора. Растёт, если конвейер встал. */
+  pipeline_lag_sec: number | null;
   stale: boolean;
   events: RadarEvent[];
   zone_counts: Record<string, ZoneCount>;

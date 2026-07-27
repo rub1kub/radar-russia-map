@@ -101,6 +101,10 @@ const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
 const RIVER_NETWORK_MAJOR_ZOOM = 4.8;
 const RIVER_NETWORK_DETAIL_ZOOM = 7.6;
 const URBAN_AREAS_ZOOM = 4.3;
+// Полный набор районов — только когда пользователь действительно подошёл
+// к их масштабу. Порог 4.1 был ошибкой: стартовый вид 4.15 уже выше него,
+// и 14.4 МБ качались сразу, то есть лениво только на словах.
+const DISTRICTS_ZOOM = 5.0;
 const ROADS_ZOOM = 4.65;
 const RAILWAYS_ZOOM = 4.8;
 const DISTRICT_SELECTION_ZOOM = 5.4;
@@ -116,7 +120,7 @@ const DESKTOP_OVERVIEW_ZOOM = 4.15;
 const MOBILE_OVERVIEW_ZOOM = 3.3;
 const MAX_SUGGESTIONS = 10;
 const MOBILE_QUERY = "(max-width: 760px)";
-const STATE_POLL_MS = 10_000;
+const STATE_POLL_MS = 25_000;
 
 
 const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: string }> = [
@@ -530,12 +534,13 @@ async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
     return response.json();
   };
 
-  const [regions, districts] = await Promise.all([
-    read("/data/regions.json"),
-    read("/data/districts.json")
-  ]);
+  // Районы сюда не входят намеренно: 14.4 МБ на 2327 полигонов, из которых
+  // на стартовом масштабе не рисуется ни один. Они подгружаются по зуму.
+  const regions = await read(`${API_BASE}/api/v1/geo/regions.geojson`).catch(() =>
+    read("/data/regions.json")
+  );
 
-  return { regions, districts };
+  return { regions, districts: { type: "FeatureCollection", features: [] } };
 }
 
 function fitFeature(map: OlMap, feature: FeatureLike, maxZoom: number) {
@@ -605,6 +610,7 @@ export default function App() {
   const urbanAreasLoadedRef = useRef(false);
   const roadsLoadedRef = useRef(false);
   const railwaysLoadedRef = useRef(false);
+  const districtsLoadedRef = useRef(false);
   const regionLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
@@ -740,9 +746,7 @@ export default function App() {
 
     const pull = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/v1/state`);
-        if (!response.ok) throw new Error(String(response.status));
-        const payload = (await response.json()) as RadarState;
+        const payload = await api.state();
         if (!active) return;
         setRadarState(payload);
         setApiOnline(true);
@@ -752,10 +756,34 @@ export default function App() {
     };
 
     void pull();
+
+    // Push с сервера. Опрос остаётся подстраховкой: если сокет не поднялся
+    // или оборвался, карта продолжает обновляться, просто реже.
+    let socket: WebSocket | null = null;
+    try {
+      socket = new WebSocket(`${API_BASE.replace(/^http/, "ws")}/api/v1/stream`);
+      socket.onmessage = (event) => {
+        if (!active) return;
+        try {
+          const payload = JSON.parse(event.data) as RadarState & { type?: string };
+          if (payload.type === "state") {
+            setRadarState(payload);
+            setApiOnline(true);
+          }
+        } catch {
+          // Битый кадр пропускаем: следующий придёт через несколько секунд.
+        }
+      };
+      socket.onerror = () => socket?.close();
+    } catch {
+      socket = null;
+    }
+
     const timer = window.setInterval(pull, STATE_POLL_MS);
     return () => {
       active = false;
       window.clearInterval(timer);
+      socket?.close();
     };
   }, []);
 
@@ -1036,7 +1064,17 @@ export default function App() {
           dataProjection: "EPSG:4326",
           featureProjection: "EPSG:3857"
         }) as Feature<Geometry>[];
+        if (source === districtSource) {
+          // Частичный набор активных зон уступает место полному.
+          source.clear();
+          features.forEach((feature) => {
+            feature.set("kind", "district");
+            featureIndexRef.current.set(featureKey(feature), feature);
+          });
+          window.clearInterval(activeDistrictsTimer);
+        }
         source.addFeatures(features);
+        if (source === districtSource) districtLayerRef.current?.changed();
       } catch (reason: unknown) {
         loadedRef.current = false;
         if (!disposed) {
@@ -1063,6 +1101,9 @@ export default function App() {
       if (currentLayers.rivers && zoom >= RIVER_NETWORK_DETAIL_ZOOM) {
         void loadVectorLayer("/data/river-network-detail.json", riverNetworkDetailSource, riverNetworkDetailLoadedRef, "рек");
       }
+      if (currentLayers.districts && zoom >= DISTRICTS_ZOOM) {
+        void loadVectorLayer("/data/districts.json", districtSource, districtsLoadedRef, "районов");
+      }
       if (currentLayers.urbanAreas && zoom >= URBAN_AREAS_ZOOM) {
         void loadVectorLayer("/data/urban-areas.json", urbanAreaSource, urbanAreasLoadedRef, "городских контуров");
       }
@@ -1073,6 +1114,36 @@ export default function App() {
         void loadVectorLayer("/data/railways.json", railwaySource, railwaysLoadedRef, "железных дорог");
       }
     };
+
+    // Активные районы приходят отдельным лёгким запросом, чтобы подсветка
+    // была видна сразу, не дожидаясь полного набора полигонов.
+    const loadActiveDistricts = async () => {
+      if (districtsLoadedRef.current) return;
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/geo/active?levels=district`);
+        if (!response.ok) return;
+        const data = (await response.json()) as GeoJsonFeatureCollection;
+        if (disposed || districtsLoadedRef.current) return;
+
+        const known = new Set(districtSource.getFeatures().map((item) => String(item.get("id"))));
+        const fresh = (geoJson.readFeatures(data, {
+          dataProjection: "EPSG:4326",
+          featureProjection: "EPSG:3857"
+        }) as Feature<Geometry>[]).filter((item) => !known.has(String(item.get("id"))));
+
+        fresh.forEach((feature) => {
+          feature.set("kind", "district");
+          featureIndexRef.current.set(featureKey(feature), feature);
+        });
+        districtSource.addFeatures(fresh);
+        districtLayerRef.current?.changed();
+      } catch {
+        // Подсветка появится, когда подгрузится полный набор районов.
+      }
+    };
+
+    void loadActiveDistricts();
+    const activeDistrictsTimer = window.setInterval(loadActiveDistricts, 60_000);
 
     loadLazyLayersRef.current = maybeLoadLazyLayers;
     const viewResolutionKey = map.getView().on("change:resolution", () => {
@@ -1123,6 +1194,7 @@ export default function App() {
 
     return () => {
       disposed = true;
+      window.clearInterval(activeDistrictsTimer);
       resizeObserver.disconnect();
       unByKey(viewResolutionKey);
       map.setTarget(undefined);
@@ -1145,6 +1217,7 @@ export default function App() {
       urbanAreasLoadedRef.current = false;
       roadsLoadedRef.current = false;
       railwaysLoadedRef.current = false;
+      districtsLoadedRef.current = false;
       loadLazyLayersRef.current = null;
       layersRef.current = null;
       eventIconLayerRef.current = null;

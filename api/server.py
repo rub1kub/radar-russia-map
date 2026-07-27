@@ -41,10 +41,13 @@ from api.limits import (
     env_flag,
     env_int,
 )
+from api.geometry import router as geo_router
 from pipeline.db import DB_PATH
 from pipeline.timeutil import now_utc, parse_utc
 
 app = FastAPI(title="Radar API", version="1.0")
+
+app.include_router(geo_router)
 
 ACTIVE_WINDOW = timedelta(hours=6)
 
@@ -93,6 +96,17 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
         return [dict(row) for row in connection.execute(sql, params)]
 
 
+def latest_event_moment() -> datetime | None:
+    """Когда конвейер в последний раз доводил сообщение до события.
+
+    Сбор и разбор — разные процессы. Если разбор встал, сообщения продолжают
+    копиться, и возраст по raw_messages показывал бы свежесть, которой нет.
+    """
+    rows = query("SELECT MAX(contributed_at) AS m FROM event_sources")
+    stamp = rows[0]["m"] if rows and rows[0]["m"] else None
+    return parse_utc(stamp) if stamp else None
+
+
 def latest_moment() -> datetime:
     """Момент последнего сообщения — НЕ «сейчас».
 
@@ -127,7 +141,11 @@ def build_state() -> dict:
     """Текущая обстановка: активные события и счетчики по зонам."""
     now = now_utc()
     last_message = latest_moment()
+    last_event = latest_event_moment()
     data_age_sec = max(0, int((now - last_message).total_seconds()))
+    pipeline_lag_sec = (
+        max(0, int((last_message - last_event).total_seconds())) if last_event else None
+    )
     events = [row for row in event_rows(now - ACTIVE_WINDOW) if row["status"] != "resolved"]
 
     zone_counts: dict[str, dict] = {}
@@ -161,7 +179,10 @@ def build_state() -> dict:
         "last_message_at": last_message.isoformat(),
         # Клиент обязан показать, что картинка устарела, если сбор встал.
         "data_age_sec": data_age_sec,
-        "stale": data_age_sec > 900,
+        "last_event_at": last_event.isoformat() if last_event else None,
+        # Отставание разбора от сбора. Растёт, если incremental не работает.
+        "pipeline_lag_sec": pipeline_lag_sec,
+        "stale": data_age_sec > 900 or (pipeline_lag_sec or 0) > 900,
         "events": events,
         "zone_counts": zone_counts,
         "active_events": len(events),
