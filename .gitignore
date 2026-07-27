@@ -1,0 +1,25 @@
+node_modules/
+dist/
+
+.DS_Store
+*.tsbuildinfo
+
+# ingest: секреты, сессии Telegram и сырые выгрузки
+.env
+ingest/.env
+ingest/.venv/
+ingest/data/
+__pycache__/
+*.session
+*.session-journal
+*.db
+*.db-wal
+*.db-shm
+
+# Исходные наборы данных: 596 МБ, один архив 142 МБ (жёсткий лимит GitHub 100 МБ),
+# плюс RadarMap-ассеты без подтверждённой лицензии. Восстанавливается загрузкой
+# из первоисточников, см. research/README.md.
+research/
+
+# Генерируемый артефакт: 112 МБ, пересобирается через `npm run prepare:data`.
+public/data/

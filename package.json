@@ -1,0 +1,26 @@
+{
+  "name": "radar-russia-map",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "prepare:hydro": "node --max-old-space-size=4096 scripts/prepare-hydrorivers.mjs",
+    "prepare:data": "node scripts/prepare-data.mjs",
+    "dev": "npm run prepare:data && vite --host 127.0.0.1",
+    "build": "npm run prepare:data && tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "ol": "^10.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.16"
+  }
+}
