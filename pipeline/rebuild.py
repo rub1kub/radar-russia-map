@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
@@ -21,6 +20,7 @@ from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
 from .geocode import Geocoder  # noqa: E402
 from .parse import parse  # noqa: E402
+from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 USERNAME_TO_KEY = {source.username: source.key for source in sources_from_env()}
@@ -41,7 +41,10 @@ def import_jsonl(connection, raw_dir: Path) -> int:
                 "INSERT OR IGNORE INTO raw_messages"
                 " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
                 " VALUES (?,?,?,?,?,?,?)",
-                (source_key, row.get("chat_id"), row["message_id"], row["date"],
+                # Метка нормализуется на входе: в JSONL могут лежать записи
+                # старого формата — наивное локальное время.
+                (source_key, row.get("chat_id"), row["message_id"],
+                 parse_utc(row["date"]).isoformat(),
                  row.get("received_at"), row["text"], row.get("views")),
             )
             added += cursor.rowcount
@@ -71,9 +74,7 @@ def rebuild(connection) -> dict:
             stats["ungeocoded"] += 1
             continue
 
-        moment = datetime.fromisoformat(row["posted_at"])
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=timezone.utc)
+        moment = parse_utc(row["posted_at"])
 
         # Сообщение может называть несколько независимых мест — каждое
         # становится отдельным наблюдением в своей зоне.
@@ -91,7 +92,7 @@ def rebuild(connection) -> dict:
             )
             stats["observations"] += 1
 
-    now = max((event.last_seen for event in fuser.events), default=datetime.now(timezone.utc))
+    now = now_utc()
     for event in fuser.events:
         connection.execute(
             "INSERT INTO events (id, first_seen_at, last_seen_at, resolved_at, status,"

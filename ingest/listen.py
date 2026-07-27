@@ -23,6 +23,7 @@ from config import RAW_DIR, build_client, ensure_dirs, require_session, sources_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.db import connect  # noqa: E402
+from pipeline.timeutil import now_utc, utc_iso  # noqa: E402
 
 
 def append(path, record: dict) -> None:
@@ -37,8 +38,8 @@ def store(connection, source_key: str, chat_id: int, message) -> None:
         " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
         " VALUES (?,?,?,?,?,?,?)",
         (source_key, chat_id, message.id,
-         message.date.isoformat() if message.date else datetime.now(timezone.utc).isoformat(),
-         datetime.now(timezone.utc).isoformat(),
+         utc_iso(message.date) if message.date else now_utc().isoformat(),
+         now_utc().isoformat(),
          message.text or message.caption or "", message.views),
     )
     connection.commit()
@@ -77,8 +78,8 @@ async def main() -> None:
             record = {
                 "source": source_key,
                 "message_id": message.id,
-                "date": message.date.isoformat() if message.date else None,
-                "received_at": datetime.now(timezone.utc).isoformat(),
+                "date": utc_iso(message.date) if message.date else None,
+                "received_at": now_utc().isoformat(),
                 "text": text,
             }
             append(live_path, record)
@@ -98,5 +99,28 @@ async def main() -> None:
         print("\nОстановлено.")
 
 
+async def supervise() -> None:
+    """Перезапуск при обрыве.
+
+    Один аккаунт Telegram — единственная точка входа данных. Падение по сети
+    или FloodWait без перезапуска означает молча остановленный сбор.
+    """
+    delay = 5
+    while True:
+        try:
+            await main()
+            return
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return
+        except Exception as error:  # noqa: BLE001 — причина не важна, важен перезапуск
+            print(f"\nсбор оборвался: {type(error).__name__}: {error}")
+            print(f"перезапуск через {delay} c")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 300)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(supervise())
+    except KeyboardInterrupt:
+        print("\nОстановлено.")

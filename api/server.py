@@ -18,6 +18,7 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from pipeline.db import DB_PATH
+from pipeline.timeutil import now_utc, parse_utc
 
 app = FastAPI(title="Radar API", version="1.0")
 app.add_middleware(
@@ -37,12 +38,14 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
 
 
 def latest_moment() -> datetime:
-    rows = query("SELECT MAX(last_seen_at) AS m FROM events")
+    """Момент последнего сообщения — НЕ «сейчас».
+
+    Раньше от него отсчитывалась активность, поэтому остановка сбора
+    замораживала карту: старые события вечно оставались «активными».
+    """
+    rows = query("SELECT MAX(posted_at) AS m FROM raw_messages")
     stamp = rows[0]["m"] if rows and rows[0]["m"] else None
-    if not stamp:
-        return datetime.now(timezone.utc)
-    moment = datetime.fromisoformat(stamp)
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return parse_utc(stamp) if stamp else now_utc()
 
 
 def event_rows(since: datetime, limit: int = 400) -> list[dict]:
@@ -67,7 +70,9 @@ def event_rows(since: datetime, limit: int = 400) -> list[dict]:
 @app.get("/api/v1/state")
 def state():
     """Текущая обстановка: активные события и счетчики по зонам."""
-    now = latest_moment()
+    now = now_utc()
+    last_message = latest_moment()
+    data_age_sec = max(0, int((now - last_message).total_seconds()))
     events = [row for row in event_rows(now - ACTIVE_WINDOW) if row["status"] != "resolved"]
 
     zone_counts: dict[str, dict] = {}
@@ -98,6 +103,10 @@ def state():
 
     return {
         "generated_at": now.isoformat(),
+        "last_message_at": last_message.isoformat(),
+        # Клиент обязан показать, что картинка устарела, если сбор встал.
+        "data_age_sec": data_age_sec,
+        "stale": data_age_sec > 900,
         "events": events,
         "zone_counts": zone_counts,
         "active_events": len(events),
@@ -274,7 +283,7 @@ async def stream(socket: WebSocket):
     try:
         while True:
             snapshot = state()
-            marker = f"{snapshot['generated_at']}|{snapshot['active_events']}"
+            marker = f"{snapshot['last_message_at']}|{snapshot['active_events']}"
             if marker != last_sent:
                 await socket.send_json({"type": "state", **snapshot})
                 last_sent = marker

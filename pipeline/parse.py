@@ -38,6 +38,8 @@ SIGNALS: list[tuple[str, str, int]] = [
     ("detection", r"\bфиксац\w*|\bпролет\w*|\bпролёт\w*|\bзамечен", 4),
     ("caution",   r"мер[ыу]\s+(безопасн|предостор)|\bвнимание\b|соблюда\w+\s+мер", 3),
     ("infra",     r"аэропорт|крымск\w+\s+мост|движение\s+автотранспорт", 2),
+    # Голое «угроза БЭК», «угроза по области» — тоже оповещение.
+    ("danger",    r"\bугроз\w*", 5),
 ]
 
 # --- Тип угрозы -------------------------------------------------------------
@@ -152,6 +154,18 @@ def parse(text: str) -> Observation:
 
     # Новостной текст без признаков обстановки — не наше событие.
     signal, severity = classify_signal(body)
+    threat = classify_threat(body)
+
+    # «Ещё 2 БПЛА от Новобелая в сторону Воронежа» — глагола нет, но это
+    # фиксация: назван тип угрозы вместе с движением или счётом целей.
+    if signal == "unknown" and threat != "unknown" and (
+        re.search(DIRECTION_FROM_RE.pattern, body, re.IGNORECASE)
+        or DIRECTION_TO_RE.search(body)
+        or COUNT_RE.search(body)
+        or MANY_RE.search(body)
+    ):
+        signal, severity = "detection", 4
+
     if NEWS_RE.search(body) and signal in {"unknown", "caution", "infra"}:
         observation.relevant = False
         return observation
@@ -161,7 +175,7 @@ def parse(text: str) -> Observation:
 
     observation.signal_type = signal
     observation.severity = severity
-    observation.threat_type = classify_threat(body)
+    observation.threat_type = threat
     observation.direction_deg = extract_direction(body)
     observation.target_count = extract_count(body)
     observation.place_phrases = candidate_phrases(body)

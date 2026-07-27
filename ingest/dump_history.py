@@ -7,12 +7,18 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import argparse
 import asyncio
 import json
 
 from pyrogram.errors import FloodWait, RPCError
 
+from pipeline.timeutil import utc_iso  # noqa: E402
 from config import RAW_DIR, build_client, ensure_dirs, require_session, sources_from_env
 
 
@@ -21,8 +27,8 @@ def serialize(message, source_key: str) -> dict:
     return {
         "source": source_key,
         "message_id": message.id,
-        "date": message.date.isoformat() if message.date else None,
-        "edit_date": message.edit_date.isoformat() if message.edit_date else None,
+        "date": utc_iso(message.date) if message.date else None,
+        "edit_date": utc_iso(message.edit_date) if message.edit_date else None,
         "text": message.text or message.caption or "",
         "views": message.views,
         "forwards": message.forwards,

@@ -11,6 +11,11 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import argparse
 import asyncio
 import json
@@ -19,6 +24,7 @@ from collections import Counter
 
 from pyrogram.errors import FloodWait, RPCError
 
+from pipeline.timeutil import utc_iso  # noqa: E402
 from config import DATA_DIR, RAW_DIR, build_client, ensure_dirs, require_session
 
 WORD_RE = re.compile(r"[А-Яа-яЁё]{4,}")
@@ -71,7 +77,7 @@ async def collect(client, chat_id: int, username: str, limit: int) -> list[dict]
                     continue
                 rows.append({
                     "message_id": message.id,
-                    "date": message.date.isoformat() if message.date else None,
+                    "date": utc_iso(message.date) if message.date else None,
                     "text": text,
                     "views": message.views,
                     "media": str(message.media) if message.media else None,
