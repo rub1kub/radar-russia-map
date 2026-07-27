@@ -733,9 +733,9 @@ button {
 }
 
 .severity-legend i {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
+  width: 18px;
+  height: 12px;
+  border-radius: 3px;
   flex: 0 0 auto;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14);
 }

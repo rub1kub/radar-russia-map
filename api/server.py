@@ -82,6 +82,20 @@ def state():
             if not bucket["last_active"] or event["last_seen_at"] > bucket["last_active"]:
                 bucket["last_active"] = event["last_seen_at"]
 
+    # source_id связывает зону с полигоном, который уже загружен клиентом:
+    # это тот же id, что в public/data/regions.json и districts.json.
+    if zone_counts:
+        placeholders = ",".join("?" * len(zone_counts))
+        meta = query(
+            f"SELECT id, level, source_id, name_ru FROM zones WHERE id IN ({placeholders})",
+            tuple(zone_counts),
+        )
+        for row in meta:
+            bucket = zone_counts[row["id"]]
+            bucket["level"] = row["level"]
+            bucket["source_id"] = row["source_id"]
+            bucket["name"] = row["name_ru"]
+
     return {
         "generated_at": now.isoformat(),
         "events": events,

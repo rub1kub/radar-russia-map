@@ -18,8 +18,7 @@ import Style from "ol/style/Style";
 import Fill from "ol/style/Fill";
 import Stroke from "ol/style/Stroke";
 import Text from "ol/style/Text";
-import CircleStyle from "ol/style/Circle";
-import { Activity, Building2, Home, Info, Layers, MapPinned, Search } from "lucide-react";
+import { Building2, Home, Layers, MapPinned, Search } from "lucide-react";
 import type { FeatureLike } from "ol/Feature";
 import type { Geometry } from "ol/geom";
 
@@ -91,17 +90,25 @@ type RadarEvent = {
   target_count: number | null;
 };
 
+type ZoneCount = {
+  active: number;
+  max_severity: number;
+  last_active: string;
+  level?: "region" | "district" | "place";
+  source_id?: string;
+  name?: string;
+};
+
 type RadarState = {
   generated_at: string;
   events: RadarEvent[];
-  zone_counts: Record<string, { active: number; max_severity: number; last_active: string }>;
+  zone_counts: Record<string, ZoneCount>;
   active_events: number;
   active_zones: number;
 };
 
 type LayerState = {
   basemap: boolean;
-  events: boolean;
   landCover: boolean;
   waterBodies: boolean;
   rivers: boolean;
@@ -243,15 +250,30 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
   };
 }
 
-function createRegionStyle(selectedKeyRef: React.MutableRefObject<string | null>) {
+// Насыщенность заливки — от числа активных сообщений внутри зоны, как у
+// Детектора АЭРО. Пустые зоны не заливаются, чтобы карта осталась читаемой.
+function zoneFillAlpha(active: number, level: "region" | "district"): number {
+  const base = level === "district" ? 0.38 : 0.2;
+  if (active >= 5) return base;
+  if (active >= 3) return base * 0.72;
+  return base * 0.48;
+}
+
+function createRegionStyle(
+  selectedKeyRef: React.MutableRefObject<string | null>,
+  zoneStateRef: React.MutableRefObject<Map<string, ZoneCount>>
+) {
   return (feature: FeatureLike) => {
     const selected = selectedKeyRef.current === featureKey(feature);
+    const zone = zoneStateRef.current.get(String(feature.get("id")));
+    const fillColor = zone
+      ? severityColor(zone.max_severity, zoneFillAlpha(zone.active, "region"))
+      : selected
+        ? "rgba(228, 178, 93, 0.055)"
+        : "rgba(255, 255, 255, 0.006)";
+
     return [
-      new Style({
-        fill: new Fill({
-          color: selected ? "rgba(228, 178, 93, 0.055)" : "rgba(255, 255, 255, 0.006)"
-        })
-      }),
+      new Style({ fill: new Fill({ color: fillColor }) }),
       new Style({
         stroke: new Stroke({
           color: selected ? "rgba(255, 250, 230, 0.82)" : "rgba(248, 250, 242, 0.56)",
@@ -268,9 +290,26 @@ function createRegionStyle(selectedKeyRef: React.MutableRefObject<string | null>
   };
 }
 
-function createDistrictStyle(selectedKeyRef: React.MutableRefObject<string | null>) {
+function createDistrictStyle(
+  selectedKeyRef: React.MutableRefObject<string | null>,
+  zoneStateRef: React.MutableRefObject<Map<string, ZoneCount>>
+) {
   return (feature: FeatureLike) => {
     const selected = selectedKeyRef.current === featureKey(feature);
+    const zone = zoneStateRef.current.get(String(feature.get("id")));
+
+    if (zone) {
+      return new Style({
+        fill: new Fill({
+          color: severityColor(zone.max_severity, zoneFillAlpha(zone.active, "district"))
+        }),
+        stroke: new Stroke({
+          color: severityColor(zone.max_severity, 0.62),
+          width: 1
+        })
+      });
+    }
+
     return new Style({
       fill: new Fill({
         color: selected ? "rgba(228, 178, 93, 0.045)" : "rgba(255, 255, 255, 0.004)"
@@ -470,33 +509,6 @@ function createRiverNetworkStyle(feature: FeatureLike, resolution: number) {
   return style;
 }
 
-function createEventStyle(feature: FeatureLike) {
-  const severity = asNumber(feature.get("severity"), 4);
-  const confidence = asNumber(feature.get("confidence"), 0.4);
-  const fading = feature.get("status") === "fading";
-
-  // Только цветная точка: цвет — опасность, размер и плотность — насколько
-  // событие подтверждено. Ни цифр, ни подписей — названия уже есть на карте.
-  const radius = 5 + confidence * 5;
-  const alpha = (fading ? 0.34 : 0.8) * (0.5 + confidence * 0.5);
-
-  return [
-    new Style({
-      image: new CircleStyle({
-        radius: radius + 6,
-        fill: new Fill({ color: severityColor(severity, alpha * 0.18) })
-      })
-    }),
-    new Style({
-      image: new CircleStyle({
-        radius,
-        fill: new Fill({ color: severityColor(severity, alpha) }),
-        stroke: new Stroke({ color: "rgba(255, 255, 255, 0.9)", width: 1.6 })
-      })
-    })
-  ];
-}
-
 function getClusterItems(feature: FeatureLike): Feature<Geometry>[] {
   const clustered = feature.get("features");
   if (Array.isArray(clustered)) return clustered as Feature<Geometry>[];
@@ -693,8 +705,8 @@ export default function App() {
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const placeLayerRef = useRef<VectorLayer<ClusterSource<Feature<Geometry>>> | null>(null);
   const placeLabelLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
-  const eventLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
-  const eventSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
+  const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
   const selectedKeyRef = useRef<string | null>(null);
   const layersRef = useRef<LayerState | null>(null);
   const loadLazyLayersRef = useRef<(() => void) | null>(null);
@@ -706,7 +718,6 @@ export default function App() {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<LayerState>({
     basemap: true,
-    events: true,
     landCover: false,
     waterBodies: false,
     rivers: false,
@@ -786,27 +797,20 @@ export default function App() {
     };
   }, []);
 
-  // Синхронизация точек событий с источником слоя.
+  // Обстановка рисуется заливкой самих регионов и районов, а не отдельными
+  // маркерами: так делают RadarMap и Детектор АЭРО, и так понятнее.
   useEffect(() => {
-    const source = eventSourceRef.current;
-    source.clear();
-    if (!radarState) return;
-
-    const features = radarState.events
-      .filter((event) => typeof event.lat === "number" && typeof event.lon === "number")
-      .map((event) => new Feature({
-        geometry: new Point(fromLonLat([event.lon as number, event.lat as number])),
-        kind: "event",
-        id: event.id,
-        placeName: event.place_name,
-        severity: event.severity,
-        confidence: event.confidence,
-        sourceCount: event.source_count,
-        status: event.status,
-        signalType: event.signal_type,
-        threatType: event.threat_type
-      }));
-    source.addFeatures(features);
+    const index = new globalThis.Map<string, ZoneCount>();
+    if (radarState) {
+      for (const zone of Object.values(radarState.zone_counts)) {
+        if (!zone.source_id) continue;
+        if (zone.level !== "region" && zone.level !== "district") continue;
+        index.set(zone.source_id, zone);
+      }
+    }
+    zoneStateRef.current = index;
+    regionLayerRef.current?.changed();
+    districtLayerRef.current?.changed();
   }, [radarState]);
 
   useEffect(() => {
@@ -947,14 +951,14 @@ export default function App() {
       source: regionSource,
       visible: layers.regions,
       zIndex: 28,
-      style: createRegionStyle(selectedKeyRef)
+      style: createRegionStyle(selectedKeyRef, zoneStateRef)
     });
     const districtLayer = new VectorLayer({
       source: districtSource,
       visible: layers.districts,
       zIndex: 20,
       minZoom: 4.15,
-      style: createDistrictStyle(selectedKeyRef)
+      style: createDistrictStyle(selectedKeyRef, zoneStateRef)
     });
     const placeLayer = new VectorLayer({
       source: placeClusterSource,
@@ -972,15 +976,7 @@ export default function App() {
       style: createPlaceLabelStyle(selectedKeyRef)
     });
 
-    const eventLayer = new VectorLayer({
-      source: eventSourceRef.current,
-      visible: layers.events,
-      zIndex: 40,
-      style: createEventStyle
-    });
-
     basemapLayerRef.current = basemapLayer;
-    eventLayerRef.current = eventLayer;
     hillshadeLayerRef.current = hillshadeLayer;
     landCoverLayerRef.current = landCoverLayer;
     waterBodyLayerRef.current = waterBodyLayer;
@@ -1015,8 +1011,7 @@ export default function App() {
         regionLayer,
         districtLayer,
         placeLayer,
-        placeLabelLayer,
-        eventLayer
+        placeLabelLayer
       ],
       view: new View({
         center: OVERVIEW_CENTER,
@@ -1172,7 +1167,6 @@ export default function App() {
       roadsLoadedRef.current = false;
       railwaysLoadedRef.current = false;
       loadLazyLayersRef.current = null;
-      eventLayerRef.current = null;
       layersRef.current = null;
       regionLayerRef.current = null;
       districtLayerRef.current = null;
@@ -1184,7 +1178,6 @@ export default function App() {
 
   useEffect(() => {
     layersRef.current = layers;
-    eventLayerRef.current?.setVisible(layers.events);
     basemapLayerRef.current?.setVisible(layers.basemap);
     hillshadeLayerRef.current?.setVisible(layers.basemap);
     landCoverLayerRef.current?.setVisible(layers.landCover);
@@ -1278,7 +1271,7 @@ export default function App() {
               <span><i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность</span>
             </div>
             <p className="legend-note">
-              Чем ярче и крупнее точка, тем больше независимых источников подтвердили событие.
+              Чем насыщеннее заливка зоны, тем больше независимых источников подтвердили событие.
             </p>
             <button className="ghost-button" type="button" onClick={resetMap}>
               <Home size={17} aria-hidden="true" />
