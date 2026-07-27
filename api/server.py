@@ -201,6 +201,58 @@ def analytics_zones(hours: int = Query(168, ge=1, le=24 * 90), limit: int = 25):
     return {"top_zones": rows, "by_hour": by_hour, "by_threat": by_threat}
 
 
+@app.get("/api/v1/search")
+def search(q: str = Query(..., min_length=2), limit: int = Query(12, ge=1, le=40)):
+    """Поиск по справочнику на сервере.
+
+    Раньше клиент держал в памяти каталог из 212 тысяч строк и фильтровал его
+    на каждое нажатие клавиши. Теперь это индексированный запрос к SQLite.
+    """
+    needle = q.strip().lower().replace("ё", "е")
+    if len(needle) < 2:
+        return {"items": []}
+
+    rows = query(
+        """
+        SELECT z.id, z.name_ru, z.level, z.lat, z.lon, z.population, z.source_id,
+               p.name_ru  AS parent_name,
+               gp.name_ru AS grandparent_name,
+               MIN(LENGTH(n.norm)) AS match_len
+        FROM zone_names n
+        JOIN zones z       ON z.id = n.zone_id
+        LEFT JOIN zones p  ON p.id = z.parent_id
+        LEFT JOIN zones gp ON gp.id = p.parent_id
+        WHERE n.norm LIKE ? ESCAPE '\\'
+        GROUP BY z.id
+        ORDER BY
+            CASE z.level WHEN 'region' THEN 0 WHEN 'district' THEN 1 ELSE 2 END,
+            COALESCE(z.population, 0) DESC,
+            match_len
+        LIMIT ?
+        """,
+        (needle.replace("%", "\\%").replace("_", "\\_") + "%", limit),
+    )
+
+    items = []
+    for row in rows:
+        # Одноимённых районов больше сотни — показываем родителя,
+        # иначе выбрать нужный невозможно.
+        context = row["parent_name"] if row["level"] != "region" else None
+        if row["level"] == "place" and row["grandparent_name"]:
+            context = f"{row['parent_name']} · {row['grandparent_name']}"
+        items.append({
+            "zone_id": row["id"],
+            "name": row["name_ru"],
+            "level": row["level"],
+            "context": context,
+            "lat": row["lat"],
+            "lon": row["lon"],
+            "population": row["population"],
+            "source_id": row["source_id"],
+        })
+    return {"items": items}
+
+
 @app.get("/api/v1/summary")
 def summary():
     counts = query("""

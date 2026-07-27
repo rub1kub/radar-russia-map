@@ -7,7 +7,6 @@ import Feature from "ol/Feature";
 import Point from "ol/geom/Point";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
-import ClusterSource from "ol/source/Cluster";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import { Attribution, defaults as defaultControls, ScaleLine } from "ol/control";
@@ -32,26 +31,9 @@ type GeoJsonFeatureCollection = {
   }>;
 };
 
-type PlaceRow = [
-  id: string,
-  name: string,
-  asciiName: string,
-  lat: number,
-  lon: number,
-  population: number | null,
-  featureCode: string,
-  typeLabel: string
-];
-
-type PlacesDataset = {
-  fields: string[];
-  rows: PlaceRow[];
-};
-
 type Dataset = {
   regions: GeoJsonFeatureCollection;
   districts: GeoJsonFeatureCollection;
-  places: PlacesDataset;
 };
 
 type SelectedObject = {
@@ -63,11 +45,13 @@ type SelectedObject = {
 };
 
 type SearchItem = {
-  key: string;
-  kind: SelectedObject["kind"];
-  label: string;
-  subtitle: string;
-  searchText: string;
+  zone_id: string;
+  name: string;
+  level: "region" | "district" | "place";
+  context: string | null;
+  lat: number | null;
+  lon: number | null;
+  source_id: string | null;
 };
 
 type RadarEvent = {
@@ -117,7 +101,6 @@ type LayerState = {
   railways: boolean;
   regions: boolean;
   districts: boolean;
-  places: boolean;
 };
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
@@ -127,9 +110,8 @@ const URBAN_AREAS_ZOOM = 4.3;
 const ROADS_ZOOM = 4.65;
 const RAILWAYS_ZOOM = 4.8;
 const DISTRICT_SELECTION_ZOOM = 5.4;
-const PLACE_SELECTION_ZOOM = 7.2;
 const BASEMAP_URL =
-  import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png";
+  import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
 const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© OpenStreetMap contributors, © CARTO";
 const HILLSHADE_URL =
   import.meta.env.VITE_HILLSHADE_URL || "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}";
@@ -176,7 +158,6 @@ const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: strin
   { key: "basemap", label: "Подложка", swatch: "swatch-basemap" },
   { key: "regions", label: "Регионы", swatch: "swatch-region" },
   { key: "districts", label: "Районы", swatch: "swatch-district" },
-  { key: "places", label: "Населенные пункты", swatch: "swatch-city" },
   { key: "roads", label: "Дороги", swatch: "swatch-road" },
   { key: "railways", label: "Железные дороги", swatch: "swatch-railway" },
   { key: "urbanAreas", label: "Контуры городов", swatch: "swatch-urban" },
@@ -509,99 +490,25 @@ function createRiverNetworkStyle(feature: FeatureLike, resolution: number) {
   return style;
 }
 
-function getClusterItems(feature: FeatureLike): Feature<Geometry>[] {
-  const clustered = feature.get("features");
-  if (Array.isArray(clustered)) return clustered as Feature<Geometry>[];
-  return [feature as Feature<Geometry>];
-}
 
-function placeImportance(feature: Feature<Geometry>): number {
-  const population = Number(feature.get("population") ?? 0);
-  const featureCode = String(feature.get("featureCode") ?? "");
-  const adminBonus =
-    featureCode === "PPLC" ? 20_000_000 : featureCode === "PPLA" ? 5_000_000 : featureCode === "PPLA2" ? 1_000_000 : 0;
-  const districtPenalty = featureCode === "PPLX" ? 750_000 : 0;
-  return population + adminBonus - districtPenalty;
-}
 
-function shouldShowCityLabel(feature: Feature<Geometry>, zoom: number): boolean {
-  const population = Number(feature.get("population") ?? 0);
-  const featureCode = String(feature.get("featureCode") ?? "");
-  const isAdminCenter = featureCode === "PPLC" || featureCode === "PPLA" || featureCode === "PPLA2";
-  const isCityDistrict = featureCode === "PPLX";
 
-  if (isCityDistrict && zoom < 9.5) return false;
-  if (population >= 1_000_000) return zoom >= 2.2;
-  if (population >= 700_000) return zoom >= 3.1;
-  if (population >= 300_000) return zoom >= 4.1;
-  if (population >= 100_000) return zoom >= 5.2;
-  if (isAdminCenter && population >= 50_000) return zoom >= 6.1;
-  if (population >= 20_000) return zoom >= 7.2;
-  if (population >= 5_000) return zoom >= 8.4;
-  return zoom >= 10.4;
-}
 
-function isPlaceLabelCandidate(feature: Feature<Geometry>): boolean {
-  const population = Number(feature.get("population") ?? 0);
-  return population >= 20_000;
-}
 
-function createPlaceStyle(selectedKeyRef: React.MutableRefObject<string | null>) {
-  return (feature: FeatureLike, resolution: number) => {
-    const places = getClusterItems(feature);
-    const count = places.length;
-    const selectedPlace = places.find((place) => selectedKeyRef.current === featureKey(place));
-    const selected = Boolean(selectedPlace);
-    const topPlace = places.reduce((best, place) => {
-      return placeImportance(place) > placeImportance(best) ? place : best;
-    }, selectedPlace ?? places[0]);
-    const zoom = resolutionToZoom(resolution);
-    const labelFeature = selectedPlace ?? topPlace;
-    const showPlaceLabel = selected || (!isPlaceLabelCandidate(labelFeature) && count === 1 && shouldShowCityLabel(labelFeature, zoom));
-    if (!showPlaceLabel) return undefined;
 
-    return new Style({
-      text: new Text({
-        text: String(labelFeature.get("name") ?? ""),
-        font: selected ? "700 12px Inter, system-ui, sans-serif" : "500 11px Inter, system-ui, sans-serif",
-        fill: new Fill({ color: selected ? "rgba(36, 38, 34, 0.94)" : "rgba(68, 73, 69, 0.76)" }),
-        stroke: new Stroke({ color: selected ? "rgba(255, 238, 190, 0.86)" : "rgba(246, 248, 240, 0.74)", width: selected ? 3 : 2.2 })
-      })
-    });
+async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
+  const read = async (url: string) => {
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
+    return response.json();
   };
-}
 
-function createPlaceLabelStyle(selectedKeyRef: React.MutableRefObject<string | null>) {
-  return (feature: FeatureLike, resolution: number) => {
-    const typedFeature = feature as Feature<Geometry>;
-    const selected = selectedKeyRef.current === featureKey(feature);
-    const zoom = resolutionToZoom(resolution);
-    if (!selected && !shouldShowCityLabel(typedFeature, zoom)) return undefined;
-
-    const population = Number(feature.get("population") ?? 0);
-    const isMajor = population >= 700_000 || selected;
-    const fontSize = zoom < 3.2 ? 10 : isMajor ? 11.5 : 10.5;
-    const strokeWidth = zoom < 3.2 ? 2.1 : isMajor ? 2.7 : 2.2;
-
-    return new Style({
-      text: new Text({
-        text: String(feature.get("name") ?? ""),
-        font: `${isMajor && zoom >= 3.2 ? 600 : 500} ${fontSize}px Inter, system-ui, sans-serif`,
-        fill: new Fill({ color: isMajor ? "rgba(43, 47, 44, 0.9)" : "rgba(70, 76, 72, 0.74)" }),
-        stroke: new Stroke({ color: "rgba(247, 249, 242, 0.78)", width: strokeWidth })
-      })
-    });
-  };
-}
-
-async function loadDataset(): Promise<Dataset> {
-  const [regions, districts, places] = await Promise.all([
-    fetch("/data/regions.json").then((response) => response.json()),
-    fetch("/data/districts.json").then((response) => response.json()),
-    fetch("/data/places.json").then((response) => response.json())
+  const [regions, districts] = await Promise.all([
+    read("/data/regions.json"),
+    read("/data/districts.json")
   ]);
 
-  return { regions, districts, places };
+  return { regions, districts };
 }
 
 function fitFeature(map: OlMap, feature: FeatureLike, maxZoom: number) {
@@ -650,36 +557,6 @@ function setOverviewView(map: OlMap, duration: number) {
   view.setZoom(getOverviewZoom());
 }
 
-function createSearchCatalog(data: Dataset | null): SearchItem[] {
-  if (!data) return [];
-
-  const regionItems = data.regions.features.map((feature) => ({
-    key: `region:${String(feature.properties.id ?? feature.properties.name)}`,
-    kind: "region" as const,
-    label: String(feature.properties.name ?? "Регион"),
-    subtitle: "Регион",
-    searchText: `${String(feature.properties.name ?? "")} ${String(feature.properties.iso ?? "")}`.toLowerCase()
-  }));
-
-  const districtItems = data.districts.features.map((feature) => ({
-    key: `district:${String(feature.properties.id ?? feature.properties.name)}`,
-    kind: "district" as const,
-    label: String(feature.properties.name ?? "Район"),
-    subtitle: "Район",
-    searchText: `${String(feature.properties.name ?? "")} ${String(feature.properties.iso ?? "")}`.toLowerCase()
-  }));
-
-  const placeItems = data.places.rows.map(([id, name, asciiName, , , , , typeLabel]) => ({
-    key: `place:${id}`,
-    kind: "place" as const,
-    label: name,
-    subtitle: typeLabel,
-    searchText: `${name} ${asciiName} ${typeLabel}`.toLowerCase()
-  }));
-
-  return [...regionItems, ...placeItems, ...districtItems];
-}
-
 export default function App() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
@@ -703,8 +580,6 @@ export default function App() {
   const railwaysLoadedRef = useRef(false);
   const regionLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
-  const placeLayerRef = useRef<VectorLayer<ClusterSource<Feature<Geometry>>> | null>(null);
-  const placeLabelLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
   const selectedKeyRef = useRef<string | null>(null);
@@ -726,50 +601,70 @@ export default function App() {
     railways: true,
     regions: true,
     districts: true,
-    places: true
   });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
 
-  const catalog = useMemo(() => createSearchCatalog(dataset), [dataset]);
+  const [suggestions, setSuggestions] = useState<SearchItem[]>([]);
 
-  const suggestions = useMemo(() => {
-    const normalized = deferredQuery.trim().toLowerCase();
-    if (normalized.length < 2) return [];
-    return catalog
-      .filter((item) => item.searchText.includes(normalized))
-      .slice(0, MAX_SUGGESTIONS);
-  }, [catalog, deferredQuery]);
+  // Поиск выполняет сервер по индексу справочника: 212 тысяч зон, ответ за
+  // десятки миллисекунд. Держать этот каталог в браузере было незачем.
+  useEffect(() => {
+    const normalized = deferredQuery.trim();
+    if (normalized.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/v1/search?q=${encodeURIComponent(normalized)}&limit=${MAX_SUGGESTIONS}`,
+          { signal: controller.signal }
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as { items: SearchItem[] };
+        setSuggestions(payload.items);
+      } catch {
+        // Прерванный или неудачный запрос просто не меняет подсказки.
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [deferredQuery]);
 
   const applySelectedFeature = useCallback((feature: FeatureLike | null) => {
     selectedKeyRef.current = feature ? featureKey(feature) : null;
     setSelected(feature ? selectedFromFeature(feature) : emptySelected);
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
-    placeLayerRef.current?.changed();
-    placeLabelLayerRef.current?.changed();
   }, []);
 
   useEffect(() => {
-    let active = true;
+    // AbortController обязателен: в StrictMode эффект вызывается дважды, и без
+    // отмены districts.json скачивается два раза по 14 МБ.
+    const controller = new AbortController();
     setLoading(true);
-    loadDataset()
+
+    loadDataset(controller.signal)
       .then((data) => {
-        if (!active) return;
+        if (controller.signal.aborted) return;
         setDataset(data);
         setLoading(false);
       })
       .catch((reason: unknown) => {
-        if (!active) return;
+        if (controller.signal.aborted) return;
         setError(reason instanceof Error ? reason.message : "Не удалось загрузить данные карты");
         setLoading(false);
       });
 
-    return () => {
-      active = false;
-    };
+    return () => controller.abort();
   }, []);
 
   // Обстановка из API конвейера. Карта работает и без него — просто без событий.
@@ -836,22 +731,6 @@ export default function App() {
       featureIndexRef.current.set(featureKey(feature), feature);
     });
 
-    const placeFeatures = dataset.places.rows.map(([id, name, asciiName, lat, lon, population, featureCode, typeLabel]) => {
-      const feature = new Feature({
-        geometry: new Point(fromLonLat([lon, lat])),
-        kind: "place",
-        id,
-        name,
-        asciiName,
-        lat,
-        lon,
-        population,
-        featureCode,
-        typeLabel
-      });
-      featureIndexRef.current.set(featureKey(feature), feature);
-      return feature;
-    });
 
     const landCoverSource = new VectorSource<Feature<Geometry>>();
     const waterBodySource = new VectorSource<Feature<Geometry>>();
@@ -863,13 +742,6 @@ export default function App() {
     const railwaySource = new VectorSource<Feature<Geometry>>();
     const regionSource = new VectorSource({ features: regionFeatures });
     const districtSource = new VectorSource({ features: districtFeatures });
-    const placeSource = new VectorSource({ features: placeFeatures });
-    const placeLabelSource = new VectorSource({ features: placeFeatures.filter(isPlaceLabelCandidate) });
-    const placeClusterSource = new ClusterSource({
-      distance: 22,
-      minDistance: 4,
-      source: placeSource
-    });
 
     const basemapLayer = new TileLayer({
       source: new XYZ({
@@ -960,21 +832,6 @@ export default function App() {
       minZoom: 4.15,
       style: createDistrictStyle(selectedKeyRef, zoneStateRef)
     });
-    const placeLayer = new VectorLayer({
-      source: placeClusterSource,
-      visible: layers.places,
-      zIndex: 30,
-      minZoom: 2.15,
-      style: createPlaceStyle(selectedKeyRef)
-    });
-    const placeLabelLayer = new VectorLayer({
-      source: placeLabelSource,
-      visible: layers.places,
-      zIndex: 31,
-      minZoom: 2.15,
-      declutter: true,
-      style: createPlaceLabelStyle(selectedKeyRef)
-    });
 
     basemapLayerRef.current = basemapLayer;
     hillshadeLayerRef.current = hillshadeLayer;
@@ -988,8 +845,6 @@ export default function App() {
     railwayLayerRef.current = railwayLayer;
     regionLayerRef.current = regionLayer;
     districtLayerRef.current = districtLayer;
-    placeLayerRef.current = placeLayer;
-    placeLabelLayerRef.current = placeLabelLayer;
 
     const map = new OlMap({
       target: mapNodeRef.current,
@@ -1009,9 +864,7 @@ export default function App() {
         roadLayer,
         railwayLayer,
         regionLayer,
-        districtLayer,
-        placeLayer,
-        placeLabelLayer
+        districtLayer
       ],
       view: new View({
         center: OVERVIEW_CENTER,
@@ -1086,7 +939,7 @@ export default function App() {
     map.on("pointermove", (event) => {
       const hit = map.hasFeatureAtPixel(event.pixel, {
         hitTolerance: 5,
-        layerFilter: (layer) => layer === regionLayer || layer === districtLayer || layer === placeLayer
+        layerFilter: (layer) => layer === regionLayer || layer === districtLayer
       });
       const target = map.getTargetElement();
       if (target) target.style.cursor = hit ? "pointer" : "";
@@ -1096,27 +949,14 @@ export default function App() {
       const zoom = map.getView().getZoom() ?? 0;
       let regionFeature: FeatureLike | null = null;
       let districtFeature: FeatureLike | null = null;
-      let placeFeature: FeatureLike | null = null;
-      let clusterFeatures: Feature<Geometry>[] | null = null;
 
       map.forEachFeatureAtPixel(
         event.pixel,
         (feature, layer) => {
-          if (layer === placeLayer) {
-            const places = getClusterItems(feature);
-            if (places.length > 1) {
-              clusterFeatures = places;
-            } else {
-              placeFeature = places[0] ?? feature;
-            }
-            return false;
-          }
-
           if (layer === districtLayer && !districtFeature) {
             districtFeature = feature;
             return false;
           }
-
           if (layer === regionLayer && !regionFeature) {
             regionFeature = feature;
           }
@@ -1124,21 +964,13 @@ export default function App() {
         },
         {
           hitTolerance: 8,
-          layerFilter: (layer) => layer === placeLayer || layer === districtLayer || layer === regionLayer
+          layerFilter: (layer) => layer === districtLayer || layer === regionLayer
         }
       );
 
-      if (zoom >= PLACE_SELECTION_ZOOM && clusterFeatures) {
-        fitFeatures(map, clusterFeatures, 8.4);
-        return;
-      }
-
-      if (zoom >= PLACE_SELECTION_ZOOM && placeFeature) {
-        applySelectedFeature(placeFeature);
-        return;
-      }
-
-      applySelectedFeature(zoom >= DISTRICT_SELECTION_ZOOM ? districtFeature ?? regionFeature : regionFeature ?? districtFeature);
+      applySelectedFeature(
+        zoom >= DISTRICT_SELECTION_ZOOM ? districtFeature ?? regionFeature : regionFeature ?? districtFeature
+      );
     });
 
     mapRef.current = map;
@@ -1170,8 +1002,6 @@ export default function App() {
       layersRef.current = null;
       regionLayerRef.current = null;
       districtLayerRef.current = null;
-      placeLayerRef.current = null;
-      placeLabelLayerRef.current = null;
       featureIndexRef.current.clear();
     };
   }, [applySelectedFeature, dataset]);
@@ -1190,31 +1020,37 @@ export default function App() {
     railwayLayerRef.current?.setVisible(layers.railways);
     regionLayerRef.current?.setVisible(layers.regions);
     districtLayerRef.current?.setVisible(layers.districts);
-    placeLayerRef.current?.setVisible(layers.places);
-    placeLabelLayerRef.current?.setVisible(layers.places);
     loadLazyLayersRef.current?.();
   }, [layers]);
 
   const selectSearchItem = useCallback(
     (item: SearchItem) => {
-      const feature = featureIndexRef.current.get(item.key);
       const map = mapRef.current;
-      if (!feature || !map) return;
+      if (!map) return;
 
-      applySelectedFeature(feature);
-      if (item.kind === "place") {
-        const geometry = feature.getGeometry();
-        if (geometry instanceof Point) {
-          map.getView().animate({
-            center: geometry.getCoordinates(),
-            zoom: Math.max(map.getView().getZoom() ?? 5, 8.8),
-            duration: 420
-          });
+      // У региона и района полигон уже загружен — подлетаем к его границам.
+      if (item.source_id && item.level !== "place") {
+        const feature = featureIndexRef.current.get(`${item.level}:${item.source_id}`);
+        if (feature) {
+          applySelectedFeature(feature);
+          fitFeature(map, feature, item.level === "region" ? 5.2 : 7.4);
+          setQuery(item.name);
+          setSuggestions([]);
+          return;
         }
-      } else {
-        fitFeature(map, feature, item.kind === "region" ? 5.2 : 7.4);
       }
-      setQuery(item.label);
+
+      // Населённый пункт живёт только на сервере — летим по координатам.
+      if (typeof item.lat === "number" && typeof item.lon === "number") {
+        applySelectedFeature(null);
+        map.getView().animate({
+          center: fromLonLat([item.lon, item.lat]),
+          zoom: Math.max(map.getView().getZoom() ?? 5, 8.8),
+          duration: 420
+        });
+      }
+      setQuery(item.name);
+      setSuggestions([]);
     },
     [applySelectedFeature]
   );
@@ -1255,9 +1091,9 @@ export default function App() {
             {suggestions.length > 0 ? (
               <div className="suggestions" role="listbox" aria-label="Найденные объекты">
                 {suggestions.map((item) => (
-                  <button key={item.key} type="button" onClick={() => selectSearchItem(item)}>
-                    <span>{item.label}</span>
-                    <small>{item.subtitle}</small>
+                  <button key={item.zone_id} type="button" onClick={() => selectSearchItem(item)}>
+                    <span>{item.name}</span>
+                    <small>{item.context ?? "Регион"}</small>
                   </button>
                 ))}
               </div>
