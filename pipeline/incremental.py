@@ -37,7 +37,7 @@ from .db import connect  # noqa: E402
 from .fuse import Event, Fuser  # noqa: E402
 from .geocode import Geocoder  # noqa: E402
 from .networks import load_networks  # noqa: E402
-from .parse import parse  # noqa: E402
+from .parse import parse, strip_footer  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
@@ -97,11 +97,13 @@ ORDER BY first_seen_at, rowid
 # Роль resolve означает отбой: такое сообщение закрывает событие, но источником
 # подтверждения не считается (см. Fuser.add) — иначе confidence будет завышен.
 OPEN_SOURCES_SQL = """
-SELECT DISTINCT s.event_id AS event_id, s.source_key AS source_key
+SELECT s.event_id AS event_id, s.source_key AS source_key, m.text AS text
 FROM event_sources s
 JOIN events e ON e.id = s.event_id
+LEFT JOIN raw_messages m ON m.id = s.raw_message_id
 WHERE e.status IN ('active', 'fading') AND e.resolved_at IS NULL
   AND s.role <> 'resolve'
+ORDER BY s.contributed_at, s.raw_message_id
 """
 
 UPSERT_EVENT_SQL = """
@@ -268,7 +270,19 @@ def load_open_events(
             # Сети восстанавливаются вместе с источниками: иначе у поднятого
             # события окажется пустой networks, и первое же новое наблюдение
             # оставит в нём один голос вместо всех накопленных.
-            event.networks.setdefault(networks.get(key) or key, tier)
+            voice = networks.get(key) or key
+            event.networks.setdefault(voice, tier)
+            # Вместе с голосами поднимаются и тексты: без них дословный
+            # перепост, пришедший в следующем проходе, снова считался бы
+            # самостоятельным свидетельством. Порядок строк — по времени
+            # вклада, поэтому автором текста остаётся тот, кто сказал первым.
+            # Подпись канала снимается так же, как при слиянии: перепост
+            # отличается от оригинала ровно ею, и хеш по сырому тексту не
+            # совпал бы сам с собой между проходами.
+            stamp = Fuser._repost_key(strip_footer(row["text"] or ""))
+            if stamp is not None and event.texts.setdefault(stamp, voice) != voice:
+                continue
+            event.voices.setdefault(voice, tier)
 
     # contributions намеренно остаются пустыми: уже записанные строки
     # event_sources переписывать незачем, в базу уйдут только новые.
@@ -391,7 +405,7 @@ def run_once(
             stats["irrelevant"] += 1
             continue
 
-        resolved = geocoder.resolve(observation.place_phrases)
+        resolved = geocoder.drop_covered(geocoder.resolve(observation.place_phrases))
         if not resolved:
             stats["ungeocoded"] += 1
             continue

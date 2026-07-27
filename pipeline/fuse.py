@@ -26,6 +26,12 @@ ACCURACY_M = {"place": 4_000, "district": 12_000, "region": 40_000}
 
 RESOLVING = {"allclear", "retracted"}
 
+# Длина, начиная с которой дословное совпадение текста — это copy-paste, а не
+# совпадение слов. Короткое «Опасность БПЛА» две ленты пишут одинаково просто
+# потому, что иначе не скажешь, и считать их одним голосом нельзя.
+# Сто двадцать символов — уже фраза с деталями, случайно она не повторяется.
+REPOST_MIN_LEN = 120
+
 
 @dataclass
 class Event:
@@ -48,6 +54,11 @@ class Event:
     # "Радар.ру | X область" ведёт один оператор, и считать их независимыми
     # подтверждениями значит выдумывать достоверность.
     networks: dict[str, str] = field(default_factory=dict)
+    # Голоса, которые реально считаются: сеть (или одиночный канал), но
+    # дословный перепост чужого текста своего голоса не добавляет.
+    voices: dict[str, str] = field(default_factory=dict)
+    # Хеш текста -> голос, который сказал это первым.
+    texts: dict[str, str] = field(default_factory=dict)
     contributions: list[tuple[int, str, str, datetime]] = field(default_factory=list)
 
     @property
@@ -59,14 +70,14 @@ class Event:
         оператора выглядели бы как пять независимых подтверждений.
         """
         miss = 1.0
-        for tier in (self.networks or self.sources).values():
+        for tier in (self.voices or self.networks or self.sources).values():
             miss *= 1.0 - TIER_WEIGHT.get(tier, 0.25)
         return round(1.0 - miss, 3)
 
     @property
     def independent_sources(self) -> int:
         """Сколько независимых голосов стоит за событием."""
-        return len(self.networks or self.sources)
+        return len(self.voices or self.networks or self.sources)
 
     def status(self, now: datetime) -> str:
         if self.resolved_at:
@@ -84,6 +95,34 @@ def make_id(zone_id: str, threat: str, moment: datetime) -> str:
 
 
 class Fuser:
+    @staticmethod
+    def _repost_key(text: str) -> str | None:
+        """Ключ дословного перепоста, если текст достаточно длинный.
+
+        Считается по тому же тексту, что видит разбор, но без пробелов и
+        регистра: перепост часто отличается только переносами строк и своей
+        подписью в конце — подпись к этому моменту уже снята.
+        """
+        squeezed = "".join(text.split()).lower()
+        if len(squeezed) < REPOST_MIN_LEN:
+            return None
+        return hashlib.sha1(squeezed.encode()).hexdigest()[:16]
+
+    def _voice(self, event: Event, key: str, tier: str, text: str) -> None:
+        """Учесть голос, если это не пересказ чужими словами.
+
+        Сеть перепостов ловится заранее по графу (networks.py), но утренняя
+        сводка Минобороны расходится по лентам, между которыми постоянной
+        связи нет, — граф её не видит. Здесь ловится сам факт: тот же текст,
+        который уже принесли, независимым свидетельством не является.
+        """
+        stamp = self._repost_key(text)
+        if stamp is not None:
+            owner = event.texts.setdefault(stamp, key)
+            if owner != key:
+                return
+        event.voices.setdefault(key, tier)
+
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._open: list[Event] = []
@@ -103,10 +142,15 @@ class Fuser:
 
             if event.zone_id == zone_id and gap <= SAME_ZONE_WINDOW:
                 return event
-            # Родственные зоны: район и его регион, НП и его район.
-            if gap <= PARENT_ZONE_WINDOW and (
-                zone_id in event.zone_path or event.zone_id in zone_path
-            ):
+            # Родственные зоны — но только вниз: наблюдение по району
+            # присоединяется к событию по его области, потому что частное
+            # свидетельство подтверждает общее. Обратное неверно, и раньше
+            # мешало считать: «Все Приазовье Краснодарского края, опасность
+            # БПЛА» приклеивалось к событию по Ейску и шло в его счётчик как
+            # подтверждение именно Ейска. Область не подтверждает город —
+            # такое наблюдение теперь живёт своим событием по области, а на
+            # карте регион и так закрашивается по цепочке зон.
+            if gap <= PARENT_ZONE_WINDOW and event.zone_id in zone_path:
                 best = best or event
         return best
 
@@ -164,6 +208,7 @@ class Fuser:
             role = "confirm" if source_key not in existing.sources else "repeat"
             existing.sources.setdefault(source_key, tier)
             existing.networks.setdefault(network or source_key, tier)
+            self._voice(existing, network or source_key, tier, getattr(observation, "body", ""))
             existing.contributions.append((raw_id, source_key, role, moment))
             return existing
 
@@ -185,6 +230,7 @@ class Fuser:
             networks={(network or source_key): tier},
             contributions=[(raw_id, source_key, "first", moment)],
         )
+        self._voice(event, network or source_key, tier, getattr(observation, "body", ""))
         self.events.append(event)
         self._open.append(event)
         return event

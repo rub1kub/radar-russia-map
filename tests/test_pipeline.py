@@ -619,21 +619,23 @@ def test_major_city_beats_same_named_district_elsewhere(geocoder):
 # --- Слияние ----------------------------------------------------------------
 
 class FakeObservation:
-    def __init__(self, signal="danger", threat="uav", severity=5):
+    def __init__(self, signal="danger", threat="uav", severity=5, body=""):
         self.signal_type = signal
         self.threat_type = threat
         self.severity = severity
         self.direction_deg = None
         self.target_count = None
+        self.body = body
 
 
-def add(fuser, minute, source, tier="federal", **kwargs):
+def add(fuser, minute, source, tier="federal", zone_path=None, level="district",
+        network=None, **kwargs):
     return fuser.add(
         raw_id=minute, source_key=source, tier=tier,
         moment=datetime(2026, 7, 27, 10, minute, tzinfo=timezone.utc),
         observation=FakeObservation(**kwargs),
-        zone_path=["azovskiy_rayon", "rostov_oblast"],
-        lat=47.1, lon=39.4, level="district",
+        zone_path=zone_path or ["azovskiy_rayon", "rostov_oblast"],
+        lat=47.1, lon=39.4, level=level, network=network,
     )
 
 
@@ -801,3 +803,91 @@ def test_alarm_sits_between_warning_and_detection():
     alarm = parse("Тула, тревога по БПЛА").severity
     detection = parse("Азов, фиксация БПЛА").severity
     assert warning < alarm < detection
+
+
+# --- Склейка: что считается подтверждением ----------------------------------
+
+def test_narrower_observation_confirms_broader_event():
+    """Район подтверждает область: частное свидетельство держит общее."""
+    fuser = Fuser()
+    add(fuser, 0, "a", zone_path=["rostov_oblast"], level="region")
+    add(fuser, 6, "b", zone_path=["azovskiy_rayon", "rostov_oblast"])
+    assert len(fuser.events) == 1
+    assert fuser.events[0].independent_sources == 2
+
+
+def test_broader_observation_does_not_confirm_narrower_event():
+    """Область не подтверждает город.
+
+    «Все Приазовье Краснодарского края, опасность БПЛА» шло в счётчик
+    события по Ейску как подтверждение именно Ейска — 305 таких случаев
+    на корпусе. Теперь у области своё событие, а карта закрашивает регион
+    по цепочке зон и без слияния.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a", zone_path=["yeysk", "yeyskiy_rayon", "krasnodarskiy_kray"],
+        level="place")
+    add(fuser, 6, "b", zone_path=["krasnodarskiy_kray"], level="region")
+    assert len(fuser.events) == 2
+    assert all(event.independent_sources == 1 for event in fuser.events)
+
+
+VERBATIM = (
+    "За прошедшую ночь силами противовоздушной обороны было уничтожено "
+    "328 украинских беспилотных летательных аппаратов над территориями "
+    "Белгородской, Брянской и Воронежской областей"
+)
+
+
+def test_verbatim_repost_is_not_an_independent_voice():
+    """Один текст, разосланный двумя лентами, — одно свидетельство.
+
+    Граф перепостов ловит постоянные сети, но утренняя сводка расходится
+    по лентам, между которыми связи нет, и каждая копия считалась
+    отдельным подтверждением.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a", body=VERBATIM)
+    add(fuser, 3, "b", body=VERBATIM)
+    assert len(fuser.events) == 1
+    assert fuser.events[0].independent_sources == 1
+    # Провенанс при этом сохраняется: видно, кто и что принёс.
+    assert len(fuser.events[0].sources) == 2
+
+
+def test_own_wording_stays_an_independent_voice():
+    fuser = Fuser()
+    add(fuser, 0, "a", body=VERBATIM)
+    add(fuser, 3, "b", body=VERBATIM.replace("328", "17") + " и Ростовской области")
+    assert fuser.events[0].independent_sources == 2
+
+
+def test_short_identical_text_is_still_two_voices():
+    """«Опасность по БПЛА» две ленты пишут одинаково просто потому,
+    что иначе не скажешь."""
+    fuser = Fuser()
+    add(fuser, 0, "a", body="Ростовская область Опасность по БПЛА")
+    add(fuser, 3, "b", body="Ростовская область Опасность по БПЛА")
+    assert fuser.events[0].independent_sources == 2
+
+
+# --- Сводки задним числом ---------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "За прошедшую ночь силами ПВО уничтожено 328 БПЛА над территориями "
+    "Белгородской, Брянской, Воронежской областей",
+    "⚡️ В течение прошедшей ночи в период с 20.00 мск 25 июля до 8.00 мск "
+    "26 июля дежурными силами ПВО перехвачено 47 БПЛА над Крымом",
+    "Минувшей ночью над Ростовской областью уничтожены беспилотники",
+])
+def test_recap_of_finished_night_is_not_a_live_event(text):
+    assert parse(text).relevant is False
+
+
+@pytest.mark.parametrize("text", [
+    "❗️Таманский полуостров Повышенное внимание по БПЛА этой ночью",
+    "Ростовская область Опасность по БПЛА",
+    "Отбой опасности БПЛА в Воронежской области",
+])
+def test_live_alert_survives_recap_filter(text):
+    assert parse(text).relevant is True

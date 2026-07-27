@@ -91,7 +91,7 @@ def rebuild(connection) -> dict:
             stats["irrelevant"] += 1
             continue
 
-        resolved = geocoder.resolve(observation.place_phrases)
+        resolved = geocoder.drop_covered(geocoder.resolve(observation.place_phrases))
         if not resolved:
             # Часть каналов не называет место: регион зашит в имя канала.
             # Такое событие кладём на регион источника — грубее, чем район

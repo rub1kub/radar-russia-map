@@ -722,6 +722,30 @@ class Geocoder:
         scored.sort(key=lambda item: (-item[0], item[1]))
         return scored[0][1]
 
+    def drop_covered(self, resolved: list[Resolved]) -> list[Resolved]:
+        """Убрать зоны, которые лишь родители других зон того же сообщения.
+
+        «Лискинский район, Воронежская область» — это одно место, названное
+        с уточнением, а не два события. Раньше наблюдение создавалось на обе
+        зоны, и областные наблюдения из разных районов сливались в одно
+        региональное событие: счётчик независимых источников надувался, хотя
+        каждый сообщал про свой район.
+
+        Область при этом не теряется: /state поднимает событие по всей
+        цепочке zone_path, и регион подсвечивается ровно как раньше.
+        """
+        if len(resolved) < 2:
+            return resolved
+
+        covered: set[str] = set()
+        for item in resolved:
+            # Всё, что выше найденной зоны, названо как уточнение к ней.
+            covered.update(self.chain(item.zone_id)[1:])
+
+        kept = [item for item in resolved if item.zone_id not in covered]
+        # Если сообщение назвало только регион, оставляем его как есть.
+        return kept or resolved
+
     def primary(self, resolved: list[Resolved]) -> Resolved | None:
         """Самая специфичная зона наблюдения."""
         if not resolved:

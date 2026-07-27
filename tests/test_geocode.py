@@ -179,3 +179,39 @@ def test_lone_match_is_its_own_witness(geocoder):
     assert names(geocoder.resolve(["Тихорецк"])) == ["Тихорецкий район"]
     assert names(geocoder.resolve(["ОТБОЙ РАКЕТНОЙ ОПАСНОСТИ в Шебекинском МО"])) \
         == ["Шебекинский район"]
+
+
+# --- Уточнение против отдельного места --------------------------------------
+
+def test_named_region_after_district_is_only_a_qualifier(geocoder):
+    """«Лискинский район, Воронежская область» — одно место, а не два.
+
+    Наблюдение создавалось на обе зоны, и областные наблюдения из разных
+    районов сливались в одно региональное событие: каждый источник сообщал
+    про свой район, а счётчик подтверждений рос так, будто все говорили об
+    одном. Область не теряется — карта поднимает событие по цепочке зон.
+    """
+    kept = geocoder.drop_covered(
+        geocoder.resolve(["Лискинский район", "Воронежская область"])
+    )
+    assert [item.name for item in kept] == ["Лискинский район"]
+
+
+def test_place_wins_over_its_district_and_region(geocoder):
+    kept = geocoder.drop_covered(
+        geocoder.resolve(["Колыбелка", "Лискинский район", "Воронежская область"])
+    )
+    assert [item.name for item in kept] == ["Колыбелка"]
+
+
+def test_unrelated_zones_all_survive(geocoder):
+    """Два соседних региона в одном сообщении — два разных места."""
+    kept = geocoder.drop_covered(
+        geocoder.resolve(["Ярославская область", "Костромская область"])
+    )
+    assert {item.name for item in kept} == {"Ярославская область", "Костромская область"}
+
+
+def test_lone_region_is_kept(geocoder):
+    kept = geocoder.drop_covered(geocoder.resolve(["Воронежская область"]))
+    assert [item.name for item in kept] == ["Воронежская область"]

@@ -275,3 +275,45 @@ def test_stale_watermark_below_provenance_is_ignored(db, geocoder):
     stats = sweep(db, geocoder, 6)
     assert stats["scanned"] == 0
     assert rows(db, "SELECT COUNT(*) n FROM events")[0]["n"] == before
+
+
+# --- Перепост между проходами -----------------------------------------------
+
+# Длинный текст с подписью канала: перепост отличается от оригинала ровно ею.
+LONG = (
+    "Азовский район, Опасность по БПЛА. Ударные беспилотники идут с юго-запада "
+    "в сторону Азова и далее вглубь Ростовской области, ожидается работа ПВО, "
+    "оставайтесь в укрытиях до сигнала отбоя"
+)
+
+
+def test_verbatim_repost_across_passes_is_one_voice(db, geocoder):
+    """Перепост, пришедший следующим проходом, не добавляет свидетельства.
+
+    Голоса и тексты поднимаются вместе с событием, иначе слияние внутри
+    одного прохода считало бы копию одним голосом, а между проходами —
+    двумя, и достоверность зависела бы от того, когда сработал конвейер.
+    """
+    post(db, 1, "alpha", 0, LONG + "\n\n❗️Радар Азов - @radar_azov")
+    sweep(db, geocoder, 3)
+    alone = rows(db, "SELECT confidence FROM events")[0]["confidence"]
+
+    post(db, 2, "beta", 3, LONG + "\n\n📣 Подписаться - @rostov_radar")
+    sweep(db, geocoder, 6)
+
+    events = rows(db, "SELECT source_count, confidence FROM events")
+    assert len(events) == 1
+    assert events[0]["source_count"] == 1
+    assert events[0]["confidence"] == alone
+
+
+def test_own_wording_across_passes_still_confirms(db, geocoder):
+    post(db, 1, "alpha", 0, LONG)
+    sweep(db, geocoder, 3)
+
+    post(db, 2, "beta", 3, "Азовский район\nРабота ПВО по БПЛА, слышны взрывы")
+    sweep(db, geocoder, 6)
+
+    events = rows(db, "SELECT source_count FROM events")
+    assert len(events) == 1
+    assert events[0]["source_count"] == 2
