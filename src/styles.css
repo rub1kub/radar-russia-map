@@ -1595,15 +1595,33 @@ button {
 }
 
 /* У правой панели подсказка уходила бы за край окна. */
-.details-panel [data-tip]::after,
 .stat-zones::after {
   left: auto;
   right: 0;
   transform: translateX(0) translateY(-3px);
 }
 
-.details-panel [data-tip]:hover::after,
-.stat-zones:hover::after {
+.stat-zones:hover::after { transform: translateX(0) translateY(0); }
+
+/* Подсказки в ленте отмеряются от строки фильтров, а не от самой кнопки.
+   Привязка к кнопке ставила подсказку по её краю: у цветной точки шириной
+   в 20 px двухсотпиксельная подсказка уезжала за левый край панели прямо
+   на карту. Кнопка внутри строки нарочно position: static — тогда
+   содержащим блоком для ::after становится сама строка, и ширина
+   ограничивается её шириной. */
+.feed-filters { position: relative; }
+.feed-filters [data-tip] { position: static; }
+
+.feed-filters [data-tip]::after {
+  top: calc(100% + 7px);
+  left: 0;
+  right: auto;
+  max-width: 100%;
+  transform: translateX(0) translateY(-3px);
+}
+
+.feed-filters [data-tip]:hover::after,
+.feed-filters [data-tip]:focus-visible::after {
   transform: translateX(0) translateY(0);
 }
 
