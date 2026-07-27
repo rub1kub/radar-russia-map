@@ -127,9 +127,10 @@ const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© Open
 const HILLSHADE_URL =
   import.meta.env.VITE_HILLSHADE_URL || "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}";
 const HILLSHADE_ATTRIBUTION = import.meta.env.VITE_HILLSHADE_ATTRIBUTION || "Tiles © Esri";
-const OVERVIEW_CENTER = fromLonLat([96, 63]);
-const DESKTOP_OVERVIEW_ZOOM = 2.35;
-const MOBILE_OVERVIEW_ZOOM = 1.9;
+// Стартовый вид — европейская часть, где происходит почти вся обстановка.
+const OVERVIEW_CENTER = fromLonLat([41, 53.5]);
+const DESKTOP_OVERVIEW_ZOOM = 4.15;
+const MOBILE_OVERVIEW_ZOOM = 3.3;
 const MAX_SUGGESTIONS = 10;
 const MOBILE_QUERY = "(max-width: 760px)";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -163,6 +164,19 @@ function severityColor(severity: number, alpha: number): string {
   if (severity >= 4) return `rgba(228, 178, 62, ${alpha})`;
   return `rgba(140, 152, 146, ${alpha})`;
 }
+
+const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: string }> = [
+  { key: "basemap", label: "Подложка", swatch: "swatch-basemap" },
+  { key: "regions", label: "Регионы", swatch: "swatch-region" },
+  { key: "districts", label: "Районы", swatch: "swatch-district" },
+  { key: "places", label: "Населенные пункты", swatch: "swatch-city" },
+  { key: "roads", label: "Дороги", swatch: "swatch-road" },
+  { key: "railways", label: "Железные дороги", swatch: "swatch-railway" },
+  { key: "urbanAreas", label: "Контуры городов", swatch: "swatch-urban" },
+  { key: "waterBodies", label: "Водоемы", swatch: "swatch-water" },
+  { key: "rivers", label: "Реки", swatch: "swatch-river" },
+  { key: "landCover", label: "Леса и болота", swatch: "swatch-land-cover" }
+];
 
 const numberFormat = new Intl.NumberFormat("ru-RU");
 const emptySelected: SelectedObject = {
@@ -456,58 +470,31 @@ function createRiverNetworkStyle(feature: FeatureLike, resolution: number) {
   return style;
 }
 
-function createEventStyle(feature: FeatureLike, resolution: number) {
+function createEventStyle(feature: FeatureLike) {
   const severity = asNumber(feature.get("severity"), 4);
   const confidence = asNumber(feature.get("confidence"), 0.4);
-  const sourceCount = asNumber(feature.get("sourceCount"), 1);
-  const zoom = resolutionToZoom(resolution);
   const fading = feature.get("status") === "fading";
 
-  // Размер — от достоверности, цвет — от опасности. Слабо подтвержденное
-  // событие видно, но не кричит.
-  const radius = 4 + confidence * 7 + Math.min(sourceCount, 6) * 0.5;
-  const alpha = (fading ? 0.3 : 0.72) * (0.45 + confidence * 0.55);
+  // Только цветная точка: цвет — опасность, размер и плотность — насколько
+  // событие подтверждено. Ни цифр, ни подписей — названия уже есть на карте.
+  const radius = 5 + confidence * 5;
+  const alpha = (fading ? 0.34 : 0.8) * (0.5 + confidence * 0.5);
 
-  const styles = [
+  return [
     new Style({
       image: new CircleStyle({
-        radius: radius + 4,
-        fill: new Fill({ color: severityColor(severity, alpha * 0.22) })
+        radius: radius + 6,
+        fill: new Fill({ color: severityColor(severity, alpha * 0.18) })
       })
     }),
     new Style({
       image: new CircleStyle({
         radius,
         fill: new Fill({ color: severityColor(severity, alpha) }),
-        stroke: new Stroke({ color: "rgba(255, 255, 255, 0.82)", width: 1.4 })
+        stroke: new Stroke({ color: "rgba(255, 255, 255, 0.9)", width: 1.6 })
       })
     })
   ];
-
-  if (zoom >= 5.4 && sourceCount > 1) {
-    styles.push(new Style({
-      text: new Text({
-        text: String(sourceCount),
-        offsetY: 0.5,
-        font: "700 9px Inter, system-ui, sans-serif",
-        fill: new Fill({ color: "rgba(255, 255, 255, 0.95)" })
-      })
-    }));
-  }
-
-  if (zoom >= 6.2) {
-    styles.push(new Style({
-      text: new Text({
-        text: String(feature.get("placeName") ?? ""),
-        offsetY: -(radius + 11),
-        font: "600 10.5px Inter, system-ui, sans-serif",
-        fill: new Fill({ color: "rgba(46, 40, 36, 0.92)" }),
-        stroke: new Stroke({ color: "rgba(250, 248, 242, 0.86)", width: 2.4 })
-      })
-    }));
-  }
-
-  return styles;
 }
 
 function getClusterItems(feature: FeatureLike): Feature<Geometry>[] {
@@ -1012,7 +999,7 @@ export default function App() {
       target: mapNodeRef.current,
       controls: defaultControls({ attribution: false, zoom: false }).extend([
         new Attribution({ collapsed: true, collapsible: true }),
-        new ScaleLine({ bar: true })
+        new ScaleLine({ minWidth: 90 })
       ]),
       layers: [
         basemapLayer,
@@ -1253,8 +1240,8 @@ export default function App() {
         <div className="brand">
             <MapPinned size={22} aria-hidden="true" />
           <div>
-            <h1>Карта России</h1>
-            <p>Регионы, районы, дороги, рельеф, гидрография и населенные пункты</p>
+            <h1>Карта обстановки</h1>
+            <p>По открытым источникам</p>
           </div>
         </div>
       </header>
@@ -1285,143 +1272,41 @@ export default function App() {
           </section>
 
           <section className="tool-section">
-            <div className="section-heading">
-              <Layers size={18} aria-hidden="true" />
-              <h2>Слои</h2>
+            <div className="severity-legend">
+              <span><i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Ракета, взрыв, ПВО</span>
+              <span><i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога</span>
+              <span><i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность</span>
             </div>
-            <div className="layer-list">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.events}
-                  onChange={(event) => setLayers((current) => ({ ...current, events: event.target.checked }))}
-                />
-                <span className="swatch swatch-event" aria-hidden="true" />
-                <span>Обстановка</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.basemap}
-                  onChange={(event) => setLayers((current) => ({ ...current, basemap: event.target.checked }))}
-                />
-                <span className="swatch swatch-basemap" aria-hidden="true" />
-                <span>Готовая карта</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.landCover}
-                  onChange={(event) => setLayers((current) => ({ ...current, landCover: event.target.checked }))}
-                />
-                <span className="swatch swatch-land-cover" aria-hidden="true" />
-                <span>Леса и болота</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.waterBodies}
-                  onChange={(event) => setLayers((current) => ({ ...current, waterBodies: event.target.checked }))}
-                />
-                <span className="swatch swatch-water" aria-hidden="true" />
-                <span>Водоемы</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.rivers}
-                  onChange={(event) => setLayers((current) => ({ ...current, rivers: event.target.checked }))}
-                />
-                <span className="swatch swatch-river" aria-hidden="true" />
-                <span>Реки</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.urbanAreas}
-                  onChange={(event) => setLayers((current) => ({ ...current, urbanAreas: event.target.checked }))}
-                />
-                <span className="swatch swatch-urban" aria-hidden="true" />
-                <span>Контуры городов</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.roads}
-                  onChange={(event) => setLayers((current) => ({ ...current, roads: event.target.checked }))}
-                />
-                <span className="swatch swatch-road" aria-hidden="true" />
-                <span>Дороги</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.railways}
-                  onChange={(event) => setLayers((current) => ({ ...current, railways: event.target.checked }))}
-                />
-                <span className="swatch swatch-railway" aria-hidden="true" />
-                <span>Железные дороги</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.regions}
-                  onChange={(event) => setLayers((current) => ({ ...current, regions: event.target.checked }))}
-                />
-                <span className="swatch swatch-region" aria-hidden="true" />
-                <span>Регионы</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.districts}
-                  onChange={(event) => setLayers((current) => ({ ...current, districts: event.target.checked }))}
-                />
-                <span className="swatch swatch-district" aria-hidden="true" />
-                <span>Районы</span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={layers.places}
-                  onChange={(event) => setLayers((current) => ({ ...current, places: event.target.checked }))}
-                />
-                <span className="swatch swatch-city" aria-hidden="true" />
-                <span>Населенные пункты</span>
-              </label>
-            </div>
+            <p className="legend-note">
+              Чем ярче и крупнее точка, тем больше независимых источников подтвердили событие.
+            </p>
             <button className="ghost-button" type="button" onClick={resetMap}>
               <Home size={17} aria-hidden="true" />
               <span>Сбросить вид</span>
             </button>
           </section>
 
-          <section className="tool-section">
-            <div className="section-heading">
-              <Info size={18} aria-hidden="true" />
-              <h2>Легенда</h2>
+          <details className="extra-layers">
+            <summary>
+              <Layers size={16} aria-hidden="true" />
+              <span>Слои карты</span>
+            </summary>
+            <div className="layer-list">
+              {LAYER_OPTIONS.map(({ key, label, swatch }) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={layers[key]}
+                    onChange={(event) =>
+                      setLayers((current) => ({ ...current, [key]: event.target.checked }))
+                    }
+                  />
+                  <span className={`swatch ${swatch}`} aria-hidden="true" />
+                  <span>{label}</span>
+                </label>
+              ))}
             </div>
-            <div className="legend-grid">
-              <span className="legend-land-cover" aria-hidden="true" />
-              <span>Лес / болото</span>
-              <span className="legend-water" aria-hidden="true" />
-              <span>Водоем</span>
-              <span className="legend-river" aria-hidden="true" />
-              <span>Река</span>
-              <span className="legend-urban" aria-hidden="true" />
-              <span>Городской контур</span>
-              <span className="legend-road" aria-hidden="true" />
-              <span>Дорога</span>
-              <span className="legend-railway" aria-hidden="true" />
-              <span>Железная дорога</span>
-              <span className="legend-region" aria-hidden="true" />
-              <span>Граница субъекта</span>
-              <span className="legend-district" aria-hidden="true" />
-              <span>Район</span>
-              <span className="legend-city" aria-hidden="true" />
-              <span>Населенный пункт</span>
-            </div>
-          </section>
+          </details>
         </aside>
 
         <section className="map-panel" aria-label="Интерактивная карта">
@@ -1430,66 +1315,45 @@ export default function App() {
           {error ? <div className="map-error">{error}</div> : null}
         </section>
 
-        <aside className="details-panel" aria-label="Данные выбранного объекта">
-          <div className="details-title">
-            <Building2 size={18} aria-hidden="true" />
-            <div>
-              <p>{selected.kind === "place" ? "Населенный пункт" : selected.kind === "district" ? "Район" : "Регион"}</p>
-              <h2>{selected.name}</h2>
-            </div>
+        <aside className="details-panel" aria-label="Обстановка">
+          <div className="feed-top">
+            <h2>Что происходит</h2>
+            <span className={`live-dot ${apiOnline ? "is-live" : "is-off"}`} title={apiOnline ? "Данные обновляются" : "Нет связи"} aria-hidden="true" />
           </div>
-          <p className="details-subtitle">{selected.subtitle}</p>
-          <dl className="details-list">
-            {selected.details.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
 
-          <div className="section-heading feed-heading">
-            <Activity size={18} aria-hidden="true" />
-            <h2>Обстановка</h2>
-            <span className={`live-dot ${apiOnline ? "is-live" : "is-off"}`} aria-hidden="true" />
-          </div>
+          {selected.id !== "none" ? (
+            <button className="selected-card" type="button" onClick={() => applySelectedFeature(null)}>
+              <Building2 size={16} aria-hidden="true" />
+              <span>{selected.name}</span>
+              <small>{selected.kind === "place" ? "населенный пункт" : selected.kind === "district" ? "район" : "регион"}</small>
+            </button>
+          ) : null}
 
           {apiOnline === false ? (
-            <p className="feed-empty">
-              API конвейера недоступен. Запустите:
-              <code>uvicorn api.server:app --port 8000</code>
-            </p>
+            <p className="feed-empty">Нет связи с сервером. Обновите страницу.</p>
           ) : radarState ? (
             <>
               <p className="feed-summary">
-                {radarState.active_events} активных событий · {radarState.active_zones} зон
+                <strong>{radarState.active_events}</strong> активных сообщений
               </p>
               <ul className="event-feed">
                 {radarState.events.slice(0, 40).map((event) => (
                   <li key={event.id} className={event.status === "fading" ? "is-fading" : undefined}>
-                    <span className="event-dot" style={{ background: severityColor(event.severity, 0.92) }} aria-hidden="true" />
+                    <span className="event-dot" style={{ background: severityColor(event.severity, 0.95) }} aria-hidden="true" />
                     <div className="event-body">
                       <p className="event-title">{event.place_name}</p>
                       <p className="event-meta">
                         {SIGNAL_LABELS[event.signal_type] ?? event.signal_type}
-                        {" · "}
-                        {THREAT_LABELS[event.threat_type] ?? event.threat_type}
-                        {event.target_count ? ` · ${event.target_count} целей` : ""}
-                      </p>
-                      <p className="event-conf">
-                        достоверность {Math.round(event.confidence * 100)}%
-                        {" · "}
-                        {event.source_count} источн.
-                        {" · "}
-                        {event.last_seen_at.slice(11, 16)}
+                        {event.threat_type !== "unknown" ? ` · ${THREAT_LABELS[event.threat_type] ?? event.threat_type}` : ""}
                       </p>
                     </div>
+                    <span className="event-time">{event.last_seen_at.slice(11, 16)}</span>
                   </li>
                 ))}
               </ul>
             </>
           ) : (
-            <p className="feed-empty">Загрузка обстановки…</p>
+            <p className="feed-empty">Загрузка…</p>
           )}
         </aside>
       </main>

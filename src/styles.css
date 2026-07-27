@@ -714,3 +714,129 @@ button {
   color: rgba(88, 95, 90, 0.72);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Минималистичная компоновка ------------------------------------------ */
+
+.severity-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.severity-legend span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: rgba(228, 232, 226, 0.88);
+}
+
+.severity-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14);
+}
+
+.legend-note {
+  margin: 0 0 14px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(198, 205, 199, 0.6);
+}
+
+.extra-layers {
+  margin-top: 4px;
+}
+
+.extra-layers summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 9px 2px;
+  font-size: 13px;
+  color: rgba(206, 213, 206, 0.72);
+  list-style: none;
+}
+
+.extra-layers summary::-webkit-details-marker { display: none; }
+.extra-layers summary::after { content: "▾"; margin-left: auto; opacity: 0.5; }
+.extra-layers[open] summary::after { content: "▴"; }
+.extra-layers summary:hover { color: rgba(232, 238, 231, 0.95); }
+
+.extra-layers .layer-list { margin-top: 4px; }
+
+.feed-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.feed-top h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.feed-top .live-dot { margin-left: auto; }
+
+.selected-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(228, 178, 93, 0.14);
+  color: rgba(240, 235, 224, 0.95);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selected-card small {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.62;
+}
+
+.feed-summary {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: rgba(200, 207, 201, 0.72);
+}
+
+.feed-summary strong {
+  color: rgba(240, 244, 238, 0.96);
+  font-size: 15px;
+}
+
+.event-feed li {
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.event-title {
+  color: rgba(238, 242, 236, 0.96);
+  font-size: 13.5px;
+}
+
+.event-meta {
+  color: rgba(196, 204, 197, 0.72);
+  font-size: 11.5px;
+}
+
+.event-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgba(178, 186, 179, 0.6);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
