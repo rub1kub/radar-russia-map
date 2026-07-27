@@ -215,3 +215,48 @@ def test_unrelated_zones_all_survive(geocoder):
 def test_lone_region_is_kept(geocoder):
     kept = geocoder.drop_covered(geocoder.resolve(["Воронежская область"]))
     assert [item.name for item in kept] == ["Воронежская область"]
+
+
+# --- Новые регионы и подписи районов ----------------------------------------
+
+@pytest.mark.parametrize("region", [
+    "Республика Крым",
+    "Донецкая Народная Республика",
+    "Луганская Народная Республика",
+    "Херсонская область",
+    "Запорожская область",
+])
+def test_new_regions_have_districts(geocoder, region):
+    """Районов у этих регионов не было вовсе.
+
+    Шесть с половиной тысяч НП висели прямо под регионом: сообщение про
+    Бахчисарайский район не находило зоны, а карта не могла закрасить район.
+    """
+    zone_id = next(
+        zid for zid, zone in geocoder.zones.items()
+        if zone["level"] == "region" and zone["name_ru"] == region
+    )
+    districts = [
+        zone for zone in geocoder.zones.values()
+        if zone["level"] == "district" and zone["parent_id"] == zone_id
+    ]
+    assert len(districts) >= 10
+
+
+def test_district_of_named_place_matches_it(geocoder):
+    """Подпись района не должна съезжать на соседний.
+
+    Полигон Анапского округа назывался «городской округ Новороссий», полигон
+    Калининграда — «Королёв», полигон Ставрополя — «Тольятти».
+    """
+    for place, district in (
+        ("Анапа", "Анапа"),
+        ("Новороссийск", "Новороссийск"),
+        ("Калининград", "Калининград"),
+        ("Ставрополь", "Ставрополь"),
+    ):
+        resolved = geocoder.resolve([place])
+        assert resolved, place
+        chain = geocoder.chain(resolved[0].zone_id)
+        names = [geocoder.zones[zid]["name_ru"] for zid in chain]
+        assert district in names, f"{place}: {names}"

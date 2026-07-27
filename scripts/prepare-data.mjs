@@ -1060,8 +1060,51 @@ const landCover = compactFeatureCollection(
 writeJson("land-cover.json", landCover);
 
 const geoBoundariesAdm2 = readJson("research/data_sources/geoboundaries_RUS_ADM2_simplified.geojson");
+
+// Районы регионов, которых в наборе RUS нет вовсе: Крым, Севастополь, ДНР,
+// ЛНР, Херсонская и Запорожская области. Сами регионы добавлены отдельным
+// файлом supplemental_regions_admin1, а районов у них не было ни одного —
+// шесть с половиной тысяч НП висели прямо под регионом, и сообщение про
+// Бахчисарайский район не находило зоны, а карта не могла закрасить район.
+//
+// Берётся набор UKR ADM2 за 2006 год: он повторяет доreform-ную сетку районов,
+// а она совпадает с нынешней российской заметно лучше, чем украинская реформа
+// 2020 года, укрупнившая районы втрое.
+const supplementalRegionNames = new Set([
+  "Республика Крым",
+  "Севастополь",
+  "Донецкая Народная Республика",
+  "Луганская Народная Республика",
+  "Херсонская область",
+  "Запорожская область"
+]);
+const supplementalRegionFeatures = regions.features.filter((feature) =>
+  supplementalRegionNames.has(feature.properties?.name)
+);
+const matchesSupplementalPoint = createRegionPointMatcher({
+  type: "FeatureCollection",
+  features: supplementalRegionFeatures
+});
+// Доля точек контура, которая должна лежать внутри наших регионов. Район на
+// границе принадлежит той стороне, где лежит его основная часть; половины
+// мало — приграничный украинский район зашёл бы наравне со своим.
+const supplementalShare = 0.6;
+const insideSupplementalRegions = (feature) => {
+  const points = getCoordinatePoints(feature.geometry?.coordinates);
+  if (!points.length) return false;
+  let hits = 0;
+  for (const point of points) if (matchesSupplementalPoint(point)) hits += 1;
+  return hits / points.length >= supplementalShare;
+};
+
+const geoBoundariesUkrAdm2 = readJson("research/data_sources/geoboundaries_UKR_ADM2_simplified.geojson");
+const supplementalAdm2 = geoBoundariesUkrAdm2.features.filter(insideSupplementalRegions);
+
 const districts = compactFeatureCollection(
-  geoBoundariesAdm2,
+  {
+    type: "FeatureCollection",
+    features: [...geoBoundariesAdm2.features, ...supplementalAdm2]
+  },
   (props, index) => ({
     id: props.shapeID ?? `district-${index}`,
     name: resolveDistrictName(props.shapeName, districtNameLookup),
