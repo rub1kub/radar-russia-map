@@ -11,7 +11,8 @@ import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .textnorm import norm_key, stem_key, stem_word
+from .textnorm import (expand_units, form_gender, name_gender, norm_key,
+                       stem_key, stem_word)
 
 # Названия НП, совпадающие с обиходными словами. Принимаются только при
 # явном контексте региона или района, иначе дают массовые ложные срабатывания.
@@ -44,6 +45,14 @@ STOPWORDS = {
     # Стороны света в сводках всегда описывают направление подлёта («на восток»,
     # «с востока»), но в справочнике есть посёлок Восток — и он собирал их все.
     "восток", "запад", "север", "юг",
+    # Типовые слова НП сами по себе не топоним. Двусловные имена вроде
+    # «Станица Луганская» это не задевает: проверка работает только на
+    # одиночном ключе, а длинная n-грамма пробуется раньше.
+    "станица", "село", "хутор", "деревня", "поселок", "посёлок", "пгт",
+    "микрорайон", "мкр", "аул",
+    # Местоимения и вежливость из подписей каналов: в справочнике есть
+    # деревни Ваша, Наша, Моя, и «ваша поддержка» уходила в них.
+    "ваша", "ваши", "наша", "наши", "своя", "свои", "всем", "всех",
 }
 
 # Стеммированные варианты защитных списков. Без них «по краю», «в районе»,
@@ -62,6 +71,61 @@ FEATURE_HEADS = {
 }
 FEATURE_HEAD_STEMS = {stem_word(word) for word in FEATURE_HEADS}
 
+# Слова-маркеры типа НП. После expand_units сокращения раскрыты в полные
+# слова, поэтому маркер здесь всегда однозначен. За маркером стоит название
+# населённого пункта — этого хватает, чтобы снять пороги безвестности и
+# отбросить одноимённую область: «Ст. Воронежская» под Усть-Лабинском
+# разрешалась в Воронежскую область за 700 км.
+# Хранятся стеммами: маркер сам стоит в косвенном падеже не реже названия —
+# «в станице Раевской», «в посёлке Афипском».
+PLACE_MARKER_STEMS = {stem_word(word) for word in (
+    "город", "поселок", "село", "станица", "хутор", "деревня", "аул",
+    "слобода", "пгт", "рп", "микрорайон", "мкр",
+)}
+
+# Названия регионов, которых нет в справочнике: он хранит короткую форму
+# («Чувашия», «Удмуртия»), а каналы пишут официальную или аббревиатуру.
+# ДНР и ЛНР в сводках почти всегда только аббревиатурой — 303 сообщения.
+REGION_ALIASES = {
+    "днр": "донецкая народная республика",
+    "лнр": "луганская народная республика",
+    "хмао": "ханты-мансийский автономный округ — югра",
+    "югра": "ханты-мансийский автономный округ — югра",
+    "янао": "ямало-ненецкий автономный округ",
+    "нао": "ненецкий автономный округ",
+    "еао": "еврейская автономная область",
+    "кбр": "кабардино-балкария",
+    "кабардино-балкарская республика": "кабардино-балкария",
+    "кчр": "карачаево-черкесия",
+    "карачаево-черкесская республика": "карачаево-черкесия",
+    "чувашская республика": "чувашия",
+    "удмуртская республика": "удмуртия",
+    "чеченская республика": "чечня",
+    "северная осетия": "республика северная осетия-алания",
+    "рсо": "республика северная осетия-алания",
+    "подмосковье": "московская область",
+    "спб": "санкт-петербург",
+    "питер": "санкт-петербург",
+}
+
+# Физико-географические ориентиры, которых в справочнике нет вовсе, но
+# каждый целиком лежит в одной админ-единице. Без них 62 сообщения про
+# мост и Тамань не геокодировались ничем.
+FEATURE_ALIASES = {
+    "крымский мост": "керчь",
+    "керченский мост": "керчь",
+    "таманский полуостров": "темрюкский район",
+    "керченский полуостров": "керчь",
+}
+
+# Ключи короче четырёх букв обычно мусор, но аббревиатуры регионов надо
+# пропускать: «ДНР», «ЛНР», «КБР», «РСО».
+#
+# Порог именно четыре, а не три: у трёхбуквенных ключей на корпусе 249
+# срабатываний из 425 дал предлог «над» — стеммер режет до него Надым. Цена
+# порога — «в Ялте» и «Саки» в косвенном падеже, это признанный недобор.
+SHORT_KEYS = {key for key in REGION_ALIASES if len(key) < 4}
+
 # Ниже этого порога населенный пункт слишком безвестен, чтобы его называли
 # одним словом в сводке. Отсекает «Примерный», «Крайний», «Ударное».
 MIN_PLACE_POPULATION = 1_000
@@ -71,6 +135,16 @@ MIN_PLACE_POPULATION = 1_000
 # районов и 209 789 НП найдётся тёзка любому обиходному прилагательному —
 # «в свободном доступе» разрешалось в городской округ Свободный.
 PROMINENT_POPULATION = 20_000
+
+# Крупный город называют вместо района, и одноимённая админ-единица в чужом
+# регионе не должна его перебивать: «Донецк» в сводках — миллионник в ДНР,
+# а не городской округ Донецк Ростовской области.
+MAJOR_CITY_POPULATION = 100_000
+
+# Типовые слова района: после них «Анапский» — это админ-единица, а не хутор.
+# Хранятся стеммами, потому что в сводках стоят в косвенном падеже:
+# «Анапского района», «по Темрюкскому округу».
+DISTRICT_HEAD_STEMS = {stem_word(word) for word in ("район", "округ", "муниципалитет")}
 
 # Окончания, которые у существительного не встречаются: «Раевскую»,
 # «Анапского», «Воронежскими» — только прилагательное.
@@ -112,6 +186,12 @@ class Match:
     # Исходная словоформа одиночного стеммированного матча: по её окончанию
     # видно, прилагательное это или существительное. У остальных матчей пусто.
     word: str = ""
+    # Перед n-граммой стояло типовое слово НП («ст. Динская»). Явный маркер
+    # снимает пороги безвестности: автор сам сказал, что это населённый пункт.
+    marked: bool = False
+    # Запасной стеммированный матч на той же позиции. Пробуется, только если
+    # точный не дал ни одной зоны.
+    alternative: "Match | None" = None
 
     @property
     def adjectival(self) -> bool:
@@ -135,18 +215,55 @@ class Geocoder:
         # Стеммированный индекс строится здесь, а не в справочнике: zone_names
         # заполняет gazetteer, и держать там производный ключ значило бы
         # пересобирать весь справочник ради правки стеммера.
+        #
+        # Хранимый norm прогоняется через norm_key повторно: он идемпотентен,
+        # но правила нормализации могли поменяться после сборки справочника
+        # (так «туапсэ» приводится к «туапсе»), а пересобирать 222 тысячи имён
+        # ради этого не нужно.
+        name_sets: dict[str, set[str]] = {}
         stem_sets: dict[str, set[str]] = {}
         for row in self.connection.execute("SELECT norm, zone_id FROM zone_names"):
-            norm, zone_id = row["norm"], row["zone_id"]
-            self.by_name.setdefault(norm, []).append(zone_id)
+            norm, zone_id = norm_key(row["norm"]), row["zone_id"]
+            name_sets.setdefault(norm, set()).add(zone_id)
             stem_sets.setdefault(stem_key(norm), set()).add(zone_id)
-        # Порядок фиксируем, чтобы разбор был воспроизводимым от запуска к запуску.
-        self.by_stem = {stem: sorted(ids) for stem, ids in stem_sets.items()}
 
         for row in self.connection.execute(
             "SELECT id, parent_id, level, name_ru, lat, lon, population FROM zones"
         ):
             self.zones[row["id"]] = dict(row)
+
+        self._add_aliases(name_sets, stem_sets)
+        # Порядок фиксируем, чтобы разбор был воспроизводимым от запуска к запуску.
+        self.by_name = {name: sorted(ids) for name, ids in name_sets.items()}
+        self.by_stem = {stem: sorted(ids) for stem, ids in stem_sets.items()}
+
+    def _add_aliases(self, name_sets: dict[str, set[str]],
+                     stem_sets: dict[str, set[str]]) -> None:
+        """Синонимы, которых в справочнике нет: аббревиатуры и ориентиры.
+
+        Псевдоним ведёт на уже существующую зону, поэтому новых зон не
+        появляется и цепочки родителей остаются прежними. Регион берётся
+        только регионом, ориентир — только той единицей, внутри которой он
+        целиком лежит, иначе псевдоним стал бы источником шума.
+        """
+        def region(zone: dict) -> bool:
+            return zone["level"] == "region"
+
+        def landmark(zone: dict) -> bool:
+            # У ориентира цель одна и заметная: район или крупный город.
+            # Иначе «Керчь» затянула бы одноимённые деревни.
+            return zone["level"] != "place" or (
+                zone["population"] or 0) >= PROMINENT_POPULATION
+
+        for aliases, accept in ((REGION_ALIASES, region), (FEATURE_ALIASES, landmark)):
+            for alias, target in aliases.items():
+                key = norm_key(alias)
+                hits = [zone_id for zone_id in name_sets.get(norm_key(target), ())
+                        if accept(self.zones[zone_id])]
+                if not hits:
+                    continue
+                name_sets.setdefault(key, set()).update(hits)
+                stem_sets.setdefault(stem_key(key), set()).update(hits)
 
     @lru_cache(maxsize=100_000)
     def chain(self, zone_id: str) -> tuple[str, ...]:
@@ -198,7 +315,9 @@ class Geocoder:
             key = " ".join(words[index:index + size])
             if not exact:
                 key = stem_key(key)
-            if len(key) < 4 or self._is_event_word(key, size, stemmed=not exact):
+            if len(key) < 4 and key not in SHORT_KEYS:
+                continue
+            if self._is_event_word(key, size, stemmed=not exact):
                 continue
             if self._heads_feature(words, index, size):
                 continue
@@ -207,17 +326,58 @@ class Geocoder:
                 return key, hits, size
         return None
 
-    def _match(self, words: list[str], index: int) -> tuple[Match, int] | None:
-        """Матч с позиции index: сначала точный индекс, затем стеммированный."""
-        hit = self._lookup(words, index, exact=True)
-        exact = hit is not None
-        if hit is None:
-            hit = self._lookup(words, index, exact=False)
-        if hit is None:
+    def _lookup_district(self, words: list[str],
+                         index: int) -> tuple[str, list[str], int] | None:
+        """«Анапский район» -> Анапа: района в справочнике нет, а город есть.
+
+        Прилагательное от имени города строится суффиксом «-ск-» (Анапа ->
+        анапский, Тихорецк -> тихорецкий), поэтому основу восстанавливаем
+        обратным ходом. Ход неоднозначный, так что срабатывает он только
+        последним, только перед типовым словом района и только если за
+        основой стоит заметная зона — иначе любое прилагательное находило бы
+        себе безвестного тёзку.
+        """
+        if (index + 1 >= len(words)
+                or stem_word(words[index + 1]) not in DISTRICT_HEAD_STEMS):
             return None
+        stem = stem_word(words[index])
+        if not stem.endswith("ск") or len(stem) < 5:
+            return None
+        base = stem[:-2]
+        hits = [zone_id for zone_id in self.by_stem.get(base, ())
+                if self._is_prominent([zone_id])]
+        return (base, hits, 2) if hits else None
+
+    def _build(self, words: list[str], index: int,
+               hit: tuple[str, list[str], int], exact: bool) -> Match:
         key, zone_ids, size = hit
         word = "" if exact or size != 1 else words[index]
-        return Match(key, zone_ids, exact, word), size
+        marked = index > 0 and stem_word(words[index - 1]) in PLACE_MARKER_STEMS
+        return Match(key, zone_ids, exact, word, marked)
+
+    def _match(self, words: list[str], index: int) -> tuple[Match, int] | None:
+        """Матч с позиции index: сначала точный индекс, затем стеммированный."""
+        exact_hit = self._lookup(words, index, exact=True)
+        stem_hit = self._lookup(words, index, exact=False)
+        hit, exact = (exact_hit, True) if exact_hit else (stem_hit, False)
+        # Найденное перед словом «район» одно лишь скопление хуторов — это не
+        # район: у «Анапский район» в справочнике два одноимённых хутора и ни
+        # одной админ-единицы. Тогда пробуем восстановить город по основе.
+        if hit is None or not any(
+                self.zones[zone_id]["level"] != "place" for zone_id in hit[1]):
+            fallback = self._lookup_district(words, index)
+            if fallback is not None:
+                hit, exact = fallback, False
+        if hit is None:
+            return None
+        match = self._build(words, index, hit, exact)
+        # Точная форма надёжнее, но в справочнике есть имена, записанные уже в
+        # косвенном падеже («Лисичанске», «Бердянске» — безымянные хутора).
+        # Такой тёзка перехватывал точный проход и хоронил настоящий город,
+        # поэтому стеммированный вариант остаётся запасным.
+        if exact and stem_hit is not None and stem_hit[0] != hit[0]:
+            match.alternative = self._build(words, index, stem_hit, False)
+        return match, hit[2]
 
     def _scan(self, phrase: str) -> list[Match]:
         """Скользящее сопоставление n-грамм, длинные совпадения приоритетнее.
@@ -229,7 +389,7 @@ class Geocoder:
         С каждой позиции сначала пробуется точный индекс и только потом
         стеммированный: справочник в именительном падеже надёжнее огрызка.
         """
-        words = norm_key(phrase).split()
+        words = norm_key(expand_units(phrase)).split()
         found: list[Match] = []
         index = 0
         while index < len(words):
@@ -260,6 +420,9 @@ class Geocoder:
         used: set[str] = set()
         for match in candidates:
             best = self._pick(match, context)
+            if best is None and match.alternative is not None:
+                match = match.alternative
+                best = self._pick(match, context)
             if best is None or best in used:
                 continue
             used.add(best)
@@ -279,7 +442,29 @@ class Geocoder:
             return match.zone_ids
         admin = [zone_id for zone_id in match.zone_ids
                  if self.zones[zone_id]["level"] != "place"]
-        return admin or match.zone_ids
+        return admin or self._agreeing(match, match.zone_ids)
+
+    def _agreeing(self, match: Match, zone_ids: list[str]) -> list[str]:
+        """Оставить НП, у которых род имени сходится с родом словоформы.
+
+        «в станице Раевской» — это Раевская под Новороссийском, а не посёлок
+        Раевский в Башкортостане, куда разбор уходил за 1 600 км: стеммер даёт
+        обоим ключ «раевск». Админ-единицы не трогаем — там род определяется
+        типовым словом («Воронежская область»), а не именем.
+
+        Если род не определён или ни один кандидат не согласуется, список
+        возвращается целиком: правило только разводит тёзок, но никогда не
+        отбирает единственный вариант.
+        """
+        gender = form_gender(match.word)
+        if not gender:
+            return zone_ids
+        agreeing = [
+            zone_id for zone_id in zone_ids
+            if self.zones[zone_id]["level"] != "place"
+            or name_gender(self.zones[zone_id]["name_ru"]) == gender
+        ]
+        return agreeing or zone_ids
 
     def _is_prominent(self, zone_ids: list[str]) -> bool:
         """Есть ли за ключом регион или крупный НП, узнаваемый без контекста."""
@@ -290,6 +475,16 @@ class Geocoder:
             if (zone["population"] or 0) >= PROMINENT_POPULATION:
                 return True
         return False
+
+    def _is_noun_form(self, key: str) -> bool:
+        """Обрезок совпал с полным именем справочника — значит, это оно и есть.
+
+        «над Краснодаром» и «над Белгородом» стеммер режет до «краснодар» и
+        «белгород», а это готовые имена зон: существительное в косвенном
+        падеже. У прилагательного так не выходит — «в свободном» даёт
+        «свободн», такого имени нет, и правило его не пропускает.
+        """
+        return key in self.by_name
 
     def _pick(self, match: Match, context: set[str]) -> str | None:
         key = match.key
@@ -304,28 +499,52 @@ class Geocoder:
         ambiguous = key in AMBIGUOUS or (single and stem in AMBIGUOUS_STEMS)
 
         candidates = self._candidates(match)
+        # Явный маркер типа НП («х. Недвиговка») отменяет обе догадки: автор
+        # прямо сказал, что дальше идёт населённый пункт. Одноимённые области
+        # и районы при этом отбрасываются — «Ст. Воронежская» под
+        # Усть-Лабинском разрешалась в Воронежскую область за 700 км.
+        if match.marked:
+            places = [zone_id for zone_id in candidates
+                      if self.zones[zone_id]["level"] == "place"]
+            covering = {ancestor for zone_id in places
+                        for ancestor in self.chain(zone_id)}
+            # Одноимённую единицу, внутри которой этот НП и лежит, оставляем:
+            # «г. Краснодар» — это городской округ Краснодар, и дробить одно
+            # место на две зоны нельзя, иначе события перестанут сливаться.
+            candidates = [zone_id for zone_id in candidates
+                          if zone_id in covering] or candidates
+
         # Прилагательное в косвенном падеже, за которым в справочнике стоят
         # только НП, без контекста почти всегда чужой тёзка: «через Раевскую»
         # под Новороссийском разрешалось в Раевский в Башкортостане (1 600 км).
         stray_adjective = match.adjective_only and all(
             self.zones[zone_id]["level"] == "place" for zone_id in candidates)
-        prominent = weak and not stray_adjective and self._is_prominent(candidates)
+        prominent = weak and not stray_adjective and (
+            self._is_prominent(candidates) or self._is_noun_form(key))
+        admin_ids = {zone_id for zone_id in candidates
+                     if self.zones[zone_id]["level"] != "place"}
 
         scored: list[tuple[float, str]] = []
         for zone_id in candidates:
             zone = self.zones[zone_id]
             in_context = bool(set(self.chain(zone_id)) & context)
 
+            # Маркер здесь ничего не меняет. Он говорит «дальше населённый
+            # пункт», но не говорит КАКОЙ, а у обиходного слова тёзок сотни:
+            # «посёлок Победа» без контекста уходил в Побэду на 562 жителя в
+            # ДНР, «село Родина» — в Башкортостан. Промах на полторы тысячи
+            # километров хуже пустоты, поэтому такому имени по-прежнему нужен
+            # регион или район в сообщении.
             if ambiguous and not in_context:
                 continue
-            if weak and not in_context and not prominent:
+            if weak and not in_context and not prominent and not match.marked:
                 continue
 
             # Одиночное слово, совпавшее с безвестной деревней и не поддержанное
             # контекстом, — почти всегда шум: «Суда», «Север», «Победа».
             # Для стеммированного слова контекст от порога не спасает: «примерно»
             # и «крайне» тоже попадают в контекстный регион.
-            if (single and zone["level"] == "place"
+            if (single and zone["level"] == "place" and not match.marked
                     and (zone["population"] or 0) < MIN_PLACE_POPULATION
                     and (weak or not in_context)):
                 continue
@@ -333,8 +552,18 @@ class Geocoder:
             score = 0.0
             if in_context:
                 score += 1_000_000
-            # Административные единицы надежнее одноименных деревень.
-            score += (2 - LEVEL_RANK[zone["level"]]) * 10_000
+            # Административные единицы надежнее одноименных деревень. Но
+            # крупный город — не деревня: если одноимённая админ-единица его
+            # не содержит, она из другого региона и проигрывает. Так «Донецк»
+            # достаётся миллионнику в ДНР, а не городскому округу Донецк
+            # Ростовской области, а «Краснодар» по-прежнему городскому округу
+            # Краснодар — он город и содержит.
+            rank = LEVEL_RANK[zone["level"]]
+            if (rank == LEVEL_RANK["place"]
+                    and (zone["population"] or 0) >= MAJOR_CITY_POPULATION
+                    and not (admin_ids & set(self.chain(zone_id)))):
+                rank = LEVEL_RANK["district"]
+            score += (2 - rank) * 10_000
             score += min(zone["population"] or 0, 500_000) / 100
             # Штрафовать стеммированное совпадение здесь бессмысленно: скоринг
             # идёт внутри одного матча, где match.exact общий для всех зон, и

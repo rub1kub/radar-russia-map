@@ -18,9 +18,10 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
-from .geocode import Geocoder  # noqa: E402
+from .geocode import Geocoder, Resolved  # noqa: E402
 from .parse import parse  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
+from .source_region import build_fallback  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
@@ -61,6 +62,7 @@ def import_jsonl(connection, raw_dir: Path) -> int:
 def rebuild(connection) -> dict:
     reset_derived(connection)
     geocoder = Geocoder(connection)
+    fallback = build_fallback(connection, sources_from_env())
     fuser = Fuser()
 
     rows = connection.execute(
@@ -77,8 +79,17 @@ def rebuild(connection) -> dict:
 
         resolved = geocoder.resolve(observation.place_phrases)
         if not resolved:
-            stats["ungeocoded"] += 1
-            continue
+            # Часть каналов не называет место: регион зашит в имя канала.
+            # Такое событие кладём на регион источника — грубее, чем район
+            # из текста, но лучше, чем потерять оповещение целиком.
+            zone_id = fallback.get(row["source_key"])
+            if not zone_id:
+                stats["ungeocoded"] += 1
+                continue
+            zone = geocoder.zones[zone_id]
+            resolved = [Resolved(zone_id, "region", zone["name_ru"],
+                                 zone["lat"], zone["lon"], "источник")]
+            stats["by_source_region"] = stats.get("by_source_region", 0) + 1
 
         moment = parse_utc(row["posted_at"])
 
