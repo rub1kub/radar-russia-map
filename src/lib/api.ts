@@ -77,6 +77,14 @@ export type ZoneStat = {
   avg_duration_sec: number;
 };
 
+export type EventSource = {
+  source_key: string;
+  role: string;
+  at: string;
+  first_from_source: boolean;
+  text: string;
+};
+
 export type Analytics = {
   top_zones: ZoneStat[];
   by_hour: Array<{ hour: string; n: number }>;
@@ -111,6 +119,11 @@ export const api = {
     get<History>(`/api/v1/history?hours=${hours}`, signal),
   historyDay: (day: string, signal?: AbortSignal) =>
     get<History>(`/api/v1/history?day=${encodeURIComponent(day)}`, signal),
+  eventSources: (id: string, signal?: AbortSignal) =>
+    get<{ sources: EventSource[]; distinct: number }>(
+      `/api/v1/events/${encodeURIComponent(id)}/sources`,
+      signal
+    ),
   historyDays: (limit: number, signal?: AbortSignal) =>
     get<{ days: HistoryDay[]; peak: number }>(`/api/v1/history/days?limit=${limit}`, signal),
   analyticsSources: (signal?: AbortSignal) =>

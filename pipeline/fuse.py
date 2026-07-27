@@ -148,7 +148,13 @@ class Fuser:
         existing = self._match(zone_path, observation.threat_type, moment)
         if existing:
             existing.last_seen = max(existing.last_seen, moment)
-            existing.severity = max(existing.severity, observation.severity)
+            # Подпись должна соответствовать цвету. Слияние брало максимум
+            # severity, но оставляло тип сигнала от первого сообщения: событие
+            # показывалось как «Опасность» и красилось красным, потому что
+            # внутрь попала фиксация. Растёт уровень — растёт и подпись.
+            if observation.severity > existing.severity:
+                existing.severity = observation.severity
+                existing.signal_type = observation.signal_type
             if observation.threat_type != "unknown":
                 existing.threat_type = observation.threat_type
             if observation.direction_deg is not None:

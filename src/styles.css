@@ -1872,3 +1872,58 @@ button {
   transform: none;
   visibility: visible;
 }
+
+/* --- Источники события ---------------------------------------------------- */
+/*
+ * «Подтверждено восемью источниками» — число, которое приходилось принимать
+ * на веру. Раскрытие показывает, на чём оно основано, и заодно делает
+ * видимыми склейки: если под событием лежат сообщения о разных местах,
+ * это сразу заметно.
+ */
+.event-sources-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 3px 0 0 26px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: rgba(170, 180, 172, 0.6);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.event-sources-toggle:hover { color: rgba(220, 228, 221, 0.9); }
+.event-sources-toggle.is-on { color: rgba(246, 226, 170, 0.92); }
+.event-sources-toggle svg { transition: transform 140ms ease; }
+.event-sources-toggle.is-on svg { transform: rotate(180deg); }
+
+.event-sources {
+  list-style: none;
+  margin: 4px 0 2px 26px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.event-sources li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.source-head { display: flex; align-items: baseline; gap: 8px; }
+.source-name { font-size: 11px; color: rgba(226, 233, 227, 0.86); }
+.source-time {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: rgba(170, 180, 172, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+.source-text { font-size: 11px; line-height: 1.4; color: rgba(190, 199, 192, 0.72); }
+.source-empty { color: rgba(170, 180, 172, 0.55); font-size: 11px; }

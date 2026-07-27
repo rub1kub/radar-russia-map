@@ -207,6 +207,46 @@ def state(response: Response) -> dict:
     return state_snapshot()
 
 
+@app.get("/api/v1/events/{event_id}/sources")
+def event_sources(event_id: str):
+    """Кто и когда сообщил о событии.
+
+    Прежде источники не раскрывались вовсе: считалось, что это снижает риск
+    злоупотреблений. Решение пересмотрено в пользу проверяемости — человек
+    должен видеть, на чём основано «подтверждено восемью источниками», иначе
+    число приходится принимать на веру.
+    """
+    rows = query(
+        """
+        SELECT es.source_key, es.role, es.contributed_at, m.text
+        FROM event_sources es
+        JOIN raw_messages m ON m.id = es.raw_message_id
+        WHERE es.event_id = ?
+        ORDER BY es.contributed_at
+        """,
+        (event_id,),
+    )
+    if not rows:
+        return {"event_id": event_id, "sources": []}
+
+    seen: set[str] = set()
+    items = []
+    for row in rows:
+        # repeat — повтор того же канала, в подтверждение он не идёт.
+        if row["role"] == "repeat":
+            continue
+        first_time = row["source_key"] not in seen
+        seen.add(row["source_key"])
+        items.append({
+            "source_key": row["source_key"],
+            "role": row["role"],
+            "at": row["contributed_at"],
+            "first_from_source": first_time,
+            "text": " ".join(row["text"].split())[:220],
+        })
+    return {"event_id": event_id, "sources": items, "distinct": len(seen)}
+
+
 @app.get("/api/v1/history/days")
 def history_days(limit: int = Query(60, ge=1, le=400)):
     """Дни, за которые есть события, с плотностью.

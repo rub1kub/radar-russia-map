@@ -1,11 +1,14 @@
-import { Bell, BellRing, Building2, ChevronRight, Crosshair } from "lucide-react";
-import type { RadarEvent, RadarState } from "../lib/api";
+import { useState } from "react";
+import { Bell, BellRing, Building2, ChevronDown, ChevronRight, Crosshair } from "lucide-react";
+import { api } from "../lib/api";
+import type { EventSource, RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
 import {
   formatAge,
   formatDuration,
   formatMoment,
+  formatSince,
   plural,
   severityColor,
   signalLabel,
@@ -69,6 +72,18 @@ export function FeedPanel({
   onToggleThreat,
   totalEvents
 }: Props) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [sources, setSources] = useState<Record<string, EventSource[]>>({});
+
+  const toggleSources = (id: string) => {
+    setExpanded((current) => (current === id ? null : id));
+    if (sources[id]) return;
+    api
+      .eventSources(id)
+      .then((payload) => setSources((current) => ({ ...current, [id]: payload.sources })))
+      .catch(() => setSources((current) => ({ ...current, [id]: [] })));
+  };
+
   const live = apiOnline && state && !state.stale && !historyLabel;
   const events = zoneEvents.length ? zoneEvents : allEvents;
   // В режиме истории отсчёт идёт от просматриваемого момента, иначе лента
@@ -232,7 +247,12 @@ export function FeedPanel({
                         {event.target_count ? ` · ${event.target_count} целей` : ""}
                       </span>
                       <span className="event-since">
-                        идёт {formatDuration(event.first_seen_at, reference)}
+                        {/* До последнего подтверждения, а не до «сейчас»:
+                            событие с последним сообщением час назад не идёт
+                            час, оно шло сколько шло и затихло. */}
+                        шло {formatDuration(event.first_seen_at, clamp(event.last_seen_at))}
+                        {" · "}
+                        {formatSince(clamp(event.last_seen_at), reference)}
                         {event.source_count > 1
                           ? ` · ${event.source_count} ${plural(
                               event.source_count,
@@ -247,6 +267,39 @@ export function FeedPanel({
                       {formatMoment(clamp(event.last_seen_at), reference)}
                     </span>
                   </button>
+
+                  <button
+                    type="button"
+                    className={`event-sources-toggle ${expanded === event.id ? "is-on" : ""}`}
+                    onClick={() => toggleSources(event.id)}
+                    aria-expanded={expanded === event.id}
+                  >
+                    <ChevronDown size={12} aria-hidden="true" />
+                    <span>
+                      {event.source_count}{" "}
+                      {plural(event.source_count, "источник", "источника", "источников")}
+                    </span>
+                  </button>
+
+                  {expanded === event.id ? (
+                    <ul className="event-sources">
+                      {(sources[event.id] ?? []).map((item, index) => (
+                        <li key={`${item.source_key}-${index}`}>
+                          <span className="source-head">
+                            <span className="source-name">{item.source_key}</span>
+                            <span className="source-time">
+                              {formatMoment(item.at, reference)}
+                            </span>
+                          </span>
+                          <span className="source-text">{item.text}</span>
+                        </li>
+                      ))}
+                      {sources[event.id] && !sources[event.id].length ? (
+                        <li className="source-empty">Источники недоступны</li>
+                      ) : null}
+                      {!sources[event.id] ? <li className="source-empty">Загрузка…</li> : null}
+                    </ul>
+                  ) : null}
                 </li>
               ))}
             </ul>

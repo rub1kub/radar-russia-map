@@ -57,6 +57,18 @@ export function formatDuration(fromIso: string, toIso: string): string {
   return rest ? `${head} ${rest} мин` : head;
 }
 
+/** «12 минут назад» — сколько прошло с последнего подтверждения. */
+export function formatSince(iso: string, nowIso: string): string {
+  const minutes = Math.max(
+    0,
+    Math.round((new Date(nowIso).getTime() - new Date(iso).getTime()) / 60000)
+  );
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
+}
+
 /** Возраст данных для баннера об остановке сбора. */
 export function formatAge(seconds: number): string {
   const minutes = Math.round(seconds / 60);
