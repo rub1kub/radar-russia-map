@@ -807,13 +807,29 @@ def test_alarm_sits_between_warning_and_detection():
 
 # --- Склейка: что считается подтверждением ----------------------------------
 
-def test_narrower_observation_confirms_broader_event():
-    """Район подтверждает область: частное свидетельство держит общее."""
+def test_district_and_region_stay_separate_events():
+    """У района своё событие, у области своё.
+
+    Слияние родственных зон ломало карту хуже всего остального: событие
+    начиналось областной тревогой, впитывало сообщения про один город, и
+    «уточняем характер взрыва» поднимало весь край до девятого уровня —
+    сорок районов краснели из-за одного Новороссийска.
+    """
     fuser = Fuser()
     add(fuser, 0, "a", zone_path=["rostov_oblast"], level="region")
     add(fuser, 6, "b", zone_path=["azovskiy_rayon", "rostov_oblast"])
-    assert len(fuser.events) == 1
-    assert fuser.events[0].independent_sources == 2
+    assert len(fuser.events) == 2
+    assert {event.zone_id for event in fuser.events} == {"rostov_oblast", "azovskiy_rayon"}
+
+
+def test_impact_in_one_town_does_not_repaint_its_region():
+    """Взрыв в городе — событие города, а не области."""
+    fuser = Fuser()
+    add(fuser, 0, "a", zone_path=["rostov_oblast"], level="region", severity=7, signal="alarm")
+    add(fuser, 4, "b", zone_path=["azovskiy_rayon", "rostov_oblast"], severity=9, signal="impact")
+    region = next(event for event in fuser.events if event.zone_id == "rostov_oblast")
+    assert region.signal_type == "alarm"
+    assert region.severity == 7
 
 
 def test_broader_observation_does_not_confirm_narrower_event():
@@ -975,3 +991,27 @@ def test_subscription_footer_does_not_kill_a_real_alert():
                         "❗️Радар Саратов - @rada_saratov | Подписаться")
     assert observation.relevant
     assert observation.signal_type == "detection"
+
+
+@pytest.mark.parametrize("text,signal,severity", [
+    ("Новороссийск\nуточняем характер взрыва", "alarm", 7),
+    ("Проверяем информацию о работе ПВО в Таганроге", "alarm", 7),
+])
+def test_unconfirmed_report_is_an_alarm_not_a_fact(text, signal, severity):
+    """«Уточняем характер взрыва» — вопрос к самому себе, а не взрыв.
+
+    Слово «взрыв» давало impact девятого уровня, высший на шкале; часом
+    позже те же ленты написали, что по звукам всё штатно.
+    """
+    observation = parse(text)
+    assert observation.signal_type == signal
+    assert observation.severity == severity
+
+
+def test_asserted_impact_with_hedged_details_stays_impact():
+    """Оговорка про подробности не отменяет названный удар."""
+    observation = parse(
+        "В Белгороде беспилотник ВСУ атаковал грузовой автомобиль. "
+        "По предварительной информации, пострадавших нет"
+    )
+    assert observation.signal_type == "impact"
