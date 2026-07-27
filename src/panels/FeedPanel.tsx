@@ -1,4 +1,4 @@
-import { Bell, BellRing, Building2 } from "lucide-react";
+import { Bell, BellRing, Building2, ChevronRight } from "lucide-react";
 import type { RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
@@ -25,6 +25,8 @@ type Props = {
   historyLabel: string | null;
   /** Момент, относительно которого считается время: сейчас или срез истории. */
   referenceIso: string | null;
+  collapsed: boolean;
+  onCollapse: () => void;
 };
 
 export function FeedPanel({
@@ -38,7 +40,9 @@ export function FeedPanel({
   onPickEvent,
   onToggleBookmark,
   historyLabel,
-  referenceIso
+  referenceIso,
+  collapsed,
+  onCollapse
 }: Props) {
   const live = apiOnline && state && !state.stale && !historyLabel;
   const events = zoneEvents.length ? zoneEvents : (state?.events ?? []);
@@ -49,8 +53,20 @@ export function FeedPanel({
   const clamp = (iso: string) => (new Date(iso) > new Date(reference) ? reference : iso);
 
   return (
-    <aside className="details-panel" aria-label="Обстановка">
+    <aside
+      className={`details-panel ${collapsed ? "is-collapsed" : ""}`}
+      aria-label="Обстановка"
+      aria-hidden={collapsed}
+    >
       <div className="feed-top">
+        <button
+          className="panel-collapse"
+          type="button"
+          onClick={onCollapse}
+          aria-label="Свернуть ленту"
+        >
+          <ChevronRight size={16} aria-hidden="true" />
+        </button>
         <h2>{historyLabel ? "Было в эфире" : "Что происходит"}</h2>
         <span
           className={`live-dot ${live ? "is-live" : "is-off"}`}

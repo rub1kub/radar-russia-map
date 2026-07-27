@@ -17,7 +17,18 @@ import Style from "ol/style/Style";
 import Fill from "ol/style/Fill";
 import Stroke from "ol/style/Stroke";
 import Text from "ol/style/Text";
-import { BarChart3, Building2, Home, Layers, MapPinned, Search } from "lucide-react";
+import Icon from "ol/style/Icon";
+import {
+  BarChart3,
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  Home,
+  Layers,
+  MapPinned,
+  Search,
+  SlidersHorizontal
+} from "lucide-react";
 import { api, API_BASE } from "./lib/api";
 import type { RadarEvent, RadarState, SearchItem, ZoneCount } from "./lib/api";
 import {
@@ -31,6 +42,7 @@ import {
   signalLabel,
   threatLabel
 } from "./lib/format";
+import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { buildSlots, zoneCountsAt } from "./lib/history";
 import type { Slot } from "./lib/history";
 import {
@@ -197,6 +209,36 @@ function zoneFillAlpha(active: number): number {
   if (active >= 5) return 0.42;
   if (active >= 3) return 0.3;
   return 0.19;
+}
+
+const ICON_FADE_MS = 3 * 60 * 60 * 1000;
+const iconStyleCache = new globalThis.Map<string, Style>();
+
+function createEventIconStyle(feature: FeatureLike, resolution: number) {
+  // Порог ниже стартового масштаба (4.15): иначе значки не видны на загрузке.
+  if (resolutionToZoom(resolution) < 3.9) return undefined;
+
+  const kind = String(feature.get("iconKind"));
+  const severity = asNumber(feature.get("severity"), 5);
+  const ageMs = asNumber(feature.get("ageMs"), 0);
+
+  // Свежая фиксация видна отчётливо, трёхчасовая почти растворяется.
+  const freshness = Math.max(0.28, 1 - ageMs / ICON_FADE_MS);
+  const bucket = Math.round(freshness * 5) / 5;
+  const key = `${kind}|${severity}|${bucket}`;
+
+  const cached = iconStyleCache.get(key);
+  if (cached) return cached;
+
+  const style = new Style({
+    image: new Icon({
+      src: threatIcon(kind as never, severityColor(severity, 1), bucket),
+      scale: 0.62,
+      anchor: [0.5, 0.5]
+    })
+  });
+  iconStyleCache.set(key, style);
+  return style;
 }
 
 function createRegionStyle(
@@ -567,6 +609,8 @@ export default function App() {
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
+  const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
   const selectedKeyRef = useRef<string | null>(null);
   const layersRef = useRef<LayerState | null>(null);
@@ -598,6 +642,8 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -724,6 +770,17 @@ export default function App() {
     return radarState?.zone_counts ?? {};
   }, [inHistory, historyEvents, historyAt, radarState]);
 
+  const shownEvents = useMemo(() => {
+    if (inHistory && historyEvents && historyAt) {
+      const atMs = new Date(historyAt).getTime();
+      return historyEvents
+        .filter((event) => new Date(event.first_seen_at).getTime() <= atMs)
+        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs)
+        .slice(0, 60);
+    }
+    return radarState?.events ?? [];
+  }, [inHistory, historyEvents, historyAt, radarState]);
+
   // Обстановка рисуется заливкой самих регионов и районов, а не отдельными
   // маркерами: так делают RadarMap и Детектор АЭРО, и так понятнее.
   useEffect(() => {
@@ -734,6 +791,29 @@ export default function App() {
       index.set(zone.source_id, zone);
     }
     zoneStateRef.current = index;
+
+    // Значки ставятся только там, где у сообщения есть конкретная точка:
+    // фиксация, сбитие, взрыв, отбой. Площадная опасность — это заливка.
+    const iconSource = eventIconSourceRef.current;
+    iconSource.clear();
+    const referenceMs = new Date(historyAt ?? radarState?.generated_at ?? Date.now()).getTime();
+
+    for (const event of shownEvents) {
+      if (!isPointEvent(event.signal_type)) continue;
+      if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
+
+      iconSource.addFeature(
+        new Feature({
+          geometry: new Point(fromLonLat([event.lon, event.lat])),
+          kind: "eventIcon",
+          id: event.id,
+          iconKind: iconKindFor(event.signal_type, event.threat_type),
+          severity: event.severity,
+          ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime())
+        })
+      );
+    }
+
     const byPolygon = new globalThis.Map<string, string>();
     for (const [zoneId, zone] of Object.entries(radarState?.zone_counts ?? {})) {
       if (zone.source_id) byPolygon.set(zone.source_id, zoneId);
@@ -741,7 +821,7 @@ export default function App() {
     polygonToZoneRef.current = byPolygon;
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
-  }, [paintedZones, radarState]);
+  }, [paintedZones, radarState, shownEvents, historyAt]);
 
   useEffect(() => {
     if (!dataset || !mapNodeRef.current || mapRef.current) return;
@@ -854,6 +934,12 @@ export default function App() {
       minZoom: 4.75,
       style: createRailwayStyle
     });
+    const eventIconLayer = new VectorLayer({
+      source: eventIconSourceRef.current,
+      zIndex: 40,
+      style: createEventIconStyle
+    });
+
     const regionLayer = new VectorLayer({
       source: regionSource,
       visible: layers.regions,
@@ -878,6 +964,7 @@ export default function App() {
     urbanAreaLayerRef.current = urbanAreaLayer;
     roadLayerRef.current = roadLayer;
     railwayLayerRef.current = railwayLayer;
+    eventIconLayerRef.current = eventIconLayer;
     regionLayerRef.current = regionLayer;
     districtLayerRef.current = districtLayer;
 
@@ -899,7 +986,8 @@ export default function App() {
         roadLayer,
         railwayLayer,
         regionLayer,
-        districtLayer
+        districtLayer,
+        eventIconLayer
       ],
       view: new View({
         center: OVERVIEW_CENTER,
@@ -909,7 +997,26 @@ export default function App() {
       })
     });
 
-    setOverviewView(map, 0);
+    // Контейнер позиционирован абсолютно, и на момент создания его размер
+    // может быть ещё нулевым — OpenLayers запомнит ноль и больше ничего не
+    // нарисует. Стартовый вид тоже нельзя задавать раньше: выбор десктопного
+    // или мобильного масштаба зависит от фактической ширины.
+    let viewApplied = false;
+    const resizeObserver = new ResizeObserver(() => {
+      map.updateSize();
+      const [width, height] = map.getSize() ?? [0, 0];
+      if (!viewApplied && width > 0 && height > 0) {
+        viewApplied = true;
+        setOverviewView(map, 0);
+      }
+    });
+    resizeObserver.observe(mapNodeRef.current);
+    map.updateSize();
+
+    if ((map.getSize()?.[0] ?? 0) > 0) {
+      viewApplied = true;
+      setOverviewView(map, 0);
+    }
     let disposed = false;
 
     const loadVectorLayer = async (
@@ -1016,6 +1123,7 @@ export default function App() {
 
     return () => {
       disposed = true;
+      resizeObserver.disconnect();
       unByKey(viewResolutionKey);
       map.setTarget(undefined);
       mapRef.current = null;
@@ -1039,6 +1147,7 @@ export default function App() {
       railwaysLoadedRef.current = false;
       loadLazyLayersRef.current = null;
       layersRef.current = null;
+      eventIconLayerRef.current = null;
       regionLayerRef.current = null;
       districtLayerRef.current = null;
       featureIndexRef.current.clear();
@@ -1061,17 +1170,6 @@ export default function App() {
     districtLayerRef.current?.setVisible(layers.districts);
     loadLazyLayersRef.current?.();
   }, [layers]);
-
-  const shownEvents = useMemo(() => {
-    if (inHistory && historyEvents && historyAt) {
-      const atMs = new Date(historyAt).getTime();
-      return historyEvents
-        .filter((event) => new Date(event.first_seen_at).getTime() <= atMs)
-        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs)
-        .slice(0, 60);
-    }
-    return radarState?.events ?? [];
-  }, [inHistory, historyEvents, historyAt, radarState]);
 
   const selectedZoneEvents = useMemo(() => {
     if (selected.id === "none" || selected.kind === "place") return [];
@@ -1220,7 +1318,27 @@ export default function App() {
       </header>
 
       <main className="workspace">
-        <aside className="sidebar" aria-label="Панель управления картой">
+        <button
+          className={`panel-handle handle-left ${leftOpen ? "is-hidden" : ""}`}
+          type="button"
+          onClick={() => setLeftOpen(true)}
+          aria-label="Показать панель управления"
+        >
+          <SlidersHorizontal size={17} aria-hidden="true" />
+        </button>
+
+        <aside
+          className={`sidebar ${leftOpen ? "" : "is-collapsed"}`}
+          aria-label="Панель управления картой"
+        >
+          <button
+            className="panel-collapse"
+            type="button"
+            onClick={() => setLeftOpen(false)}
+            aria-label="Свернуть панель"
+          >
+            <ChevronLeft size={16} aria-hidden="true" />
+          </button>
           <section className="tool-section">
             <label className="search-box" htmlFor="map-search">
               <Search size={18} aria-hidden="true" />
@@ -1357,7 +1475,18 @@ export default function App() {
           />
         </section>
 
+        <button
+          className={`panel-handle handle-right ${rightOpen ? "is-hidden" : ""}`}
+          type="button"
+          onClick={() => setRightOpen(true)}
+          aria-label="Показать ленту"
+        >
+          <span className="handle-count">{radarState?.active_events ?? 0}</span>
+        </button>
+
         <FeedPanel
+          collapsed={!rightOpen}
+          onCollapse={() => setRightOpen(false)}
           state={radarState}
           apiOnline={apiOnline}
           selectedName={selected.id === "none" || selected.kind === "place" ? null : selected.name}
