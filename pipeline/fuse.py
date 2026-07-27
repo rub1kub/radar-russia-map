@@ -42,6 +42,10 @@ class Event:
     direction_deg: int | None = None
     target_count: int | None = None
     sources: dict[str, str] = field(default_factory=dict)   # source_key -> tier
+    # network_id -> tier. Клоны одной сети дают один голос: десяток лент вида
+    # "Радар.ру | X область" ведёт один оператор, и считать их независимыми
+    # подтверждениями значит выдумывать достоверность.
+    networks: dict[str, str] = field(default_factory=dict)
     contributions: list[tuple[int, str, str, datetime]] = field(default_factory=list)
 
     @property
@@ -49,12 +53,18 @@ class Event:
         """Вероятностное объединение независимых свидетельств.
 
         Один federal-источник дает 0.55, два — 0.80, три — 0.91.
-        Каналы одного владельца не различаются, поэтому это оценка сверху.
+        Считается по сетям, а не по каналам: иначе пять клонов одного
+        оператора выглядели бы как пять независимых подтверждений.
         """
         miss = 1.0
-        for tier in self.sources.values():
+        for tier in (self.networks or self.sources).values():
             miss *= 1.0 - TIER_WEIGHT.get(tier, 0.25)
         return round(1.0 - miss, 3)
+
+    @property
+    def independent_sources(self) -> int:
+        """Сколько независимых голосов стоит за событием."""
+        return len(self.networks or self.sources)
 
     def status(self, now: datetime) -> str:
         if self.resolved_at:
@@ -105,7 +115,8 @@ class Fuser:
         ]
 
     def add(self, *, raw_id: int, source_key: str, tier: str, moment: datetime,
-            observation, zone_path: list[str], lat, lon, level: str) -> Event | None:
+            observation, zone_path: list[str], lat, lon, level: str,
+            network: str | None = None) -> Event | None:
         """Добавить наблюдение. Возвращает затронутое событие."""
         self._prune(moment)
         zone_id = zone_path[0]
@@ -135,6 +146,7 @@ class Fuser:
                 existing.target_count = max(existing.target_count or 0, observation.target_count)
             role = "confirm" if source_key not in existing.sources else "repeat"
             existing.sources.setdefault(source_key, tier)
+            existing.networks.setdefault(network or source_key, tier)
             existing.contributions.append((raw_id, source_key, role, moment))
             return existing
 
@@ -153,6 +165,7 @@ class Fuser:
             direction_deg=observation.direction_deg,
             target_count=observation.target_count,
             sources={source_key: tier},
+            networks={(network or source_key): tier},
             contributions=[(raw_id, source_key, "first", moment)],
         )
         self.events.append(event)

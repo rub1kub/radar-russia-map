@@ -40,6 +40,7 @@ from .parse import parse  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
+NETWORKS = {source.key: source.network for source in sources_from_env()}
 
 DEFAULT_TIER = "regional"
 
@@ -204,7 +205,9 @@ def ready_batch(
 # --- Восстановление состояния слияния ---------------------------------------
 
 def load_open_events(
-    connection: sqlite3.Connection, tiers: dict[str, str] | None = None
+    connection: sqlite3.Connection,
+    tiers: dict[str, str] | None = None,
+    networks: dict[str, str | None] | None = None,
 ) -> list[Event]:
     """Поднять открытые события из базы обратно в структуры Fuser.
 
@@ -215,6 +218,7 @@ def load_open_events(
     откатилось бы к достоверности одиночного источника.
     """
     tiers = TIERS if tiers is None else tiers
+    networks = NETWORKS if networks is None else networks
 
     events: dict[str, Event] = {}
     order: list[Event] = []
@@ -246,7 +250,12 @@ def load_open_events(
         event = events.get(row["event_id"])
         if event is not None:
             key = row["source_key"]
-            event.sources.setdefault(key, tiers.get(key, DEFAULT_TIER))
+            tier = tiers.get(key, DEFAULT_TIER)
+            event.sources.setdefault(key, tier)
+            # Сети восстанавливаются вместе с источниками: иначе у поднятого
+            # события окажется пустой networks, и первое же новое наблюдение
+            # оставит в нём один голос вместо всех накопленных.
+            event.networks.setdefault(networks.get(key) or key, tier)
 
     # contributions намеренно остаются пустыми: уже записанные строки
     # event_sources переписывать незачем, в базу уйдут только новые.
@@ -254,10 +263,12 @@ def load_open_events(
 
 
 def restore_fuser(
-    connection: sqlite3.Connection, tiers: dict[str, str] | None = None
+    connection: sqlite3.Connection,
+    tiers: dict[str, str] | None = None,
+    networks: dict[str, str | None] | None = None,
 ) -> tuple[Fuser, list[Event]]:
     """Fuser с предзаполненным окном открытых событий."""
-    restored = load_open_events(connection, tiers)
+    restored = load_open_events(connection, tiers, networks)
     fuser = Fuser()
     # Обращение к приватному полю осознанное: Fuser не имеет публичного способа
     # принять готовое состояние, а менять fuse.py ради одного вызова дороже,
@@ -305,7 +316,7 @@ def store_event(connection: sqlite3.Connection, event: Event, now: datetime) -> 
         (event.id, event.first_seen.isoformat(), event.last_seen.isoformat(),
          event.resolved_at.isoformat() if event.resolved_at else None,
          event.status(now), event.signal_type, event.threat_type, event.severity,
-         event.confidence, len(event.sources), event.zone_id,
+         event.confidence, event.independent_sources, event.zone_id,
          json.dumps(event.zone_path, ensure_ascii=False), event.lat, event.lon,
          event.accuracy_m, event.direction_deg, event.target_count),
     )
@@ -379,6 +390,7 @@ def run_once(
                 raw_id=row["id"],
                 source_key=row["source_key"],
                 tier=tiers.get(row["source_key"], DEFAULT_TIER),
+                network=NETWORKS.get(row["source_key"]),
                 moment=moment,
                 observation=observation,
                 zone_path=geocoder.zone_path(item.zone_id),

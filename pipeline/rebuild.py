@@ -23,6 +23,7 @@ from .parse import parse  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
+NETWORKS = {source.key: source.network for source in sources_from_env()}
 USERNAME_TO_KEY = {source.username: source.key for source in sources_from_env()}
 
 
@@ -88,6 +89,7 @@ def rebuild(connection) -> dict:
                 raw_id=row["id"],
                 source_key=row["source_key"],
                 tier=TIERS.get(row["source_key"], "regional"),
+                network=NETWORKS.get(row["source_key"]),
                 moment=moment,
                 observation=observation,
                 zone_path=geocoder.zone_path(item.zone_id),
@@ -107,7 +109,7 @@ def rebuild(connection) -> dict:
             (event.id, event.first_seen.isoformat(), event.last_seen.isoformat(),
              event.resolved_at.isoformat() if event.resolved_at else None,
              event.status(now), event.signal_type, event.threat_type, event.severity,
-             event.confidence, len(event.sources), event.zone_id,
+             event.confidence, event.independent_sources, event.zone_id,
              json.dumps(event.zone_path, ensure_ascii=False), event.lat, event.lon,
              event.accuracy_m, event.direction_deg, event.target_count),
         )
