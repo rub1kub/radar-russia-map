@@ -1715,3 +1715,81 @@ button {
 }
 
 .feed-total { color: rgba(168, 176, 170, 0.55); font-weight: 400; }
+
+/* --- Выбор дня в истории -------------------------------------------------- */
+/*
+ * Корпус растянут на месяцы, но плотность крайне неровная: до 20 июля
+ * единицы событий в сутки, 27-го — больше тысячи. Полоски показывают,
+ * где вообще есть что смотреть, иначе человек перематывает пустоту.
+ */
+.day-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
+  margin-bottom: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  overflow-x: auto;
+}
+
+.day-bar {
+  display: flex;
+  align-items: flex-end;
+  flex: 1 0 7px;
+  height: 100%;
+  min-width: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.day-bar:hover { opacity: 0.9; }
+
+.day-bar.is-on {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.day-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 3px;
+  min-height: 3px;
+}
+
+.history-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.history-foot .history-stamp { margin: 0; }
+
+.history-speed {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.history-speed button {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: rgba(180, 188, 182, 0.6);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.history-speed button.is-on {
+  background: rgba(246, 199, 61, 0.16);
+  color: rgba(246, 226, 170, 0.96);
+}
+
+.history-panel { max-width: min(460px, calc(100% - 28px)); }

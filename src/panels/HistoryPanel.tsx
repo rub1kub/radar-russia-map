@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Clock, Pause, Play, Radio } from "lucide-react";
-import { formatDayTime } from "../lib/format";
+import type { HistoryDay } from "../lib/api";
+import { formatDayTime, plural, severityColor } from "../lib/format";
 import type { Slot } from "../lib/history";
 
 type Props = {
@@ -9,17 +10,31 @@ type Props = {
   index: number;
   playing: boolean;
   loading: boolean;
+  days: HistoryDay[];
+  selectedDay: string | null;
+  speed: number;
   onToggleOpen: () => void;
   onSeek: (index: number) => void;
   onTogglePlay: () => void;
   onLive: () => void;
+  onPickDay: (day: string | null) => void;
+  onSpeed: (speed: number) => void;
 };
 
+const SPEEDS = [0.5, 1, 2, 4];
+
+function dayLabel(day: string): string {
+  const [, month, date] = day.split("-");
+  return `${date}.${month}`;
+}
+
 /**
- * Плеер суточной истории.
+ * Плеер истории.
  *
- * Срезы считаются на клиенте из одной выгрузки событий, поэтому перемотка
- * мгновенная и не создаёт нагрузки на сервер.
+ * Срезы внутри суток считаются на клиенте из одной выгрузки, поэтому
+ * перемотка мгновенная. Полоски по дням показывают, где вообще есть что
+ * смотреть: корпус растянут на месяцы, но плотность крайне неровная, и без
+ * подсказки человек перематывал бы пустоту.
  */
 export function HistoryPanel({
   open,
@@ -27,41 +42,72 @@ export function HistoryPanel({
   index,
   playing,
   loading,
+  days,
+  selectedDay,
+  speed,
   onToggleOpen,
   onSeek,
   onTogglePlay,
-  onLive
+  onLive,
+  onPickDay,
+  onSpeed
 }: Props) {
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
     if (!playing || !slots.length) return;
-
     timer.current = window.setInterval(() => {
       onSeek(index + 1 >= slots.length ? 0 : index + 1);
-    }, 700);
-
+    }, 700 / speed);
     return () => {
       if (timer.current !== null) window.clearInterval(timer.current);
     };
-  }, [playing, index, slots.length, onSeek]);
+  }, [playing, index, slots.length, speed, onSeek]);
 
-  const atLive = index >= slots.length - 1;
+  const atLive = !selectedDay && index >= slots.length - 1;
   const current = slots[index];
 
   return (
     <div className={`history-panel ${open ? "is-open" : ""}`}>
       <button className="history-toggle" type="button" onClick={onToggleOpen}>
         <Clock size={16} aria-hidden="true" />
-        <span>История за сутки</span>
+        <span>История</span>
       </button>
 
       {open ? (
         <div className="history-body">
+          {days.length ? (
+            <div className="day-strip" role="group" aria-label="Выбор дня">
+              {days.map((entry) => (
+                <button
+                  key={entry.day}
+                  type="button"
+                  className={`day-bar ${selectedDay === entry.day ? "is-on" : ""}`}
+                  onClick={() => onPickDay(selectedDay === entry.day ? null : entry.day)}
+                  data-tip={`${dayLabel(entry.day)}: ${entry.events} ${plural(
+                    entry.events,
+                    "событие",
+                    "события",
+                    "событий"
+                  )}, подтверждено ${entry.confirmed}`}
+                  aria-label={`${entry.day}, событий ${entry.events}`}
+                >
+                  <i
+                    style={{
+                      height: `${Math.max(8, entry.density * 100)}%`,
+                      background: severityColor(entry.max_severity, 0.75)
+                    }}
+                    aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {loading ? (
             <p className="history-loading">Загрузка истории…</p>
           ) : !slots.length ? (
-            <p className="history-loading">За сутки данных нет.</p>
+            <p className="history-loading">За этот период данных нет.</p>
           ) : (
             <>
               <div className="history-controls">
@@ -86,15 +132,30 @@ export function HistoryPanel({
                   type="button"
                   className={atLive ? "is-live" : undefined}
                   onClick={onLive}
-                  title="Вернуться к текущей обстановке"
+                  data-tip="Вернуться к текущей обстановке"
+                  aria-label="К текущей обстановке"
                 >
                   <Radio size={15} aria-hidden="true" />
                 </button>
               </div>
 
-              <p className="history-stamp">
-                {atLive ? "сейчас" : current ? formatDayTime(current.at) : ""}
-              </p>
+              <div className="history-foot">
+                <span className="history-stamp">
+                  {atLive ? "сейчас" : current ? formatDayTime(current.at) : ""}
+                </span>
+                <span className="history-speed">
+                  {SPEEDS.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={speed === value ? "is-on" : undefined}
+                      onClick={() => onSpeed(value)}
+                    >
+                      {value}×
+                    </button>
+                  ))}
+                </span>
+              </div>
             </>
           )}
         </div>

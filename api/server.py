@@ -25,7 +25,7 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +43,7 @@ from api.limits import (
 )
 from api.geometry import router as geo_router
 from pipeline.db import DB_PATH
-from pipeline.timeutil import now_utc, parse_utc
+from pipeline.timeutil import MSK, now_utc, parse_utc
 
 app = FastAPI(title="Radar API", version="1.0")
 
@@ -207,9 +207,54 @@ def state(response: Response) -> dict:
     return state_snapshot()
 
 
+@app.get("/api/v1/history/days")
+def history_days(limit: int = Query(60, ge=1, le=400)):
+    """Дни, за которые есть события, с плотностью.
+
+    Плотность нужна интерфейсу: корпус растянут на месяцы, но до недавнего
+    времени в нём единицы событий в сутки. Без подсказки человек будет
+    перематывать пустоту.
+    """
+    rows = query(
+        """
+        SELECT date(datetime(first_seen_at, '+3 hours')) AS day,
+               COUNT(*) AS events,
+               MAX(severity) AS max_severity,
+               SUM(CASE WHEN source_count > 1 THEN 1 ELSE 0 END) AS confirmed
+        FROM events
+        GROUP BY day
+        ORDER BY day DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    peak = max((row["events"] for row in rows), default=0)
+    for row in rows:
+        # Доля от самого насыщенного дня — из неё рисуется полоска.
+        row["density"] = round(row["events"] / peak, 3) if peak else 0
+    return {"days": list(reversed(rows)), "peak": peak}
+
+
 @app.get("/api/v1/history")
-def history(hours: int = Query(24, ge=1, le=24 * 30)):
-    """Произвольное историческое окно, а не только сутки."""
+def history(
+    hours: int = Query(24, ge=1, le=24 * 30),
+    day: str | None = Query(None, description="Сутки по Москве, YYYY-MM-DD"),
+):
+    """Историческое окно: последние N часов либо конкретные сутки."""
+    if day:
+        try:
+            start_msk = datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse({"detail": "день ожидается как YYYY-MM-DD"}, status_code=400)
+        # Сутки считаются московские: человек мыслит своим днём, а не UTC.
+        start = start_msk.replace(tzinfo=MSK).astimezone(timezone.utc)
+        end = start + timedelta(days=1)
+        rows = [
+            row for row in event_rows(start, limit=20000)
+            if row["first_seen_at"] < end.isoformat()
+        ]
+        return {"from": start.isoformat(), "to": end.isoformat(), "day": day, "events": rows}
+
     now = latest_moment()
     since = now - timedelta(hours=hours)
     return {"from": since.isoformat(), "to": now.isoformat(),

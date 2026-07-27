@@ -45,6 +45,7 @@ import {
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { buildSlots, zoneCountsAt } from "./lib/history";
 import type { Slot } from "./lib/history";
+import type { HistoryDay } from "./lib/api";
 import {
   loadBookmarks,
   loadSeen,
@@ -669,6 +670,9 @@ export default function App() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [slotIndex, setSlotIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [historyDays, setHistoryDays] = useState<HistoryDay[]>([]);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [historySpeed, setHistorySpeed] = useState(1);
 
   // Поиск выполняет сервер по индексу справочника: 212 тысяч зон, ответ за
   // десятки миллисекунд. Держать этот каталог в браузере было незачем.
@@ -704,7 +708,43 @@ export default function App() {
   // История подгружается один раз при открытии плеера: дальше перемотка идёт
   // по уже полученным событиям и не трогает сервер.
   useEffect(() => {
-    if (!historyOpen || historyEvents) return;
+    if (!historyOpen || historyDays.length) return;
+    const controller = new AbortController();
+    api
+      .historyDays(60, controller.signal)
+      .then((payload) => {
+        if (!controller.signal.aborted) setHistoryDays(payload.days);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [historyOpen, historyDays.length]);
+
+  // Выбранные сутки загружаются отдельно от суточного окна: человек мыслит
+  // своим днём, а не «последними 24 часами».
+  useEffect(() => {
+    if (!historyOpen || !selectedDay) return;
+    const controller = new AbortController();
+    setHistoryLoading(true);
+
+    api
+      .historyDay(selectedDay, controller.signal)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        const built = buildSlots(payload.from, payload.to);
+        setHistoryEvents(payload.events);
+        setSlots(built);
+        setSlotIndex(0);
+        setHistoryLoading(false);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [historyOpen, selectedDay]);
+
+  useEffect(() => {
+    if (!historyOpen || historyEvents || selectedDay) return;
     const controller = new AbortController();
     setHistoryLoading(true);
 
@@ -800,7 +840,8 @@ export default function App() {
     };
   }, []);
 
-  const inHistory = historyOpen && historyEvents !== null && slotIndex < slots.length - 1;
+  const inHistory =
+    historyOpen && historyEvents !== null && (selectedDay !== null || slotIndex < slots.length - 1);
   const historyAt = inHistory ? slots[slotIndex]?.at ?? null : null;
 
   // Карта красится одной и той же формой счётчиков — живой или исторической.
@@ -1586,10 +1627,27 @@ export default function App() {
               setHistoryOpen((open) => !open);
               setPlaying(false);
             }}
+            days={historyDays}
+            selectedDay={selectedDay}
+            speed={historySpeed}
+            onPickDay={(day) => {
+              setSelectedDay(day);
+              setPlaying(false);
+              if (!day) {
+                // Возврат к суточному окну: сбрасываем выгрузку, чтобы
+                // эффект перезагрузил последние 24 часа.
+                setHistoryEvents(null);
+                setSlots([]);
+              }
+            }}
+            onSpeed={setHistorySpeed}
             onSeek={setSlotIndex}
             onTogglePlay={() => setPlaying((value) => !value)}
             onLive={() => {
-              setSlotIndex(Math.max(0, slots.length - 1));
+              setSelectedDay(null);
+              setHistoryEvents(null);
+              setSlots([]);
+              setSlotIndex(0);
               setPlaying(false);
             }}
           />

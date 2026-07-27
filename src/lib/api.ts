@@ -86,7 +86,17 @@ export type Analytics = {
 export type History = {
   from: string;
   to: string;
+  day?: string;
   events: RadarEvent[];
+};
+
+export type HistoryDay = {
+  day: string;
+  events: number;
+  confirmed: number;
+  max_severity: number;
+  /** Доля от самого насыщенного дня: из неё рисуется полоска. */
+  density: number;
 };
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -99,6 +109,10 @@ export const api = {
   state: (signal?: AbortSignal) => get<RadarState>("/api/v1/state", signal),
   history: (hours: number, signal?: AbortSignal) =>
     get<History>(`/api/v1/history?hours=${hours}`, signal),
+  historyDay: (day: string, signal?: AbortSignal) =>
+    get<History>(`/api/v1/history?day=${encodeURIComponent(day)}`, signal),
+  historyDays: (limit: number, signal?: AbortSignal) =>
+    get<{ days: HistoryDay[]; peak: number }>(`/api/v1/history/days?limit=${limit}`, signal),
   analyticsSources: (signal?: AbortSignal) =>
     get<{ sources: SourceStat[] }>("/api/v1/analytics/sources", signal),
   analyticsZones: (hours: number, signal?: AbortSignal) =>
