@@ -1591,3 +1591,127 @@ button {
   /* На узких экранах подсказка при наведении бесполезна — только мешает. */
   [data-tip]::after { display: none; }
 }
+
+/* --- Второстепенное действие в правом нижнем углу ------------------------ */
+/*
+ * Кнопка стояла в шапке справа и занимала угол, который по смыслу
+ * принадлежит ленте: панель начиналась прямо под ней и читалась как одно
+ * целое с чужим элементом. Правый нижний угол свободен и для
+ * второстепенного действия подходит лучше.
+ */
+.map-action {
+  position: absolute;
+  right: var(--edge);
+  bottom: var(--edge);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+  background: rgba(14, 18, 17, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  color: rgba(232, 238, 231, 0.9);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.map-action:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* Лента укорачивается на высоту кнопки, чтобы они не перекрывались. */
+.details-panel {
+  max-height: calc(100vh - var(--panel-top) - var(--edge) - 56px);
+}
+
+@media (max-width: 760px) {
+  .map-action span { display: none; }
+  .map-action { padding: 10px; bottom: calc(var(--edge) + 52px); }
+  .details-panel { max-height: 52vh; }
+}
+
+/* --- Лента прижата к верхнему правому углу -------------------------------- */
+/*
+ * Слева над панелью стоит плашка с названием, поэтому сайдбар начинается
+ * ниже шапки. Справа над лентой теперь пусто — кнопка аналитики уехала вниз,
+ * — и держать тот же отступ незачем: лента поднимается к самому углу и
+ * выравнивается по верхнему краю плашки слева.
+ */
+.details-panel,
+.handle-right {
+  top: var(--edge);
+}
+
+.details-panel {
+  max-height: calc(100vh - var(--edge) * 2 - 56px);
+}
+
+@media (max-width: 760px) {
+  .details-panel { top: auto; max-height: 52vh; }
+  .handle-right { top: auto; }
+}
+
+/* --- Фильтры ленты -------------------------------------------------------- */
+
+.feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: none;
+  color: rgba(196, 204, 197, 0.72);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.filter-chip:hover { background: rgba(255, 255, 255, 0.06); }
+
+.filter-chip.is-on {
+  background: rgba(246, 199, 61, 0.16);
+  border-color: rgba(246, 199, 61, 0.4);
+  color: rgba(246, 226, 170, 0.96);
+}
+
+.filter-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  cursor: pointer;
+  opacity: 0.42;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.filter-dot:hover { opacity: 0.8; }
+
+.filter-dot.is-on {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.filter-dot i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.feed-total { color: rgba(168, 176, 170, 0.55); font-weight: 400; }

@@ -10,7 +10,7 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import { Attribution, defaults as defaultControls, ScaleLine } from "ol/control";
-import { createEmpty, extend } from "ol/extent";
+import { containsCoordinate, createEmpty, extend } from "ol/extent";
 import { unByKey } from "ol/Observable";
 import { fromLonLat } from "ol/proj";
 import Style from "ol/style/Style";
@@ -208,6 +208,13 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
 // Ниже этого масштаба заливаются регионы, выше — районы. Красить оба сразу
 // нельзя: alpha складывается и даёт грязный третий цвет.
 const DISTRICT_FILL_ZOOM = 5.2;
+
+/** Уровень опасности для фильтра: те же три ступени, что в легенде. */
+function severityLevel(severity: number): number {
+  if (severity >= 8) return 8;
+  if (severity >= 6) return 6;
+  return 4;
+}
 
 function zoneFillAlpha(active: number): number {
   if (active >= 5) return 0.42;
@@ -649,6 +656,12 @@ export default function App() {
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
+  // Границы видимой области карты в проекции карты. Обновляются по окончании
+  // движения: пересчитывать на каждый кадр незачем.
+  const [viewExtent, setViewExtent] = useState<number[] | null>(null);
+  const [onlyVisible, setOnlyVisible] = useState(true);
+  const [levelFilter, setLevelFilter] = useState<number[]>([]);
+  const [threatFilter, setThreatFilter] = useState<string[]>([]);
   const [rightOpen, setRightOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
@@ -1033,9 +1046,12 @@ export default function App() {
     const resizeObserver = new ResizeObserver(() => {
       map.updateSize();
       const [width, height] = map.getSize() ?? [0, 0];
-      if (!viewApplied && width > 0 && height > 0) {
-        viewApplied = true;
-        setOverviewView(map, 0);
+      if (width > 0 && height > 0) {
+        if (!viewApplied) {
+          viewApplied = true;
+          setOverviewView(map, 0);
+        }
+        setViewExtent(map.getView().calculateExtent([width, height]));
       }
     });
     resizeObserver.observe(mapNodeRef.current);
@@ -1146,6 +1162,15 @@ export default function App() {
     const activeDistrictsTimer = window.setInterval(loadActiveDistricts, 60_000);
 
     loadLazyLayersRef.current = maybeLoadLazyLayers;
+    const syncExtent = () => {
+      const size = map.getSize();
+      if (size && size[0] > 0 && size[1] > 0) {
+        setViewExtent(map.getView().calculateExtent(size));
+      }
+    };
+    map.on("moveend", syncExtent);
+    syncExtent();
+
     const viewResolutionKey = map.getView().on("change:resolution", () => {
       maybeLoadLazyLayers();
       regionLayerRef.current?.changed();
@@ -1244,12 +1269,37 @@ export default function App() {
     loadLazyLayersRef.current?.();
   }, [layers]);
 
+  // Лента показывает то, что человек видит на экране: карта и список
+  // перестают жить отдельными жизнями. Отключается тумблером «в кадре».
+  const feedEvents = useMemo(() => {
+    let list = shownEvents;
+
+    const usableExtent =
+      viewExtent && viewExtent[2] > viewExtent[0] && viewExtent[3] > viewExtent[1]
+        ? viewExtent
+        : null;
+
+    if (onlyVisible && usableExtent) {
+      list = list.filter((event) => {
+        if (typeof event.lat !== "number" || typeof event.lon !== "number") return false;
+        return containsCoordinate(usableExtent, fromLonLat([event.lon, event.lat]));
+      });
+    }
+    if (levelFilter.length) {
+      list = list.filter((event) => levelFilter.includes(severityLevel(event.severity)));
+    }
+    if (threatFilter.length) {
+      list = list.filter((event) => threatFilter.includes(event.threat_type));
+    }
+    return list;
+  }, [shownEvents, onlyVisible, viewExtent, levelFilter, threatFilter]);
+
   const selectedZoneEvents = useMemo(() => {
     if (selected.id === "none" || selected.kind === "place") return [];
     const zoneId = polygonToZoneRef.current.get(selected.id);
     if (!zoneId) return [];
-    return shownEvents.filter((event) => event.zone_path.includes(zoneId));
-  }, [shownEvents, selected]);
+    return feedEvents.filter((event) => event.zone_path.includes(zoneId));
+  }, [feedEvents, selected]);
 
   const selectedZoneId = useMemo(
     () => (selected.id === "none" ? null : polygonToZoneRef.current.get(selected.id) ?? null),
@@ -1384,10 +1434,6 @@ export default function App() {
 
         <TopbarStats state={radarState} />
 
-        <button className="topbar-action" type="button" onClick={() => setAnalyticsOpen(true)}>
-          <BarChart3 size={17} aria-hidden="true" />
-          <span>Аналитика</span>
-        </button>
       </header>
 
       <main className="workspace">
@@ -1558,6 +1604,11 @@ export default function App() {
           />
         </section>
 
+        <button className="map-action" type="button" onClick={() => setAnalyticsOpen(true)}>
+          <BarChart3 size={17} aria-hidden="true" />
+          <span>Аналитика</span>
+        </button>
+
         <button
           className={`panel-handle handle-right ${rightOpen ? "is-hidden" : ""}`}
           type="button"
@@ -1568,6 +1619,7 @@ export default function App() {
         </button>
 
         <FeedPanel
+          events={feedEvents}
           collapsed={!rightOpen}
           onCollapse={() => setRightOpen(false)}
           state={radarState}
@@ -1575,6 +1627,25 @@ export default function App() {
           selectedName={selected.id === "none" || selected.kind === "place" ? null : selected.name}
           selectedZoneId={selectedZoneId}
           zoneEvents={selectedZoneEvents}
+          onlyVisible={onlyVisible}
+          onToggleVisible={() => setOnlyVisible((value) => !value)}
+          levelFilter={levelFilter}
+          onToggleLevel={(level) =>
+            setLevelFilter((current) =>
+              current.includes(level)
+                ? current.filter((item) => item !== level)
+                : [...current, level]
+            )
+          }
+          threatFilter={threatFilter}
+          onToggleThreat={(threat) =>
+            setThreatFilter((current) =>
+              current.includes(threat)
+                ? current.filter((item) => item !== threat)
+                : [...current, threat]
+            )
+          }
+          totalEvents={shownEvents.length}
           bookmarks={bookmarks}
           historyLabel={historyAt ? formatDayTime(historyAt) : null}
           referenceIso={historyAt}

@@ -1,4 +1,4 @@
-import { Bell, BellRing, Building2, ChevronRight } from "lucide-react";
+import { Bell, BellRing, Building2, ChevronRight, Crosshair } from "lucide-react";
 import type { RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
@@ -13,6 +13,7 @@ import {
 } from "../lib/format";
 
 type Props = {
+  events: RadarEvent[];
   state: RadarState | null;
   apiOnline: boolean | null;
   selectedName: string | null;
@@ -27,9 +28,26 @@ type Props = {
   referenceIso: string | null;
   collapsed: boolean;
   onCollapse: () => void;
+  onlyVisible: boolean;
+  onToggleVisible: () => void;
+  levelFilter: number[];
+  onToggleLevel: (level: number) => void;
+  threatFilter: string[];
+  onToggleThreat: (threat: string) => void;
+  /** Сколько событий всего, до применения фильтров. */
+  totalEvents: number;
 };
 
+const LEVELS = [
+  { value: 8, tip: "Ракета, взрыв, работа ПВО" },
+  { value: 6, tip: "Тревога" },
+  { value: 4, tip: "Опасность и фиксации" }
+];
+
+const THREATS = ["uav", "fpv", "rocket", "kab", "bek", "aviation"];
+
 export function FeedPanel({
+  events: allEvents,
   state,
   apiOnline,
   selectedName,
@@ -42,10 +60,17 @@ export function FeedPanel({
   historyLabel,
   referenceIso,
   collapsed,
-  onCollapse
+  onCollapse,
+  onlyVisible,
+  onToggleVisible,
+  levelFilter,
+  onToggleLevel,
+  threatFilter,
+  onToggleThreat,
+  totalEvents
 }: Props) {
   const live = apiOnline && state && !state.stale && !historyLabel;
-  const events = zoneEvents.length ? zoneEvents : (state?.events ?? []);
+  const events = zoneEvents.length ? zoneEvents : allEvents;
   // В режиме истории отсчёт идёт от просматриваемого момента, иначе лента
   // показывала бы будущее относительно выбранного среза.
   const reference = referenceIso ?? state?.generated_at ?? new Date().toISOString();
@@ -132,14 +157,57 @@ export function FeedPanel({
             </div>
           ) : null}
 
+          <div className="feed-filters">
+            <button
+              type="button"
+              className={`filter-chip ${onlyVisible ? "is-on" : ""}`}
+              onClick={onToggleVisible}
+              data-tip="Показывать только то, что попадает в видимую часть карты"
+            >
+              <Crosshair size={13} aria-hidden="true" />
+              <span>в кадре</span>
+            </button>
+
+            {LEVELS.map((level) => (
+              <button
+                key={level.value}
+                type="button"
+                className={`filter-dot ${levelFilter.includes(level.value) ? "is-on" : ""}`}
+                onClick={() => onToggleLevel(level.value)}
+                data-tip={level.tip}
+                aria-label={level.tip}
+              >
+                <i style={{ background: severityColor(level.value, 0.95) }} aria-hidden="true" />
+              </button>
+            ))}
+
+            {THREATS.map((threat) => (
+              <button
+                key={threat}
+                type="button"
+                className={`filter-chip ${threatFilter.includes(threat) ? "is-on" : ""}`}
+                onClick={() => onToggleThreat(threat)}
+              >
+                {threatLabel(threat)}
+              </button>
+            ))}
+          </div>
+
           <p className="feed-summary">
             <strong>{events.length}</strong>{" "}
             {plural(events.length, "сообщение", "сообщения", "сообщений")}
+            {events.length !== totalEvents ? (
+              <span className="feed-total"> из {totalEvents}</span>
+            ) : null}
           </p>
 
           {events.length === 0 ? (
             <p className="feed-empty">
-              {historyLabel ? "На этот момент сообщений не было." : "Сейчас активных сообщений нет."}
+              {historyLabel
+                ? "На этот момент сообщений не было."
+                : totalEvents
+                  ? "В этой части карты сообщений нет. Отдалите карту или снимите фильтры."
+                  : "Сейчас активных сообщений нет."}
             </p>
           ) : (
             <ul className="event-feed">
