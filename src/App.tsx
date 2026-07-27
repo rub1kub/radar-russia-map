@@ -43,7 +43,7 @@ import {
   threatLabel
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
-import { buildSlots, zoneCountsAt } from "./lib/history";
+import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
 import type { Slot } from "./lib/history";
 import type { HistoryDay } from "./lib/api";
 import {
@@ -759,6 +759,24 @@ export default function App() {
 
     return () => controller.abort();
   }, [historyOpen, selectedDay]);
+
+  // Диаграмма активности: сколько событий было в каждом срезе и какого
+  // уровня. Без неё перемотка вслепую — полоса тянется на сутки, а всплеск
+  // занимает в ней двадцать минут, и найти его можно было только наугад.
+  const slotLoad = useMemo(() => {
+    if (!historyEvents || slots.length === 0) return [];
+    return slots.map((slot) => {
+      const at = new Date(slot.at).getTime();
+      let count = 0;
+      let severity = 0;
+      for (const event of historyEvents) {
+        if (!activeAt(event, at)) continue;
+        count += 1;
+        severity = Math.max(severity, event.severity);
+      }
+      return { count, severity };
+    });
+  }, [historyEvents, slots]);
 
   useEffect(() => {
     if (!historyOpen || historyEvents || selectedDay) return;
@@ -1653,6 +1671,7 @@ export default function App() {
           <HistoryPanel
             open={historyOpen}
             slots={slots}
+            load={slotLoad}
             index={slotIndex}
             playing={playing}
             loading={historyLoading}

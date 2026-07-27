@@ -43,6 +43,14 @@ export function formatDayTime(iso: string): string {
   return `${MSK_DAY.format(moment)} ${MSK_TIME.format(moment)}`;
 }
 
+/** Сколько минут длилось событие. Ноль означает единственный момент. */
+export function durationMinutes(fromIso: string, toIso: string): number {
+  return Math.max(
+    0,
+    Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60000)
+  );
+}
+
 /** Сколько длится событие. Человеку это важнее момента последнего сообщения. */
 export function formatDuration(fromIso: string, toIso: string): string {
   const minutes = Math.max(

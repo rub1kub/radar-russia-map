@@ -70,3 +70,18 @@ describe("threatIcon", () => {
     expect(uris.size).toBe(kinds.length);
   });
 });
+
+describe("значок дальнобойного дрона", () => {
+  it("у БПЛА и FPV разные глифы", () => {
+    expect(threatIcon("uav", "#fff")).not.toBe(threatIcon("fpv", "#fff"));
+  });
+
+  it("БПЛА рисуется самолётной схемой, а не мультикоптером", () => {
+    // Вглубь страны идут аппараты самолётной схемы с дальностью в сотни
+    // километров; мультикоптер обещал бы совсем другую угрозу.
+    const uav = decodeURIComponent(threatIcon("uav", "#fff"));
+    const fpv = decodeURIComponent(threatIcon("fpv", "#fff"));
+    expect(uav).not.toContain("circle cx=\"11\"");
+    expect(fpv).toContain("circle cx=\"11\"");
+  });
+});

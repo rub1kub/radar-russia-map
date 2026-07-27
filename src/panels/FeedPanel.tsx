@@ -5,6 +5,7 @@ import type { EventSource, RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
 import {
+  durationMinutes,
   formatAge,
   formatDuration,
   formatMoment,
@@ -261,9 +262,14 @@ export function FeedPanel({
                       <span className="event-since">
                         {/* До последнего подтверждения, а не до «сейчас»:
                             событие с последним сообщением час назад не идёт
-                            час, оно шло сколько шло и затихло. */}
-                        шло {formatDuration(event.first_seen_at, clamp(event.last_seen_at))}
-                        {" · "}
+                            час, оно шло сколько шло и затихло.
+
+                            Событие в одно сообщение длительности не имеет, и
+                            «шло только что» было бессмыслицей: показываем
+                            просто, когда это было. */}
+                        {durationMinutes(event.first_seen_at, clamp(event.last_seen_at)) >= 1
+                          ? `шло ${formatDuration(event.first_seen_at, clamp(event.last_seen_at))} · `
+                          : ""}
                         {formatSince(clamp(event.last_seen_at), reference)}
                         {event.source_count > 1
                           ? ` · ${event.source_count} ${plural(

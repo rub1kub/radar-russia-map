@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  durationMinutes,
   formatAge,
   formatDuration,
   formatMoment,
@@ -100,5 +101,15 @@ describe("подписи", () => {
 
   it("возвращают исходный код для неизвестного", () => {
     expect(signalLabel("teleport")).toBe("teleport");
+  });
+});
+
+describe("durationMinutes", () => {
+  it("событие в один момент длительности не имеет", () => {
+    expect(durationMinutes("2026-07-27T10:00:00Z", "2026-07-27T10:00:20Z")).toBe(0);
+  });
+
+  it("считает минуты между первым и последним сообщением", () => {
+    expect(durationMinutes("2026-07-27T10:00:00Z", "2026-07-27T10:47:00Z")).toBe(47);
   });
 });

@@ -1785,7 +1785,7 @@ button {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 34px;
+  height: 40px;
   margin-bottom: 10px;
   padding-bottom: 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -1812,6 +1812,46 @@ button {
 .day-bar.is-on {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Диаграмма активности внутри просматриваемого окна. Полоса истории тянется
+   на сутки, а всплеск занимает в ней двадцать минут: без диаграммы его можно
+   было найти только наугад, перематывая вслепую. */
+.history-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 44px;
+  margin-bottom: 8px;
+}
+
+.chart-bar {
+  display: flex;
+  align-items: flex-end;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+}
+
+.chart-bar:hover { background: rgba(255, 255, 255, 0.07); }
+.chart-bar.is-on { background: rgba(255, 255, 255, 0.12); }
+
+.chart-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  transition: height 120ms ease;
+}
+
+.history-stamp b {
+  margin-left: 8px;
+  font-weight: 500;
+  color: rgba(196, 204, 197, 0.62);
 }
 
 .day-bar i {

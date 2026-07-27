@@ -4,9 +4,13 @@ import type { HistoryDay } from "../lib/api";
 import { formatDayTime, plural, severityColor } from "../lib/format";
 import type { Slot } from "../lib/history";
 
+export type SlotLoad = { count: number; severity: number };
+
 type Props = {
   open: boolean;
   slots: Slot[];
+  /** Сколько событий и какого уровня было в каждом срезе. */
+  load: SlotLoad[];
   index: number;
   playing: boolean;
   loading: boolean;
@@ -22,6 +26,31 @@ type Props = {
 };
 
 const SPEEDS = [0.5, 1, 2, 4];
+
+/**
+ * Высота столбика внутри просматриваемого окна.
+ *
+ * Корень, а не доля от пика: внутри суток счёт меняется в разы, и корень
+ * поднимает спокойные часы над самым низом, не сплющивая всплеск.
+ */
+function barHeight(value: number, peak: number): number {
+  if (!value) return 0;
+  return Math.max(9, Math.round((Math.sqrt(value) / Math.sqrt(peak)) * 100));
+}
+
+/**
+ * Высота столбика по дням — шкала логарифмическая.
+ *
+ * Здесь разброс на три порядка: в спокойные сутки событий единицы, в налёт
+ * полторы тысячи. И при доле от пика, и при корне весь месяц оставался
+ * одинаковыми точками у самого низа — полоса выглядела пунктиром и не
+ * говорила ничего. Логарифм разводит единицы и десятки, а пик оставляет
+ * пиком.
+ */
+function dayHeight(value: number, peak: number): number {
+  if (!value) return 0;
+  return Math.max(12, Math.round((Math.log1p(value) / Math.log1p(peak)) * 100));
+}
 
 function dayLabel(day: string): string {
   const [, month, date] = day.split("-");
@@ -39,6 +68,7 @@ function dayLabel(day: string): string {
 export function HistoryPanel({
   open,
   slots,
+  load,
   index,
   playing,
   loading,
@@ -53,6 +83,8 @@ export function HistoryPanel({
   onSpeed
 }: Props) {
   const timer = useRef<number | null>(null);
+  // Пик по дням, чтобы полоски считались той же шкалой, что и диаграмма.
+  const daysPeak = Math.max(1, ...days.map((entry) => entry.events));
 
   useEffect(() => {
     if (!playing || !slots.length) return;
@@ -66,6 +98,8 @@ export function HistoryPanel({
 
   const atLive = !selectedDay && index >= slots.length - 1;
   const current = slots[index];
+  const chartPeak = Math.max(1, ...load.map((point) => point.count));
+  const now = load[index];
 
   return (
     <div className={`history-panel ${open ? "is-open" : ""}`}>
@@ -94,10 +128,31 @@ export function HistoryPanel({
                 >
                   <i
                     style={{
-                      height: `${Math.max(8, entry.density * 100)}%`,
+                      height: `${dayHeight(entry.events, daysPeak)}%`,
                       background: severityColor(entry.max_severity, 0.75)
                     }}
                     aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {slots.length > 1 && load.length === slots.length ? (
+            <div className="history-chart" aria-hidden="true">
+              {load.map((point, at) => (
+                <button
+                  key={slots[at].at}
+                  type="button"
+                  className={`chart-bar ${at === index ? "is-on" : ""}`}
+                  onClick={() => onSeek(at)}
+                  tabIndex={-1}
+                >
+                  <i
+                    style={{
+                      height: `${barHeight(point.count, chartPeak)}%`,
+                      background: severityColor(point.severity, at === index ? 1 : 0.62)
+                    }}
                   />
                 </button>
               ))}
@@ -142,6 +197,11 @@ export function HistoryPanel({
               <div className="history-foot">
                 <span className="history-stamp">
                   {atLive ? "сейчас" : current ? formatDayTime(current.at) : ""}
+                  {now ? (
+                    <b>
+                      {now.count} {plural(now.count, "событие", "события", "событий")}
+                    </b>
+                  ) : null}
                 </span>
                 <span className="history-speed">
                   {SPEEDS.map((value) => (
