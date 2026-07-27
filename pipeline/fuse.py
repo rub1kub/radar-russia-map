@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 # Вес источника в расчете достоверности (см. tier в ingest/config.py).
-TIER_WEIGHT = {"federal": 0.55, "regional": 0.4, "mixed": 0.25}
+# official — МЧС, РСЧС и оперштабы: официальное оповещение весит больше
+# народной ленты, потому что за ним стоит проверка, а не пересказ.
+TIER_WEIGHT = {"official": 0.72, "federal": 0.55, "regional": 0.4, "mixed": 0.25}
 
 SAME_ZONE_WINDOW = timedelta(minutes=5)
 PARENT_ZONE_WINDOW = timedelta(minutes=15)

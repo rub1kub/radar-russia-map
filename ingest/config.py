@@ -24,6 +24,7 @@ class Source:
     """Публичный канал-источник оповещений.
 
     tier:
+      official — МЧС, РСЧС, оперштабы: авторитетный источник, вес выше прочих;
       federal  — широкое покрытие, телеграфный формат, низкий шум;
       regional — узкая география (в основном Кубань), низкий шум;
       mixed    — оповещения вперемешку с новостями, нужен фильтр релевантности.
@@ -119,6 +120,48 @@ SOURCES: list[Source] = [
     Source("radar_voronezh", "radar_voronezh", "Радар Воронеж", "regional", 57067, region="voronezh", network=None),
     Source("radar_voron", "radar_voron", "Радар Воронежский", "regional", 13882, region="voronezh", network=None),
     Source("radar_alertss", "radar_alertss", "ЧП ВОРОНЕЖ НОВОСТИ", "regional", 2415, region="voronezh", network=None),
+
+    # --- Официальные ленты и вторая волна радаров, 27.07.2026 ---------
+    Source("mchs31", "mchs31", "МЧС Белгородской области", "official", 18925, region="belgorod", network=None),
+    Source("operativno31", "operativno31", "Оперштаб Белгородской области", "official", 14959, region="belgorod", network=None),
+    Source("mchs_bryansk", "mchs_bryansk", "МЧС Брянской области", "official", 19399, region="bryansk", network=None),
+    Source("gubernator_46", "gubernator_46", "Оперштаб Курской области 🇷🇺", "official", 184399, region="kursk", network=None),
+    Source("rschs_moscow77", "rschs_moscow77", "РСЧС Москва", "official", 8048, region="moscow", network=None),
+    Source("rschs_prigranichie1", "Rschs_prigranichie1", "РСЧС Приграни́чье", "official", 34841, region="other", network=None),
+    Source("rschs_prigranichie", "rschs_prigranichie", "ЧС Приграни́чье", "official", 28430, region="other", network=None),
+    Source("rschs_24", "rschs_24", "РСЧС 24/7", "official", 8514, region="other", network=None),
+    Source("rschs_31", "RSCHS_31", "Оповещения РСЧС 🚨", "official", 5938, region="other", network=None),
+    Source("mchs36", "mchs36", "МЧС Воронежской области", "official", 28294, region="voronezh", network=None),
+    Source("radar_astrakhan", "radar_astrakhan", "🇷🇺 Радар Астрахани | Оповещение 🇷🇺", "regional", 6108, region="astrakhan", network=None),
+    Source("radar_yuga", "radar_yuga", "Радар 'Небо Юга' Ростов, Волгоград, Астрахан", "regional", 5915, region="astrakhan", network=None),
+    Source("radar_ivanovo", "radar_ivanovo", "Радар Иваново и область", "regional", 9613, region="ivanovo", network=None),
+    Source("ivanovo_radar", "ivanovo_radar", "Радар БПЛА | ЧП | Ивановская область", "regional", 1154, region="ivanovo", network=None),
+    Source("radar_izhevsk", "radar_izhevsk", "Радар Ижевск", "regional", 1507, region="izhevsk", network=None),
+    Source("kazan_radar", "kazan_radar", "Радар Казань | ПФО", "regional", 4427, region="kazan", network=None),
+    Source("radar_ru_kursk", "radar_ru_kursk", "Радар.ру | Курская область ( обстрелы, БПЛА,", "regional", 933, region="kursk", network="radar_ru"),
+    Source("safeskyrf_nizhniy_novgorod", "safeskyRF_Nizhniy_Novgorod", "Радар • Нижний Новгород", "regional", 1671, region="nnovgorod", network=None),
+    Source("rodnoy_nijnii_novgorod", "rodnoy_nijnii_novgorod", "РОДНОЙ НИЖНИЙ НОВГОРОД | РАДАР", "regional", 516, region="nnovgorod", network="rodnoy"),
+    Source("radar_rossia_bpla", "radar_rossia_bpla", "Мониторинг.ру | БПЛА", "regional", 45258, region="other", network=None),
+    Source("bplarussiaru", "bplarussiaru", "БПЛА Россия - мониторинг", "regional", 27453, region="other", network=None),
+    Source("radar_pskovv", "radar_pskovv", "Радар Псков", "regional", 5844, region="pskov", network=None),
+    Source("radar_pskov", "radar_pskov", "Радар Псков | БПЛА", "regional", 1796, region="pskov", network=None),
+    Source("radarsaratov", "radarSaratov", "Саратовский Радар", "regional", 3153, region="saratov", network=None),
+    Source("radarsar64", "RadarSar64", "Радар Саратовской области", "regional", 1877, region="saratov", network=None),
+    Source("sochinskoe_nebo_radar", "sochinskoe_nebo_radar", "Сочинское Небо | РАДАР", "regional", 11028, region="sochi", network=None),
+    Source("radar_peterburg", "radar_peterburg", "Радар Питер и Ленинградская область", "federal", 151500, region="spb", network=None),
+    Source("radar_piter", "radar_piter", "Радар Санкт-Петербург", "regional", 38524, region="spb", network=None),
+    Source("stavropol_radar", "stavropol_radar", "Радар Ставропольского края", "regional", 27963, region="stavropol", network=None),
+    Source("radarbpb", "radarbpb", "Радар Ставропольского Края", "regional", 1474, region="stavropol", network=None),
+    Source("radarsverdlovska", "radarsverdlovska", "Радар Свердловская Область (БПЛА, ракеты, аэ", "regional", 4640, region="sverdlovsk", network=None),
+    Source("radar_tver", "radar_tver", "Радар Тверь", "regional", 40038, region="tver", network=None),
+    Source("mytver_radar", "myTver_radar", "Моя Тверь | Радар", "regional", 4427, region="tver", network="moy"),
+    Source("radar_vladimir", "radar_vladimir", "Радар Владимир", "regional", 12937, region="vladimir", network=None),
+    Source("radarvladimir", "radarvladimir", "Радар Владимирской области", "regional", 889, region="vladimir", network=None),
+    Source("rodnoyi_volgograd", "rodnoyi_volgograd", "РОДНОЙ ВОЛГОГРАД | РАДАР", "regional", 1261, region="volgograd", network="rodnoy"),
+    Source("voronezh_radar1", "voronezh_radar1", "Мой Воронеж | 112 РАДАР", "regional", 3402, region="voronezh", network="moy"),
+    Source("radarrn136", "radarRN136", "ВОРОНЕЖСКИЙ РАДАР", "regional", 2603, region="voronezh", network=None),
+    Source("radar_yaroslavl", "radar_yaroslavl", "Радар Ярославль", "regional", 51829, region="yaroslavl", network=None),
+    Source("radaryr", "radarYR", "РАДАР. Ярославль. Кострома. Иваново", "regional", 4797, region="yaroslavl", network=None),
 ]
 
 
