@@ -20,7 +20,7 @@ import pytest
 from pipeline.fuse import Fuser
 from pipeline.geocode import Geocoder
 from pipeline.parse import parse, strip_footer
-from pipeline.textnorm import norm_key, slugify, strip_unit
+from pipeline.textnorm import norm_key, slugify, stem_key, stem_word, strip_unit
 from pipeline.timeutil import MSK, parse_utc, to_utc
 
 
@@ -39,6 +39,18 @@ def test_norm_key_folds_yo_and_punctuation():
 def test_strip_unit_removes_type_word():
     assert strip_unit("Азовский район") == "азовский"
     assert strip_unit("городской округ Краснодар") == "краснодар"
+
+
+def test_stem_key_folds_case_endings():
+    assert stem_key(norm_key("Ростовской области")) == "ростовск област"
+    assert stem_key(norm_key("Краснодарскому краю")) == "краснодарск кра"
+    assert stem_key(norm_key("Тимашёвского района")) == "тимашевск район"
+
+
+@pytest.mark.parametrize("name", ["азов", "ейск", "мга", "уфа"])
+def test_stemmer_keeps_short_names_intact(name):
+    """Огрызок из двух букв дал бы массовые ложные совпадения."""
+    assert stem_word(name) == name
 
 
 # --- Футеры и релевантность -------------------------------------------------
@@ -123,6 +135,39 @@ def test_geocoder_resolves_homonym_by_context(geocoder):
 
 def test_geocoder_ignores_event_vocabulary(geocoder):
     assert geocoder.resolve(["Опасность по БПЛА", "Меры безопасности"]) == []
+
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("в Ростовской области", "Ростовская область"),
+    ("по Краснодарскому краю", "Краснодарский край"),
+    ("Тимашёвского района", "Тимашёвский район"),
+    ("над Анапой", "Анапа"),
+])
+def test_geocoder_resolves_oblique_case(geocoder, phrase, expected):
+    """Справочник в именительном падеже, сводки — в косвенном."""
+    assert expected in {item.name for item in geocoder.resolve([phrase])}
+
+
+def test_exact_form_wins_over_stemmed(geocoder):
+    """Именительный падеж идёт точным индексом, косвенный — стеммированным,
+    но обе формы приводят к одной зоне."""
+    assert all(match.exact for match in geocoder._scan("Ростовская область"))
+    assert not any(match.exact for match in geocoder._scan("Ростовской области"))
+    assert ([item.zone_id for item in geocoder.resolve(["Ростовская область"])]
+            == [item.zone_id for item in geocoder.resolve(["Ростовской области"])])
+
+
+@pytest.mark.parametrize("phrase", [
+    "была размещена в свободном доступе",   # городской округ Свободный
+    "по старой трассе",                     # Старая Деревня
+    "в сторону примерно",                   # посёлок Примерный
+    "крайне много БПЛА",                    # посёлок Крайний
+    "с Азовского моря",                     # станица Азовская
+    "в северной части района",              # посёлок Северный
+])
+def test_stemmed_match_does_not_invent_places(geocoder, phrase):
+    """Стеммер схлопывает словоформы, а значит легко ловит обиходные слова."""
+    assert geocoder.resolve([phrase]) == []
 
 
 # --- Слияние ----------------------------------------------------------------

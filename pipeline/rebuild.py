@@ -30,13 +30,18 @@ def import_jsonl(connection, raw_dir: Path) -> int:
     """Залить выборки ingest/data/raw/*.jsonl в raw_messages."""
     added = 0
     for path in sorted(raw_dir.glob("*.jsonl")):
-        source_key = USERNAME_TO_KEY.get(path.stem, path.stem)
+        fallback_key = USERNAME_TO_KEY.get(path.stem, path.stem)
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             row = json.loads(line)
             if not row.get("text") or not row.get("date"):
                 continue
+            # live.jsonl содержит сообщения всех каналов вперемешку и несёт
+            # собственное поле source. Без него всё живое падало в
+            # несуществующий источник "live", задваивая сообщения и ломая
+            # и подтверждение между лентами, и аналитику источников.
+            source_key = row.get("source") or fallback_key
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO raw_messages"
                 " (source_key, chat_id, message_id, posted_at, received_at, text, views)"

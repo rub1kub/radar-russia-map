@@ -1,0 +1,176 @@
+import { Bell, BellRing, Building2 } from "lucide-react";
+import type { RadarEvent, RadarState } from "../lib/api";
+import type { Bookmark } from "../lib/bookmarks";
+import { isBookmarked } from "../lib/bookmarks";
+import {
+  formatAge,
+  formatDuration,
+  formatMoment,
+  plural,
+  severityColor,
+  signalLabel,
+  threatLabel
+} from "../lib/format";
+
+type Props = {
+  state: RadarState | null;
+  apiOnline: boolean | null;
+  selectedName: string | null;
+  selectedZoneId: string | null;
+  zoneEvents: RadarEvent[];
+  bookmarks: Bookmark[];
+  onClearSelection: () => void;
+  onPickEvent: (event: RadarEvent) => void;
+  onToggleBookmark: () => void;
+  historyLabel: string | null;
+  /** Момент, относительно которого считается время: сейчас или срез истории. */
+  referenceIso: string | null;
+};
+
+export function FeedPanel({
+  state,
+  apiOnline,
+  selectedName,
+  selectedZoneId,
+  zoneEvents,
+  bookmarks,
+  onClearSelection,
+  onPickEvent,
+  onToggleBookmark,
+  historyLabel,
+  referenceIso
+}: Props) {
+  const live = apiOnline && state && !state.stale && !historyLabel;
+  const events = zoneEvents.length ? zoneEvents : (state?.events ?? []);
+  // В режиме истории отсчёт идёт от просматриваемого момента, иначе лента
+  // показывала бы будущее относительно выбранного среза.
+  const reference = referenceIso ?? state?.generated_at ?? new Date().toISOString();
+
+  const clamp = (iso: string) => (new Date(iso) > new Date(reference) ? reference : iso);
+
+  return (
+    <aside className="details-panel" aria-label="Обстановка">
+      <div className="feed-top">
+        <h2>{historyLabel ? "Было в эфире" : "Что происходит"}</h2>
+        <span
+          className={`live-dot ${live ? "is-live" : "is-off"}`}
+          title={live ? "Данные обновляются" : historyLabel ? "Просмотр истории" : "Нет свежих данных"}
+          aria-hidden="true"
+        />
+      </div>
+
+      {apiOnline === false ? (
+        <p className="feed-empty">Нет связи с сервером. Обновите страницу.</p>
+      ) : !state ? (
+        <p className="feed-empty">Загрузка…</p>
+      ) : (
+        <>
+          {historyLabel ? (
+            <p className="history-banner">Показана обстановка на {historyLabel}</p>
+          ) : state.stale ? (
+            <p className="stale-banner">
+              Сбор сообщений остановлен {formatAge(state.data_age_sec)} назад. Показанное не
+              отражает текущую обстановку.
+            </p>
+          ) : null}
+
+          {selectedName ? (
+            <div className="zone-card">
+              <div className="zone-card-head">
+                <Building2 size={15} aria-hidden="true" />
+                <span>{selectedName}</span>
+                {selectedZoneId ? (
+                  <button
+                    type="button"
+                    className={`bookmark-toggle ${
+                      isBookmarked(bookmarks, selectedZoneId) ? "is-on" : ""
+                    }`}
+                    onClick={onToggleBookmark}
+                    title={
+                      isBookmarked(bookmarks, selectedZoneId)
+                        ? "Не отслеживать"
+                        : "Отслеживать это место"
+                    }
+                  >
+                    {isBookmarked(bookmarks, selectedZoneId) ? (
+                      <BellRing size={15} aria-hidden="true" />
+                    ) : (
+                      <Bell size={15} aria-hidden="true" />
+                    )}
+                  </button>
+                ) : null}
+                <button type="button" onClick={onClearSelection} aria-label="Снять выбор">
+                  ×
+                </button>
+              </div>
+              <p className={zoneEvents.length ? undefined : "zone-card-quiet"}>
+                {zoneEvents.length
+                  ? `${zoneEvents.length} ${plural(
+                      zoneEvents.length,
+                      "активное сообщение",
+                      "активных сообщения",
+                      "активных сообщений"
+                    )}`
+                  : "Сообщений нет"}
+              </p>
+            </div>
+          ) : null}
+
+          <p className="feed-summary">
+            <strong>{events.length}</strong>{" "}
+            {plural(events.length, "сообщение", "сообщения", "сообщений")}
+          </p>
+
+          {events.length === 0 ? (
+            <p className="feed-empty">
+              {historyLabel ? "На этот момент сообщений не было." : "Сейчас активных сообщений нет."}
+            </p>
+          ) : (
+            <ul className="event-feed">
+              {events.slice(0, 60).map((event) => (
+                <li
+                  key={event.id}
+                  className={event.status === "fading" ? "is-fading" : undefined}
+                >
+                  <button type="button" onClick={() => onPickEvent(event)}>
+                    <span
+                      className="event-dot"
+                      style={{ background: severityColor(event.severity, 0.95) }}
+                      aria-hidden="true"
+                    />
+                    <span className="event-body">
+                      <span className="event-title">{event.place_name}</span>
+                      <span className="event-meta">
+                        {signalLabel(event.signal_type)}
+                        {event.threat_type !== "unknown"
+                          ? ` · ${threatLabel(event.threat_type)}`
+                          : ""}
+                        {event.target_count ? ` · ${event.target_count} целей` : ""}
+                      </span>
+                      <span className="event-since">
+                        идёт {formatDuration(event.first_seen_at, reference)}
+                        {event.source_count > 1
+                          ? ` · ${event.source_count} ${plural(
+                              event.source_count,
+                              "источник",
+                              "источника",
+                              "источников"
+                            )}`
+                          : ""}
+                      </span>
+                    </span>
+                    <span className="event-time">
+                      {formatMoment(clamp(event.last_seen_at), reference)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <p className="feed-foot">Время московское. Данные из открытых Telegram-каналов.</p>
+        </>
+      )}
+    </aside>
+  );
+}

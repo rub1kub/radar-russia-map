@@ -4,6 +4,19 @@
 
 Публично отдаются достоверность и число подтвердивших источников, но не имена
 каналов и не тексты первичных сообщений (см. docs/TARGET_ARCHITECTURE.md §8).
+
+Переменные окружения (нужны при выкладке дальше localhost):
+
+    RADAR_CORS_ORIGINS  разрешённые origin через запятую; по умолчанию dev-сервер Vite
+    RADAR_RATE_LIMIT    запросов в минуту с одного адреса, по умолчанию 120
+    RADAR_TRUST_PROXY   1, если перед сервисом стоит свой прокси и X-Forwarded-For
+                        можно верить; без этого заголовок игнорируется
+    RADAR_PROXY_DEPTH   сколько своих прокси стоит перед сервисом, по умолчанию 1;
+                        столько последних записей X-Forwarded-For считаются
+                        дописанными доверенным звеном
+
+Без RADAR_TRUST_PROXY=1 за прокси все клиенты попадают в общую корзину лимита:
+заголовку не верим, а настоящий адрес до нас не доходит.
 """
 
 from __future__ import annotations
@@ -12,23 +25,66 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from api.limits import (
+    DEFAULT_PROXY_DEPTH,
+    DEFAULT_RATE_LIMIT,
+    RateLimiter,
+    TTLCache,
+    client_ip,
+    cors_origins,
+    env_flag,
+    env_int,
+)
 from pipeline.db import DB_PATH
 from pipeline.timeutil import now_utc, parse_utc
 
 app = FastAPI(title="Radar API", version="1.0")
+
+ACTIVE_WINDOW = timedelta(hours=6)
+
+# Ответ /state пересобирается не чаще раза в 3 секунды: клиент опрашивает его
+# каждые 10 секунд, websocket-цикл — каждые 5, и каждый вызов это несколько
+# запросов к SQLite плюс сборка счётчиков по зонам.
+STATE_TTL_SEC = 3.0
+STATE_CACHE_CONTROL = "public, max-age=5, stale-while-revalidate=30"
+
+_state_cache = TTLCache(STATE_TTL_SEC)
+_limiter = RateLimiter(env_int("RADAR_RATE_LIMIT", DEFAULT_RATE_LIMIT))
+_trust_proxy = env_flag("RADAR_TRUST_PROXY")
+_proxy_depth = env_int("RADAR_PROXY_DEPTH", DEFAULT_PROXY_DEPTH)
+
+
+# BaseHTTPMiddleware (за ним стоит @app.middleware) видит только http-scope,
+# поэтому websocket /api/v1/stream под лимит не попадает — он и не должен:
+# одно соединение живёт часами и запросов не генерирует.
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    if request.url.path.startswith("/api/v1/"):
+        retry_after = _limiter.check(client_ip(request, _trust_proxy, _proxy_depth))
+        if retry_after:
+            return JSONResponse(
+                {"detail": "rate limit exceeded", "limit_per_min": _limiter.limit},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+    return await call_next(request)
+
+
+# CORS добавляется последним, значит оказывается снаружи лимитера: браузер
+# должен видеть заголовки и на ответе 429, иначе вместо кода ошибки клиент
+# получит невнятный сетевой сбой.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=cors_origins(),
     allow_methods=["GET"],
     allow_headers=["*"],
 )
-
-ACTIVE_WINDOW = timedelta(hours=6)
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
@@ -67,8 +123,7 @@ def event_rows(since: datetime, limit: int = 400) -> list[dict]:
     return rows
 
 
-@app.get("/api/v1/state")
-def state():
+def build_state() -> dict:
     """Текущая обстановка: активные события и счетчики по зонам."""
     now = now_utc()
     last_message = latest_moment()
@@ -112,6 +167,23 @@ def state():
         "active_events": len(events),
         "active_zones": len(zone_counts),
     }
+
+
+def state_snapshot() -> dict:
+    """Тот же ответ, но не чаще раза в STATE_TTL_SEC.
+
+    Кеш общий для http-запросов (они идут в пуле потоков) и для websocket-цикла,
+    поэтому TTLCache берёт лок, а не полагается на GIL.
+    """
+    return _state_cache.get(build_state)
+
+
+@app.get("/api/v1/state")
+def state(response: Response) -> dict:
+    # Те же заголовки ставят radar-map.ru и detector-aero.ru: браузер и CDN
+    # держат ответ 5 секунд и ещё 30 отдают устаревший, пока обновляют фоном.
+    response.headers["Cache-Control"] = STATE_CACHE_CONTROL
+    return state_snapshot()
 
 
 @app.get("/api/v1/history")
@@ -282,7 +354,9 @@ async def stream(socket: WebSocket):
     last_sent: str | None = None
     try:
         while True:
-            snapshot = state()
+            # Снимок собирается в отдельном потоке: SQL синхронный, а на event
+            # loop висят все остальные соединения.
+            snapshot = await asyncio.to_thread(state_snapshot)
             marker = f"{snapshot['last_message_at']}|{snapshot['active_events']}"
             if marker != last_sent:
                 await socket.send_json({"type": "state", **snapshot})

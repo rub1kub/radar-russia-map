@@ -17,7 +17,34 @@ import Style from "ol/style/Style";
 import Fill from "ol/style/Fill";
 import Stroke from "ol/style/Stroke";
 import Text from "ol/style/Text";
-import { Building2, Home, Layers, MapPinned, Search } from "lucide-react";
+import { BarChart3, Building2, Home, Layers, MapPinned, Search } from "lucide-react";
+import { api, API_BASE } from "./lib/api";
+import type { RadarEvent, RadarState, SearchItem, ZoneCount } from "./lib/api";
+import {
+  formatAge,
+  formatDayTime,
+  formatDuration,
+  formatMoment,
+  numberFormat,
+  plural,
+  severityColor,
+  signalLabel,
+  threatLabel
+} from "./lib/format";
+import { buildSlots, zoneCountsAt } from "./lib/history";
+import type { Slot } from "./lib/history";
+import {
+  loadBookmarks,
+  loadSeen,
+  markSeen,
+  matchBookmarks,
+  toggleBookmark
+} from "./lib/bookmarks";
+import type { Bookmark } from "./lib/bookmarks";
+import { FeedPanel } from "./panels/FeedPanel";
+import { HistoryPanel } from "./panels/HistoryPanel";
+import { AnalyticsPanel } from "./panels/AnalyticsPanel";
+import { AlertToast } from "./panels/AlertToast";
 import type { FeatureLike } from "ol/Feature";
 import type { Geometry } from "ol/geom";
 
@@ -42,56 +69,6 @@ type SelectedObject = {
   name: string;
   subtitle: string;
   details: Array<[string, string]>;
-};
-
-type SearchItem = {
-  zone_id: string;
-  name: string;
-  level: "region" | "district" | "place";
-  context: string | null;
-  lat: number | null;
-  lon: number | null;
-  source_id: string | null;
-};
-
-type RadarEvent = {
-  id: string;
-  first_seen_at: string;
-  last_seen_at: string;
-  status: string;
-  signal_type: string;
-  threat_type: string;
-  severity: number;
-  confidence: number;
-  source_count: number;
-  zone_id: string;
-  zone_path: string[];
-  place_name: string;
-  zone_level: string;
-  lat: number | null;
-  lon: number | null;
-  accuracy_m: number | null;
-  target_count: number | null;
-};
-
-type ZoneCount = {
-  active: number;
-  max_severity: number;
-  last_active: string;
-  level?: "region" | "district" | "place";
-  source_id?: string;
-  name?: string;
-};
-
-type RadarState = {
-  generated_at: string;
-  last_message_at: string;
-  data_age_sec: number;
-  stale: boolean;
-  events: RadarEvent[];
-  zone_counts: Record<string, ZoneCount>;
-  active_events: number;
-  active_zones: number;
 };
 
 type LayerState = {
@@ -125,37 +102,8 @@ const DESKTOP_OVERVIEW_ZOOM = 4.15;
 const MOBILE_OVERVIEW_ZOOM = 3.3;
 const MAX_SUGGESTIONS = 10;
 const MOBILE_QUERY = "(max-width: 760px)";
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const STATE_POLL_MS = 10_000;
 
-const SIGNAL_LABELS: Record<string, string> = {
-  danger: "Опасность",
-  alarm: "Тревога",
-  detection: "Фиксация",
-  intercept: "Работа ПВО",
-  impact: "Взрыв",
-  caution: "Меры безопасности",
-  infra: "Инфраструктура",
-  allclear: "Отбой",
-  retracted: "Опровержение"
-};
-
-const THREAT_LABELS: Record<string, string> = {
-  uav: "БПЛА",
-  fpv: "FPV",
-  rocket: "Ракета",
-  kab: "КАБ/УАБ",
-  bek: "БЭК",
-  aviation: "Авиация",
-  unknown: "Неизвестно"
-};
-
-function severityColor(severity: number, alpha: number): string {
-  if (severity >= 8) return `rgba(233, 62, 78, ${alpha})`;    // ракета, взрыв, ПВО
-  if (severity >= 6) return `rgba(247, 129, 43, ${alpha})`;   // тревога
-  if (severity >= 4) return `rgba(246, 199, 61, ${alpha})`;   // опасность
-  return `rgba(126, 160, 214, ${alpha})`;                     // прочее, не серый
-}
 
 const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: string }> = [
   { key: "basemap", label: "Подложка", swatch: "swatch-basemap" },
@@ -169,49 +117,10 @@ const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: strin
   { key: "landCover", label: "Леса и болота", swatch: "swatch-land-cover" }
 ];
 
-const numberFormat = new Intl.NumberFormat("ru-RU");
 
-// Всё время показывается по Москве и подписано. В базе — UTC со смещением.
-const MSK_TIME = new Intl.DateTimeFormat("ru-RU", {
-  timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit"
-});
-const MSK_DAY = new Intl.DateTimeFormat("ru-RU", {
-  timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit"
-});
 
-function plural(count: number, one: string, few: string, many: string): string {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
-}
 
-function formatMoment(iso: string, nowIso: string): string {
-  const moment = new Date(iso);
-  const time = MSK_TIME.format(moment);
-  return MSK_DAY.format(moment) === MSK_DAY.format(new Date(nowIso))
-    ? time
-    : `${MSK_DAY.format(moment)} ${time}`;
-}
 
-function formatDuration(fromIso: string, toIso: string): string {
-  const minutes = Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60000));
-  if (minutes < 1) return "только что";
-  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")}`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  const head = `${hours} ${plural(hours, "час", "часа", "часов")}`;
-  return rest ? `${head} ${rest} мин` : head;
-}
-
-function formatAge(seconds: number): string {
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")}`;
-  const hours = Math.round(minutes / 60);
-  return `${hours} ${plural(hours, "час", "часа", "часов")}`;
-}
 const emptySelected: SelectedObject = {
   kind: "region",
   id: "none",
@@ -341,16 +250,30 @@ function createDistrictStyle(
       });
     }
 
+    if (selected) {
+      return new Style({
+        fill: new Fill({ color: "rgba(246, 199, 61, 0.09)" }),
+        stroke: new Stroke({ color: "rgba(246, 199, 61, 0.7)", width: 1.5 })
+      });
+    }
+
+    // Сетка районов проявляется с приближением: на обзоре 2327 контуров
+    // сливаются в кашу, а вблизи они и нужны, чтобы понимать границы зоны.
+    const zoom = resolutionToZoom(resolution);
+    const growth = clamp01((zoom - 4.1) / 2.6);
+
     return new Style({
-      fill: new Fill({
-        color: selected ? "rgba(228, 178, 93, 0.045)" : "rgba(255, 255, 255, 0.004)"
-      }),
+      fill: new Fill({ color: "rgba(255, 255, 255, 0.004)" }),
       stroke: new Stroke({
-        color: selected ? "rgba(126, 98, 49, 0.62)" : "rgba(116, 124, 119, 0.16)",
-        width: selected ? 1.25 : 0.35
+        color: `rgba(196, 208, 202, ${0.14 + growth * 0.3})`,
+        width: 0.4 + growth * 0.5
       })
     });
   };
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 function resolutionToZoom(resolution: number): number {
@@ -660,6 +583,15 @@ export default function App() {
 
   const [suggestions, setSuggestions] = useState<SearchItem[]>([]);
   const [highlighted, setHighlighted] = useState(0);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
+  const [alerts, setAlerts] = useState<RadarEvent[]>([]);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [slotIndex, setSlotIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   // Поиск выполняет сервер по индексу справочника: 212 тысяч зон, ответ за
   // десятки миллисекунд. Держать этот каталог в браузере было незачем.
@@ -691,6 +623,30 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [deferredQuery]);
+
+  // История подгружается один раз при открытии плеера: дальше перемотка идёт
+  // по уже полученным событиям и не трогает сервер.
+  useEffect(() => {
+    if (!historyOpen || historyEvents) return;
+    const controller = new AbortController();
+    setHistoryLoading(true);
+
+    api
+      .history(24, controller.signal)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        const built = buildSlots(payload.from, payload.to);
+        setHistoryEvents(payload.events);
+        setSlots(built);
+        setSlotIndex(Math.max(0, built.length - 1));
+        setHistoryLoading(false);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [historyOpen, historyEvents]);
 
   const applySelectedFeature = useCallback((feature: FeatureLike | null) => {
     selectedKeyRef.current = feature ? featureKey(feature) : null;
@@ -745,28 +701,35 @@ export default function App() {
     };
   }, []);
 
+  const inHistory = historyOpen && historyEvents !== null && slotIndex < slots.length - 1;
+  const historyAt = inHistory ? slots[slotIndex]?.at ?? null : null;
+
+  // Карта красится одной и той же формой счётчиков — живой или исторической.
+  const paintedZones = useMemo(() => {
+    if (inHistory && historyEvents && historyAt) {
+      return zoneCountsAt(historyEvents, historyAt, radarState?.zone_counts ?? {});
+    }
+    return radarState?.zone_counts ?? {};
+  }, [inHistory, historyEvents, historyAt, radarState]);
+
   // Обстановка рисуется заливкой самих регионов и районов, а не отдельными
   // маркерами: так делают RadarMap и Детектор АЭРО, и так понятнее.
   useEffect(() => {
     const index = new globalThis.Map<string, ZoneCount>();
-    if (radarState) {
-      for (const zone of Object.values(radarState.zone_counts)) {
-        if (!zone.source_id) continue;
-        if (zone.level !== "region" && zone.level !== "district") continue;
-        index.set(zone.source_id, zone);
-      }
+    for (const zone of Object.values(paintedZones)) {
+      if (!zone.source_id) continue;
+      if (zone.level !== "region" && zone.level !== "district") continue;
+      index.set(zone.source_id, zone);
     }
     zoneStateRef.current = index;
     const byPolygon = new globalThis.Map<string, string>();
-    if (radarState) {
-      for (const [zoneId, zone] of Object.entries(radarState.zone_counts)) {
-        if (zone.source_id) byPolygon.set(zone.source_id, zoneId);
-      }
+    for (const [zoneId, zone] of Object.entries(radarState?.zone_counts ?? {})) {
+      if (zone.source_id) byPolygon.set(zone.source_id, zoneId);
     }
     polygonToZoneRef.current = byPolygon;
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
-  }, [radarState]);
+  }, [paintedZones, radarState]);
 
   useEffect(() => {
     if (!dataset || !mapNodeRef.current || mapRef.current) return;
@@ -1087,12 +1050,28 @@ export default function App() {
     loadLazyLayersRef.current?.();
   }, [layers]);
 
+  const shownEvents = useMemo(() => {
+    if (inHistory && historyEvents && historyAt) {
+      const atMs = new Date(historyAt).getTime();
+      return historyEvents
+        .filter((event) => new Date(event.first_seen_at).getTime() <= atMs)
+        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs)
+        .slice(0, 60);
+    }
+    return radarState?.events ?? [];
+  }, [inHistory, historyEvents, historyAt, radarState]);
+
   const selectedZoneEvents = useMemo(() => {
-    if (!radarState || selected.id === "none" || selected.kind === "place") return [];
+    if (selected.id === "none" || selected.kind === "place") return [];
     const zoneId = polygonToZoneRef.current.get(selected.id);
     if (!zoneId) return [];
-    return radarState.events.filter((event) => event.zone_path.includes(zoneId));
-  }, [radarState, selected]);
+    return shownEvents.filter((event) => event.zone_path.includes(zoneId));
+  }, [shownEvents, selected]);
+
+  const selectedZoneId = useMemo(
+    () => (selected.id === "none" ? null : polygonToZoneRef.current.get(selected.id) ?? null),
+    [selected]
+  );
 
   const selectSearchItem = useCallback(
     (item: SearchItem) => {
@@ -1137,6 +1116,36 @@ export default function App() {
     });
   }, []);
 
+  const handleToggleBookmark = useCallback(() => {
+    if (selected.id === "none" || selected.kind === "place") return;
+    const zoneId = polygonToZoneRef.current.get(selected.id);
+    if (!zoneId) return;
+    const zone = radarState?.zone_counts?.[zoneId];
+    setBookmarks((current) =>
+      toggleBookmark(current, {
+        zone_id: zoneId,
+        name: selected.name,
+        level: selected.kind,
+        context: null,
+        lat: null,
+        lon: null,
+        source_id: zone?.source_id ?? selected.id
+      })
+    );
+  }, [selected, radarState]);
+
+  // Уведомление по отслеживаемым местам — один раз на событие.
+  useEffect(() => {
+    if (!radarState || !bookmarks.length || historyAt) return;
+    const seen = new Set(loadSeen());
+    const fresh = matchBookmarks(radarState.events, bookmarks).filter(
+      (event) => !seen.has(event.id)
+    );
+    if (!fresh.length) return;
+    setAlerts(fresh);
+    markSeen(fresh.map((event) => event.id));
+  }, [radarState, bookmarks, historyAt]);
+
   const resetMap = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -1155,6 +1164,11 @@ export default function App() {
             <p>По открытым источникам</p>
           </div>
         </div>
+
+        <button className="topbar-action" type="button" onClick={() => setAnalyticsOpen(true)}>
+          <BarChart3 size={17} aria-hidden="true" />
+          <span>Аналитика</span>
+        </button>
       </header>
 
       <main className="workspace">
@@ -1259,87 +1273,51 @@ export default function App() {
           <div className="map-surface" ref={mapNodeRef} />
           {loading ? <div className="map-loader">Загрузка карты…</div> : null}
           {error ? <div className="map-error">{error}</div> : null}
+
+          <HistoryPanel
+            open={historyOpen}
+            slots={slots}
+            index={slotIndex}
+            playing={playing}
+            loading={historyLoading}
+            onToggleOpen={() => {
+              setHistoryOpen((open) => !open);
+              setPlaying(false);
+            }}
+            onSeek={setSlotIndex}
+            onTogglePlay={() => setPlaying((value) => !value)}
+            onLive={() => {
+              setSlotIndex(Math.max(0, slots.length - 1));
+              setPlaying(false);
+            }}
+          />
+
+          <AlertToast
+            alerts={alerts}
+            onDismiss={() => setAlerts([])}
+            onPick={(event) => {
+              flyToEvent(event);
+              setAlerts([]);
+            }}
+          />
         </section>
 
-        <aside className="details-panel" aria-label="Обстановка">
-          <div className="feed-top">
-            <h2>Что происходит</h2>
-            <span
-              className={`live-dot ${apiOnline && radarState && !radarState.stale ? "is-live" : "is-off"}`}
-              title={apiOnline ? (radarState?.stale ? "Данные устарели" : "Данные обновляются") : "Нет связи"}
-              aria-hidden="true"
-            />
-          </div>
-
-          {apiOnline === false ? (
-            <p className="feed-empty">Нет связи с сервером. Обновите страницу.</p>
-          ) : !radarState ? (
-            <p className="feed-empty">Загрузка…</p>
-          ) : (
-            <>
-              {radarState.stale ? (
-                <p className="stale-banner">
-                  Сбор сообщений остановлен {formatAge(radarState.data_age_sec)} назад.
-                  Показанное не отражает текущую обстановку.
-                </p>
-              ) : null}
-
-              {selected.id !== "none" && selected.kind !== "place" ? (
-                <div className="zone-card">
-                  <div className="zone-card-head">
-                    <Building2 size={15} aria-hidden="true" />
-                    <span>{selected.name}</span>
-                    <button type="button" onClick={() => applySelectedFeature(null)} aria-label="Снять выбор">×</button>
-                  </div>
-                  {selectedZoneEvents.length ? (
-                    <p>
-                      {selectedZoneEvents.length}{" "}
-                      {plural(selectedZoneEvents.length, "активное сообщение", "активных сообщения", "активных сообщений")}
-                    </p>
-                  ) : (
-                    <p className="zone-card-quiet">Сообщений нет</p>
-                  )}
-                </div>
-              ) : null}
-
-              <p className="feed-summary">
-                <strong>{radarState.active_events}</strong>{" "}
-                {plural(radarState.active_events, "активное сообщение", "активных сообщения", "активных сообщений")}
-              </p>
-
-              {radarState.active_events === 0 ? (
-                <p className="feed-empty">Сейчас активных сообщений нет.</p>
-              ) : (
-                <ul className="event-feed">
-                  {(selectedZoneEvents.length ? selectedZoneEvents : radarState.events).slice(0, 40).map((event) => (
-                    <li key={event.id} className={event.status === "fading" ? "is-fading" : undefined}>
-                      <button type="button" onClick={() => flyToEvent(event)}>
-                        <span className="event-dot" style={{ background: severityColor(event.severity, 0.95) }} aria-hidden="true" />
-                        <span className="event-body">
-                          <span className="event-title">{event.place_name}</span>
-                          <span className="event-meta">
-                            {SIGNAL_LABELS[event.signal_type] ?? event.signal_type}
-                            {event.threat_type !== "unknown" ? ` · ${THREAT_LABELS[event.threat_type] ?? event.threat_type}` : ""}
-                          </span>
-                          <span className="event-since">
-                            идёт {formatDuration(event.first_seen_at, radarState.generated_at)}
-                            {event.source_count > 1
-                              ? ` · ${event.source_count} ${plural(event.source_count, "источник", "источника", "источников")}`
-                              : ""}
-                          </span>
-                        </span>
-                        <span className="event-time">{formatMoment(event.last_seen_at, radarState.generated_at)}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <p className="feed-foot">Время московское. Данные из открытых Telegram-каналов.</p>
-            </>
-          )}
-        </aside>
+        <FeedPanel
+          state={radarState}
+          apiOnline={apiOnline}
+          selectedName={selected.id === "none" || selected.kind === "place" ? null : selected.name}
+          selectedZoneId={selectedZoneId}
+          zoneEvents={selectedZoneEvents}
+          bookmarks={bookmarks}
+          historyLabel={historyAt ? formatDayTime(historyAt) : null}
+          referenceIso={historyAt}
+          onClearSelection={() => applySelectedFeature(null)}
+          onPickEvent={flyToEvent}
+          onToggleBookmark={handleToggleBookmark}
+        />
       </main>
+
+      <AnalyticsPanel open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
     </div>
   );
 }

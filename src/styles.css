@@ -924,3 +924,259 @@ button {
 }
 
 .suggestions button.is-active { background: rgba(246, 199, 61, 0.16); }
+
+/* --- Кнопка в шапке ------------------------------------------------------ */
+
+.topbar-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 8px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(232, 238, 231, 0.9);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.topbar-action:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* --- Закладка на зоне ---------------------------------------------------- */
+
+.bookmark-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(228, 224, 214, 0.5);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.bookmark-toggle.is-on { color: rgba(246, 199, 61, 0.95); }
+.bookmark-toggle:hover { color: rgba(246, 199, 61, 0.8); }
+.zone-card-head > button:last-child { margin-left: 0; }
+
+/* --- Плеер истории ------------------------------------------------------- */
+
+.history-panel {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 5;
+  border-radius: 11px;
+  background: rgba(16, 20, 18, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  max-width: min(420px, calc(100% - 28px));
+}
+
+.history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 13px;
+  border: 0;
+  background: none;
+  color: rgba(228, 234, 227, 0.88);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.history-body { padding: 4px 13px 12px; }
+
+.history-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(232, 238, 231, 0.9);
+  cursor: pointer;
+}
+
+.history-controls button.is-live { color: rgba(120, 210, 150, 0.95); }
+.history-controls input[type="range"] { flex: 1; accent-color: rgba(246, 199, 61, 0.9); }
+
+.history-stamp {
+  margin: 7px 0 0;
+  font-size: 12px;
+  color: rgba(206, 213, 206, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-loading { margin: 6px 0; font-size: 12px; color: rgba(200, 207, 201, 0.7); }
+
+.history-banner {
+  margin: 0 0 12px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: rgba(126, 160, 214, 0.16);
+  border: 1px solid rgba(126, 160, 214, 0.3);
+  font-size: 12px;
+  color: rgba(224, 234, 248, 0.95);
+}
+
+/* --- Уведомление по отслеживаемому месту --------------------------------- */
+
+.alert-toast {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1.5px solid;
+  background: rgba(18, 22, 20, 0.95);
+  backdrop-filter: blur(8px);
+  max-width: min(440px, calc(100% - 28px));
+}
+
+.alert-icon { display: flex; flex: 0 0 auto; }
+
+.alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  padding: 0;
+}
+
+.alert-title { font-size: 14px; font-weight: 650; color: rgba(244, 246, 241, 0.97); }
+.alert-meta  { font-size: 12px; color: rgba(212, 219, 213, 0.82); }
+.alert-more  { font-size: 11px; color: rgba(180, 188, 182, 0.62); }
+
+.alert-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: rgba(200, 206, 200, 0.55);
+  cursor: pointer;
+  display: flex;
+  padding: 2px;
+}
+
+/* --- Аналитика ----------------------------------------------------------- */
+
+.analytics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(8, 10, 9, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.analytics-card {
+  width: min(720px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: rgba(20, 24, 22, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 18px 20px 22px;
+}
+
+.analytics-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 16px;
+}
+
+.analytics-head h2 { margin: 0; font-size: 16px; }
+
+.analytics-head button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: rgba(210, 216, 210, 0.65);
+  cursor: pointer;
+  display: flex;
+}
+
+.analytics-body { display: flex; flex-direction: column; gap: 22px; }
+.analytics-body h3 { margin: 0 0 4px; font-size: 13.5px; }
+.analytics-note { margin: 0 0 10px; font-size: 11.5px; color: rgba(190, 198, 192, 0.6); }
+
+.analytics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.analytics-table th {
+  text-align: left;
+  font-weight: 500;
+  color: rgba(186, 194, 188, 0.6);
+  padding-bottom: 6px;
+}
+.analytics-table td { padding: 4px 8px 4px 0; color: rgba(228, 234, 228, 0.9); }
+.analytics-table td:first-child { font-variant-ligatures: none; }
+
+.bar-cell { position: relative; display: flex; align-items: center; gap: 7px; min-width: 90px; }
+.bar {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(246, 199, 61, 0.65);
+  min-width: 2px;
+}
+.bar-value { font-size: 11px; color: rgba(200, 208, 202, 0.75); font-variant-numeric: tabular-nums; }
+
+.analytics-zones, .analytics-threats { list-style: none; margin: 0; padding: 0; }
+.analytics-zones li {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.zone-name { color: rgba(228, 234, 228, 0.9); }
+
+.analytics-threats li {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* --- Мобильная компоновка ------------------------------------------------ */
+
+@media (max-width: 760px) {
+  .topbar-action span { display: none; }
+  .topbar-action { padding: 8px 10px; }
+
+  .history-panel { left: 10px; right: 10px; bottom: 10px; max-width: none; }
+  .alert-toast { left: 10px; right: 10px; transform: none; max-width: none; }
+
+  .analytics-card { max-height: 92vh; padding: 15px 15px 18px; }
+  .analytics-table { font-size: 11.5px; }
+  .analytics-zones li { grid-template-columns: 1fr 1fr; }
+
+  .details-panel { max-height: none; }
+  .event-feed li button { padding: 10px; }
+  .disclaimer { font-size: 10.5px; }
+}
