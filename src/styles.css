@@ -855,12 +855,31 @@ button {
   font-size: 11.5px;
 }
 
-.event-time {
+.event-aside {
   margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 1px;
+}
+
+.event-time {
   font-size: 11px;
   color: rgba(178, 186, 179, 0.6);
   font-variant-numeric: tabular-nums;
-  padding-top: 2px;
+}
+
+.event-caret {
+  flex: 0 0 auto;
+  color: rgba(170, 180, 172, 0.5);
+  transition: transform 140ms ease, color 140ms ease;
+}
+
+.event-row:hover .event-caret { color: rgba(220, 228, 221, 0.8); }
+.event-row.is-open .event-caret {
+  transform: rotate(180deg);
+  color: rgba(246, 226, 170, 0.92);
 }
 
 /* --- Устаревание, зона, кликабельная лента ------------------------------- */
@@ -906,9 +925,13 @@ button {
 .zone-card p { margin: 5px 0 0; font-size: 12px; color: rgba(226, 222, 212, 0.8); }
 .zone-card-quiet { opacity: 0.6; }
 
-.event-feed li { padding: 0; background: none; }
+/* Карточка складывается в колонку: сама кнопка, под ней раскрытые
+   источники. Раньше li оставался flex-строкой из объявления выше, и
+   кнопка, переключатель источников и список вставали в один ряд —
+   текст сжимался в столбик по два слова. */
+.event-feed li { display: block; padding: 0; background: none; }
 
-.event-feed li button {
+.event-row {
   display: flex;
   gap: 9px;
   width: 100%;
@@ -922,7 +945,8 @@ button {
   transition: background 120ms ease;
 }
 
-.event-feed li button:hover { background: rgba(255, 255, 255, 0.09); }
+.event-row:hover { background: rgba(255, 255, 255, 0.09); }
+.event-row.is-open { background: rgba(255, 255, 255, 0.085); }
 
 .event-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 .event-title { font-size: 13.5px; font-weight: 600; color: rgba(238, 242, 236, 0.96); }
@@ -1199,7 +1223,7 @@ button {
   .analytics-zones li { grid-template-columns: 1fr 1fr; }
 
   .details-panel { max-height: none; }
-  .event-feed li button { padding: 10px; }
+  .event-row { padding: 10px; }
   .disclaimer { font-size: 10.5px; }
 }
 
@@ -1880,25 +1904,6 @@ button {
  * видимыми склейки: если под событием лежат сообщения о разных местах,
  * это сразу заметно.
  */
-.event-sources-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 3px 0 0 26px;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: rgba(170, 180, 172, 0.6);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.event-sources-toggle:hover { color: rgba(220, 228, 221, 0.9); }
-.event-sources-toggle.is-on { color: rgba(246, 226, 170, 0.92); }
-.event-sources-toggle svg { transition: transform 140ms ease; }
-.event-sources-toggle.is-on svg { transform: rotate(180deg); }
-
 .event-sources {
   list-style: none;
   margin: 4px 0 2px 26px;
@@ -1915,6 +1920,28 @@ button {
   padding: 6px 8px;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+/* Пояснение к числу под заголовком: сообщений в списке всегда больше, чем
+   засчитанных источников, и без строки разница читалась как ошибка. */
+.source-note {
+  background: none !important;
+  padding: 2px 2px 0 !important;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: rgba(170, 180, 172, 0.6);
+}
+
+/* Перепост показывается, но приглушённо: он в счёт не идёт. */
+.event-sources li.is-repost { opacity: 0.62; }
+
+.source-tag {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: rgba(200, 208, 201, 0.7);
 }
 
 .source-head { display: flex; align-items: baseline; gap: 8px; }

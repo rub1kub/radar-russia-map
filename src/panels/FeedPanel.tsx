@@ -231,7 +231,19 @@ export function FeedPanel({
                   key={event.id}
                   className={event.status === "fading" ? "is-fading" : undefined}
                 >
-                  <button type="button" onClick={() => onPickEvent(event)}>
+                  {/* Вся карточка — одна кнопка: нажатие показывает место на
+                      карте и раскрывает сообщения, из которых событие сложено.
+                      Отдельная кнопка «N источников» рядом с карточкой ломала
+                      раскладку и заставляла целиться в мелкую мишень. */}
+                  <button
+                    type="button"
+                    className={`event-row ${expanded === event.id ? "is-open" : ""}`}
+                    aria-expanded={expanded === event.id}
+                    onClick={() => {
+                      onPickEvent(event);
+                      toggleSources(event.id);
+                    }}
+                  >
                     <span
                       className="event-dot"
                       style={{ background: severityColor(event.severity, 0.95) }}
@@ -263,30 +275,48 @@ export function FeedPanel({
                           : ""}
                       </span>
                     </span>
-                    <span className="event-time">
-                      {formatMoment(clamp(event.last_seen_at), reference)}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`event-sources-toggle ${expanded === event.id ? "is-on" : ""}`}
-                    onClick={() => toggleSources(event.id)}
-                    aria-expanded={expanded === event.id}
-                  >
-                    <ChevronDown size={12} aria-hidden="true" />
-                    <span>
-                      {event.source_count}{" "}
-                      {plural(event.source_count, "источник", "источника", "источников")}
+                    <span className="event-aside">
+                      <span className="event-time">
+                        {formatMoment(clamp(event.last_seen_at), reference)}
+                      </span>
+                      <ChevronDown className="event-caret" size={13} aria-hidden="true" />
                     </span>
                   </button>
 
                   {expanded === event.id ? (
                     <ul className="event-sources">
+                      {/* Сообщений почти всегда больше, чем засчитанных
+                          источников: дословный перепост и повтор того же
+                          канала не добавляют свидетельства. Без этой строки
+                          число под заголовком выглядело бы взятым с потолка. */}
+                      {sources[event.id]?.length > event.source_count ? (
+                        <li className="source-note">
+                          {sources[event.id].length}{" "}
+                          {plural(
+                            sources[event.id].length,
+                            "сообщение",
+                            "сообщения",
+                            "сообщений"
+                          )}
+                          {", засчитано "}
+                          {event.source_count}{" "}
+                          {plural(
+                            event.source_count,
+                            "независимый источник",
+                            "независимых источника",
+                            "независимых источников"
+                          )}
+                          : перепосты и повторы не в счёт
+                        </li>
+                      ) : null}
                       {(sources[event.id] ?? []).map((item, index) => (
-                        <li key={`${item.source_key}-${index}`}>
+                        <li
+                          key={`${item.source_key}-${index}`}
+                          className={item.repost ? "is-repost" : undefined}
+                        >
                           <span className="source-head">
                             <span className="source-name">{item.source_key}</span>
+                            {item.repost ? <span className="source-tag">перепост</span> : null}
                             <span className="source-time">
                               {formatMoment(item.at, reference)}
                             </span>

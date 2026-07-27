@@ -82,6 +82,8 @@ export type EventSource = {
   role: string;
   at: string;
   first_from_source: boolean;
+  /** Дословный перепост уже принесённого текста: в подтверждение не идёт. */
+  repost: boolean;
   text: string;
 };
 

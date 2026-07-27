@@ -43,7 +43,13 @@ from api.limits import (
 )
 from api.geometry import router as geo_router
 from pipeline.db import DB_PATH
+from pipeline.fuse import Fuser
+from pipeline.parse import strip_footer
 from pipeline.timeutil import MSK, now_utc, parse_utc
+
+# Тот же ключ перепоста, что и в слиянии: если считать его здесь по-своему,
+# пометка в списке разойдётся с числом под заголовком.
+repost_key = Fuser._repost_key
 
 app = FastAPI(title="Radar API", version="1.0")
 
@@ -230,6 +236,10 @@ def event_sources(event_id: str):
         return {"event_id": event_id, "sources": []}
 
     seen: set[str] = set()
+    # Кто сказал этот текст первым. Дословный перепост помечается, чтобы
+    # число под заголовком можно было проверить глазами: сообщений в списке
+    # всегда больше, чем засчитанных источников.
+    said_first: dict[str, str] = {}
     items = []
     for row in rows:
         # repeat — повтор того же канала, в подтверждение он не идёт.
@@ -237,11 +247,14 @@ def event_sources(event_id: str):
             continue
         first_time = row["source_key"] not in seen
         seen.add(row["source_key"])
+        stamp = repost_key(strip_footer(row["text"] or ""))
+        repost = stamp is not None and said_first.setdefault(stamp, row["source_key"]) != row["source_key"]
         items.append({
             "source_key": row["source_key"],
             "role": row["role"],
             "at": row["contributed_at"],
             "first_from_source": first_time,
+            "repost": repost,
             "text": " ".join(row["text"].split())[:220],
         })
     return {"event_id": event_id, "sources": items, "distinct": len(seen)}
