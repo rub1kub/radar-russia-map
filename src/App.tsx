@@ -656,14 +656,20 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
-  const [leftOpen, setLeftOpen] = useState(true);
+  // На узком экране панели занимают почти весь экран, поэтому там они
+  // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
+  const [leftOpen, setLeftOpen] = useState(
+    () => !window.matchMedia(MOBILE_QUERY).matches
+  );
   // Границы видимой области карты в проекции карты. Обновляются по окончании
   // движения: пересчитывать на каждый кадр незачем.
   const [viewExtent, setViewExtent] = useState<number[] | null>(null);
   const [onlyVisible, setOnlyVisible] = useState(true);
   const [levelFilter, setLevelFilter] = useState<number[]>([]);
   const [threatFilter, setThreatFilter] = useState<string[]>([]);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(
+    () => !window.matchMedia(MOBILE_QUERY).matches
+  );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -1390,6 +1396,16 @@ export default function App() {
     });
   }, []);
 
+  const openLeft = useCallback(() => {
+    setLeftOpen(true);
+    if (window.matchMedia(MOBILE_QUERY).matches) setRightOpen(false);
+  }, []);
+
+  const openRight = useCallback(() => {
+    setRightOpen(true);
+    if (window.matchMedia(MOBILE_QUERY).matches) setLeftOpen(false);
+  }, []);
+
   const flyToBookmark = useCallback(
     (bookmark: Bookmark) => {
       const map = mapRef.current;
@@ -1481,7 +1497,7 @@ export default function App() {
         <button
           className={`panel-handle handle-left ${leftOpen ? "is-hidden" : ""}`}
           type="button"
-          onClick={() => setLeftOpen(true)}
+          onClick={openLeft}
           aria-label="Показать панель управления"
         >
           <SlidersHorizontal size={17} aria-hidden="true" />
@@ -1670,7 +1686,7 @@ export default function App() {
         <button
           className={`panel-handle handle-right ${rightOpen ? "is-hidden" : ""}`}
           type="button"
-          onClick={() => setRightOpen(true)}
+          onClick={openRight}
           aria-label="Показать ленту"
         >
           <span className="handle-count">{radarState?.active_events ?? 0}</span>

@@ -1793,3 +1793,82 @@ button {
 }
 
 .history-panel { max-width: min(460px, calc(100% - 28px)); }
+
+/* --- Узкий экран: карта остаётся главной ---------------------------------- */
+/*
+ * Блок идёт последним намеренно. Раньше правила для узкого экрана стояли
+ * выше более поздних объявлений top/max-height, те их перебивали, и обе
+ * панели раскрывались одновременно поверх карты — от карты оставались
+ * полоски по краям.
+ */
+@media (max-width: 760px) {
+  .sidebar,
+  .details-panel {
+    top: auto;
+    bottom: calc(var(--edge) + 46px);
+    left: var(--edge);
+    right: var(--edge);
+    width: auto;
+    max-height: 56vh;
+  }
+
+  .sidebar.is-collapsed,
+  .details-panel.is-collapsed {
+    transform: translateY(calc(100% + 80px));
+  }
+
+  /* Ярлыки свёрнутых панелей стоят в нижнем ряду рядом с историей. */
+  .panel-handle {
+    top: auto;
+    bottom: var(--edge);
+    height: 38px;
+  }
+
+  .handle-left { left: var(--edge); }
+  .handle-right { right: calc(var(--edge) + 46px); }
+
+  .map-action {
+    right: var(--edge);
+    bottom: var(--edge);
+    padding: 9px 11px;
+  }
+
+  .history-panel {
+    left: calc(var(--edge) + 46px);
+    right: calc(var(--edge) + 92px);
+    bottom: var(--edge);
+    max-width: none;
+  }
+
+  .history-panel:not(.is-open) .history-toggle span { display: none; }
+  .history-panel.is-open {
+    left: var(--edge);
+    right: var(--edge);
+    bottom: calc(var(--edge) + 46px);
+  }
+
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .brand p { display: none; }
+  .topbar-stats { width: 100%; margin: 0; }
+}
+
+/* Свёрнутая панель убирается из отрисовки целиком. Одного opacity: 0 мало:
+   backdrop-filter продолжает размывать и затемнять фон под невидимым
+   элементом, и на узком экране поверх карты оставалась тёмная полоса. */
+.sidebar.is-collapsed,
+.details-panel.is-collapsed {
+  visibility: hidden;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-color: transparent;
+}
+
+/* Раскрытая панель обязана стоять на месте независимо от анимации.
+   Сдвиг задаётся только классу is-collapsed, но если переход не доигран
+   (например, вкладка не компонует кадры), панель оставалась смещённой на
+   свою высоту и уезжала за нижний край экрана. Явный сброс это исключает. */
+.sidebar:not(.is-collapsed),
+.details-panel:not(.is-collapsed) {
+  transform: none;
+  visibility: visible;
+}
