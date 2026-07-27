@@ -768,3 +768,36 @@ def test_allclear_clears_event_of_unknown_threat():
     fuser = _fuser_with("unknown")
     _clear(fuser, "rocket")
     assert fuser.events[0].resolved_at is not None
+
+
+# --- Вес фиксации -----------------------------------------------------------
+
+def test_detection_outranks_a_warning():
+    """«Фиксация» конкретнее «опасности»: борт уже видят, а не может прилететь.
+
+    Раньше оба сигнала давали жёлтый, и 19% событий — подтверждённые
+    наблюдения — терялись на фоне общей тревожности.
+    """
+    detection = parse("Азов, фиксация БПЛА")
+    danger = parse("Краснодарский край, опасность по БПЛА")
+    assert detection.signal_type == "detection"
+    assert danger.signal_type == "danger"
+    assert detection.severity > danger.severity
+
+
+def test_detection_is_on_the_red_level():
+    """Красный начинается с восьмёрки — тем же уровнем, что сбитие и взрыв."""
+    assert parse("Азов, фиксация БПЛА").severity >= 8
+    assert parse("Ростов-на-Дону, работа ПВО по БПЛА").severity >= 8
+
+
+def test_detection_still_below_impact():
+    """Взрыв остаётся тяжелее фиксации: это уже последствие, а не наблюдение."""
+    assert parse("Взрыв в Таганроге").severity > parse("Азов, фиксация БПЛА").severity
+
+
+def test_alarm_sits_between_warning_and_detection():
+    warning = parse("Краснодарский край, опасность по БПЛА").severity
+    alarm = parse("Тула, тревога по БПЛА").severity
+    detection = parse("Азов, фиксация БПЛА").severity
+    assert warning < alarm < detection

@@ -39,9 +39,9 @@ type Props = {
 };
 
 const LEVELS = [
-  { value: 8, tip: "Ракета, взрыв, работа ПВО" },
-  { value: 6, tip: "Тревога" },
-  { value: 4, tip: "Опасность и фиксации" }
+  { value: 8, tip: "Борт уже видят: фиксация, ПВО, взрыв" },
+  { value: 6, tip: "Объявлена тревога" },
+  { value: 4, tip: "Предупреждение об опасности" }
 ];
 
 const THREATS = ["uav", "fpv", "rocket", "kab", "bek", "aviation"];

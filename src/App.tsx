@@ -1572,13 +1572,13 @@ export default function App() {
 
           <section className="tool-section">
             <div className="severity-legend">
-              <span data-tip="Так закрашиваются зоны, где сообщают о ракете, взрыве или работе ПВО">
-                <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Ракета, взрыв, ПВО
+              <span data-tip="Борт уже видят: фиксация, работа ПВО, взрыв. Самый достоверный уровень">
+                <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Фиксация, взрыв, ПВО
               </span>
-              <span data-tip="Так закрашиваются зоны с объявленной тревогой">
+              <span data-tip="Объявлена тревога или звучит сирена, но подтверждённой фиксации нет">
                 <i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога
               </span>
-              <span data-tip="Так закрашиваются зоны с сообщениями об опасности. Чем насыщеннее цвет, тем больше сообщений. Незакрашенная зона — сообщений нет">
+              <span data-tip="Предупреждение об опасности: борт может прилететь. Чем насыщеннее цвет, тем больше сообщений. Незакрашенная зона — сообщений нет">
                 <i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность
               </span>
             </div>
