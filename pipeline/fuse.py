@@ -123,17 +123,26 @@ class Fuser:
         self._prune(moment)
         zone_id = zone_path[0]
 
-        # Отбой закрывает открытые события в этой зоне и ниже.
+        # Отбой закрывает открытые события в этой зоне и ниже — но только по
+        # той угрозе, которая названа. «Отбой ракетной опасности» не отменяет
+        # тревогу по БПЛА: в корпусе 96% отбоев адресные, и без этой проверки
+        # каждый третий гасил чужое, неотменённое событие.
         if observation.signal_type in RESOLVING:
+            cleared = observation.threat_type
             closed = None
             for event in self._open:
                 if event.resolved_at:
                     continue
-                if event.zone_id == zone_id or zone_id in event.zone_path:
-                    event.resolved_at = moment
-                    event.last_seen = max(event.last_seen, moment)
-                    event.contributions.append((raw_id, source_key, "resolve", moment))
-                    closed = event
+                if event.zone_id != zone_id and zone_id not in event.zone_path:
+                    continue
+                # Отбой без названной угрозы снимает всё: «отбой всех ранее
+                # объявленных», «отбой тревоги».
+                if cleared != "unknown" and event.threat_type not in (cleared, "unknown"):
+                    continue
+                event.resolved_at = moment
+                event.last_seen = max(event.last_seen, moment)
+                event.contributions.append((raw_id, source_key, "resolve", moment))
+                closed = event
             return closed
 
         existing = self._match(zone_path, observation.threat_type, moment)

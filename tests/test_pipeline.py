@@ -702,3 +702,69 @@ def test_aware_value_is_preserved():
 def test_to_utc_normalizes_offset():
     moscow_noon = datetime(2026, 7, 27, 12, 0, tzinfo=MSK)
     assert to_utc(moscow_noon) == datetime(2026, 7, 27, 9, 0, tzinfo=timezone.utc)
+
+
+# --- Адресность отбоя -------------------------------------------------------
+
+def _fuser_with(threat, zone="azovskiy_rayon"):
+    """Fuser с одним открытым событием заданной угрозы."""
+    from datetime import datetime, timezone
+    from pipeline.fuse import Fuser
+
+    class Obs:
+        signal_type = "danger"
+        severity = 5
+        direction_deg = None
+        target_count = None
+        def __init__(self, t): self.threat_type = t
+
+    fuser = Fuser()
+    fuser.add(raw_id=1, source_key="a", tier="federal",
+              moment=datetime(2026, 7, 27, 10, 0, tzinfo=timezone.utc),
+              observation=Obs(threat), zone_path=[zone, "rostov_oblast"],
+              lat=47.1, lon=39.4, level="district")
+    return fuser
+
+
+def _clear(fuser, threat, minute=5, zone="azovskiy_rayon"):
+    from datetime import datetime, timezone
+
+    class Obs:
+        signal_type = "allclear"
+        severity = 0
+        direction_deg = None
+        target_count = None
+        def __init__(self, t): self.threat_type = t
+
+    return fuser.add(raw_id=2, source_key="b", tier="federal",
+                     moment=datetime(2026, 7, 27, 10, minute, tzinfo=timezone.utc),
+                     observation=Obs(threat), zone_path=[zone, "rostov_oblast"],
+                     lat=47.1, lon=39.4, level="district")
+
+
+def test_allclear_clears_only_the_named_threat():
+    """«Отбой ракетной опасности» не снимает тревогу по БПЛА."""
+    fuser = _fuser_with("uav")
+    _clear(fuser, "rocket")
+    assert fuser.events[0].resolved_at is None
+
+
+def test_allclear_clears_matching_threat():
+    fuser = _fuser_with("rocket")
+    _clear(fuser, "rocket")
+    assert fuser.events[0].resolved_at is not None
+
+
+def test_general_allclear_clears_everything():
+    """Отбой без названной угрозы снимает всё в зоне."""
+    fuser = _fuser_with("uav")
+    _clear(fuser, "unknown")
+    assert fuser.events[0].resolved_at is not None
+
+
+def test_allclear_clears_event_of_unknown_threat():
+    """Событие без опознанной угрозы гасится любым отбоем: иначе оно
+    провисит до истечения срока, хотя канал его уже снял."""
+    fuser = _fuser_with("unknown")
+    _clear(fuser, "rocket")
+    assert fuser.events[0].resolved_at is not None
