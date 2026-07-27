@@ -1,0 +1,78 @@
+{
+  "source": "https://radar-map.ru/",
+  "license_note": "Public license was not found. Keep these files as reference assets unless permission is obtained.",
+  "downloaded_at": "2026-06-16",
+  "icons": [
+    {
+      "id": "bpla",
+      "label_ru": "БПЛА",
+      "source_url": "https://radar-map.ru/icons/bpla.png",
+      "local_path": "research/radarmap_assets/icons/bpla.png",
+      "format": "png",
+      "width": 150,
+      "height": 102
+    },
+    {
+      "id": "uab",
+      "label_ru": "УАБ",
+      "source_url": "https://radar-map.ru/static/icons/uab.png",
+      "local_path": "research/radarmap_assets/icons/uab.png",
+      "format": "png",
+      "width": 239,
+      "height": 100
+    },
+    {
+      "id": "fpv",
+      "label_ru": "FPV-дрон",
+      "source_url": "https://radar-map.ru/static/icons/fpv.png",
+      "local_path": "research/radarmap_assets/icons/fpv.png",
+      "format": "png",
+      "width": 200,
+      "height": 200
+    },
+    {
+      "id": "rocket",
+      "label_ru": "Ракета / авиация",
+      "source_url": "https://radar-map.ru/static/icons/r.webp",
+      "local_path": "research/radarmap_assets/icons/rocket.webp",
+      "format": "webp"
+    },
+    {
+      "id": "neptun",
+      "label_ru": "ПКР Нептун",
+      "source_url": "https://radar-map.ru/static/icons/neptun.png",
+      "local_path": "research/radarmap_assets/icons/neptun.png",
+      "format": "png",
+      "width": 150,
+      "height": 84
+    },
+    {
+      "id": "bek",
+      "label_ru": "БЭК",
+      "source_url": "https://radar-map.ru/static/icons/bek.png",
+      "local_path": "research/radarmap_assets/icons/bek.png",
+      "format": "png",
+      "width": 150,
+      "height": 27
+    },
+    {
+      "id": "boom",
+      "label_ru": "Взрыв / сбитие / ПВО",
+      "source_url": "https://radar-map.ru/static/icons/boom.png",
+      "local_path": "research/radarmap_assets/icons/boom.png",
+      "format": "png",
+      "width": 150,
+      "height": 102
+    },
+    {
+      "id": "no_entry",
+      "label_ru": "Ограничение / закрытие",
+      "source_url": "https://radar-map.ru/static/icons/no_entry.png",
+      "local_path": "research/radarmap_assets/icons/no_entry.png",
+      "format": "png",
+      "width": 64,
+      "height": 64
+    }
+  ]
+}
+

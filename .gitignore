@@ -1,25 +1,24 @@
-node_modules/
-dist/
-
-.DS_Store
-*.tsbuildinfo
-
-# ingest: секреты, сессии Telegram и сырые выгрузки
+# --- Секреты. Единственное, что не публикуется по существу. ---------------
 .env
 ingest/.env
-ingest/.venv/
-ingest/data/
-__pycache__/
 *.session
 *.session-journal
-*.db
-*.db-wal
-*.db-shm
 
-# Исходные наборы данных: 596 МБ, один архив 142 МБ (жёсткий лимит GitHub 100 МБ),
-# плюс RadarMap-ассеты без подтверждённой лицензии. Восстанавливается загрузкой
-# из первоисточников, см. research/README.md.
-research/
+# --- Окружения и сборки ----------------------------------------------------
+node_modules/
+dist/
+ingest/.venv/
+__pycache__/
+*.tsbuildinfo
+.DS_Store
 
-# Генерируемый артефакт: 112 МБ, пересобирается через `npm run prepare:data`.
-public/data/
+# --- Рабочие данные ingest -------------------------------------------------
+# Содержит файл сессии Telegram (полный доступ к аккаунту), базу radar.db и
+# сырой корпус чужих сообщений. Всё восстанавливается:
+#   ingest/dump_history.py -> pipeline/rebuild.py
+ingest/data/
+
+# 142 МБ — сверх жёсткого лимита GitHub в 100 МБ, а LFS-бюджет аккаунта исчерпан.
+# Скачивается заново: https://storage.googleapis.com/teow-data/Ecoregions2017.zip
+# (RESOLVE Ecoregions 2017, CC BY 4.0). Нужен только для land-cover.json.
+research/data_sources/Ecoregions2017.zip

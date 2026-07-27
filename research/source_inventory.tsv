@@ -1,0 +1,50 @@
+research/README.md	   15752	Unicode text, UTF-8 text
+research/data_sources/HydroRIVERS_v10_as_shp.zip	90510995	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/HydroRIVERS_v10_eu_shp.zip	67648957	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/HydroRIVERS_v10_si_shp.zip	47301335	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/geoboundaries_RUS_ADM1_simplified.geojson	 9726812	ASCII text, with very long lines (44429)
+research/data_sources/geoboundaries_RUS_ADM2_simplified.geojson	26338801	ASCII text, with very long lines (26774)
+research/data_sources/geoboundaries_rus_adm1_metadata.json	    1759	JSON data
+research/data_sources/geoboundaries_rus_adm2_metadata.json	    1713	JSON data
+research/data_sources/geofabrik_kaliningrad_sample_free.gpkg.zip	56041872	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/geofabrik_russia_page.html	   18661	HTML document text, ASCII text, with very long lines (372)
+research/data_sources/geonames_RU.zip	15216823	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/geonames_RU_populated_places_50k_or_admin.tsv	  161195	Unicode text, UTF-8 text
+research/data_sources/geonames_UA.zip	 2189211	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/geonames_readme.txt	    8843	ASCII text, with very long lines (409)
+research/data_sources/hydrorivers_russia_network.geojson	62991991	ASCII text, with very long lines (65536), with no line terminators
+research/data_sources/naturalearth_admin1_page.html	   60354	HTML document text, Unicode text, UTF-8 text, with very long lines (8832)
+research/data_sources/ne_10m_admin_1_states_provinces.zip	14909524	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_lakes.geojson	 5043554	Unicode text, UTF-8 text, with very long lines (64220), with no line terminators
+research/data_sources/ne_10m_populated_places.zip	 2811199	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_rivers_lake_centerlines.geojson	 7307743	ASCII text, with very long lines (12224)
+research/data_sources/ne_10m_roads.zip	 9075919	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_urban_areas.zip	13097698	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_geography_regions_polys.zip	 2038519	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_geography_regions_points.zip	   87372	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/ne_10m_glaciated_areas.zip	 1644604	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/Ecoregions2017.zip	149248653	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/osm_copyright.html	   21069	HTML document text, Unicode text, UTF-8 text, with very long lines (356)
+research/data_sources/rosstat_oktmo_data_20260601T1406.csv	20132958	Unicode text, UTF-8 text, with CRLF line terminators
+research/data_sources/rosstat_oktmo_meta.csv	   15655	CSV text
+research/data_sources/rosstat_oktmo_page.html	  858631	HTML document text, Unicode text, UTF-8 text, with very long lines (55915), with CRLF, LF line terminators
+research/data_sources/rosstat_oktmo_structure_20260210T1102.csv	    1307	Unicode text, UTF-8 text, with CRLF line terminators
+research/data_sources/sources.json	    5118	JSON data
+research/data_sources/supplemental_regions_admin1.geojson	  293281	JSON data
+research/radarmap_assets/icons/bek.png	    5070	PNG image data, 150 x 27, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/boom.png	   11769	PNG image data, 150 x 102, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/bpla.png	    6968	PNG image data, 150 x 102, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/fpv.png	   21007	PNG image data, 200 x 200, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/neptun.png	    9473	PNG image data, 150 x 84, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/no_entry.png	     522	PNG image data, 64 x 64, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/icons/rocket.webp	    3728	RIFF (little-endian) data, Web/P image
+research/radarmap_assets/icons/uab.png	   19256	PNG image data, 239 x 100, 8-bit/color RGBA, non-interlaced
+research/radarmap_assets/manifest.json	    2302	JSON data
+research/radarmap_reference/analytics_threats_sample.json	    5511	JSON data
+research/radarmap_reference/api_state_schema_sample.json	  393753	JSON data
+research/radarmap_reference/data/cities_ru.json	  138324	JSON data
+research/radarmap_reference/data/city_districts_ru.geojson	   59548	JSON data
+research/radarmap_reference/data/districts_west_ural.geojson	 2874934	Unicode text, UTF-8 text, with very long lines (64227), with no line terminators
+research/radarmap_reference/data/russia_regions.geojson	 1421465	Unicode text, UTF-8 text, with very long lines (65458), with no line terminators
+research/radarmap_reference/map_history_sample.json	    8913	JSON data
+research/source_inventory.tsv	    4127	ASCII text

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+  <head>
+<meta charset="UTF-8">
+<link rel="icon" href="https://www.geofabrik.de/favicon.ico" />
+<meta name="description" content="Download OpenStreetMap data for Russian Federation for self-hosting or data analysis. OSM PBF and Shapefiles available.">
+<meta name="og:description" content="Download OpenStreetMap data for Russian Federation for self-hosting or data analysis. OSM PBF and Shapefiles available.">
+<meta property="og:image" content="https://www.geofabrik.de/img/geofabrik_logo_notext.svg">
+<meta property="og:site_name" content="Geofabrik Download Server">
+<title>Download OpenStreetMap for Russian Federation | Geofabrik Download Server</title>
+    <script type="text/javascript" src="//static.geofabrik.de/ol212/OpenLayers.js"></script>
+    <script type="text/javascript">
+        var map, layer, countryLayer;
+        function init()
+        {
+            map = new OpenLayers.Map('map');
+            layer = new OpenLayers.Layer.OSM("",
+                ["https://a.tile.geofabrik.de/5f33d2afc5074c6da1a5c2a8a960d501/${z}/${x}/${y}.png",
+                 "https://b.tile.geofabrik.de/5f33d2afc5074c6da1a5c2a8a960d501/${z}/${x}/${y}.png",
+                 "https://c.tile.geofabrik.de/5f33d2afc5074c6da1a5c2a8a960d501/${z}/${x}/${y}.png",
+                ],
+                { attribution: "", tileOptions : {crossOriginKeyword: null} }
+            ); // attribution in page footer
+            map.addLayer(layer);
+            layer = new OpenLayers.Layer.Vector("KML", {
+            strategies: [new OpenLayers.Strategy.Fixed()],
+            protocol: new OpenLayers.Protocol.HTTP({
+                url: "russia.kml",
+                format: new OpenLayers.Format.KML({
+                    maxDepth: 2
+                })
+            }),
+            styleMap: new OpenLayers.StyleMap({
+            "default": new OpenLayers.Style({
+                graphicName: "cross",
+                pointRadius: 6,
+                fillOpacity: 0.50,
+                fillColor: "#ffcc66",
+                strokeColor: "#ff9933",
+                strokeWidth: 2
+            })
+            })
+            });
+            layer.events.register("loadend", this, function() { map.zoomToExtent(layer.getDataExtent()); });
+            map.addLayer(layer);
+        }
+        function loadkml(kmlname)
+        {
+            if (countryLayer) map.removeLayer(countryLayer);
+            countryLayer = 
+                new OpenLayers.Layer.Vector("KML", {
+                strategies: [new OpenLayers.Strategy.Fixed()],
+                protocol: new OpenLayers.Protocol.HTTP({
+                    url: kmlname,
+                    format: new OpenLayers.Format.KML({
+                        extractStyles: true,
+                        extractAttributes: true,
+                        maxDepth: 2
+                    })
+                })
+                });
+            map.addLayer(countryLayer);
+        }
+    </script>
+<link rel="stylesheet" type="text/css" href="/download.donation.css">
+</head><body onload='init();'><div id="donation">
+Do you find OpenStreetMap data useful? Consider giving something back in the OSMF's <a href="//supporting.openstreetmap.org">funding campaign!</a>
+</div>
+<div id="download-top">
+   <div id="download-top-right">
+      <img alt="header image" src="/img/geofabrik-downloads.png" height="20">
+   </div>
+</div>
+<div id="download-titlebar">
+<h1>Download OpenStreetMap data for this region:</h1>
+</div>
+<div class="download-main">
+<div class="leftColumn"><h2>Russian Federation</h2>
+<p><a href="/index.html">[one level up]</a></p>    <p class="isPublicInfo">
+        The OpenStreetMap data files provided on this server do <b>not</b> contain the user names, user
+        IDs and changeset IDs of the OSM objects because these fields are assumed to contain personal
+        information about the OpenStreetMap contributors and are therefore subject to data protection regulations
+        in the European Union. 
+        <br>
+        <a href="https://osm-internal.download.geofabrik.de//russia.html">Extracts with full metadata</a> are available to OpenStreetMap
+        contributors only.
+    </p>
+<h3>Note</h3><p>Russia is listed under both Asia and Europe. The file contains all of Russia. See <a href="http://gis-lab.info/projects/osm_dump">gis-lab.info</a> for further and more fine-grained Russia downloads. Please note that the inclusion of Crimea does not constitute a political statement; we have included Crimea in both the Russia and the Ukraine downloads.</p>
+<h3>Commonly Used Formats</h3>
+<ul>
+<li><a href="russia-latest.osm.pbf">russia-latest.osm.pbf</a>, suitable for
+           Osmium, Osmosis, imposm, osm2pgsql, mkgmap, and others. This file was last 
+           modified 9 hours ago and contains all OSM data up to 2026-06-15T20:21:02Z. File size: 3.8&nbsp;GB. </li>
+
+<li><s>russia-latest-free.shp.zip</s> is not available for this region; try one of the sub-regions.</li></ul><h3>Other Formats and Auxiliary Files</h3>
+<ul>
+<li><s>russia-internal.osh.pbf</s> The history file
+                contains personal data and is available on the
+                <a href="https://osm-internal.download.geofabrik.de//russia.html">internal server</a>
+                only. See notice above for further information.
+                </li>
+<li><a href="russia.poly">.poly file</a> that describes the extent
+               of this region.</li>
+<li><a href="russia-updates">.osc.gz files</a>
+                that contain all changes in this region, suitable e.g. for
+                Osmosis updates</li>
+<li><a href="//taginfo.geofabrik.de/russia/">Taginfo statistics for this region</li>
+<li><a href="#" onclick="OpenLayers.Util.getElement('details').style.display='inline';">raw directory index</a> allowing you to
+            see and download older files</li></ul><div id="details" style="display:none"><table id="subregions"><tr><th class="subregion">file</th><th>date</th><th>size</th></tr><tr><td class="subregion"><a href="russia-160101.osm.pbf">russia-160101.osm.pbf</a></td><td class="subright">2016-01-02 00:06</td><td class="subright">1644430132</td></tr>
+<tr><td class="subregion"><a href="russia-170101.osm.pbf">russia-170101.osm.pbf</a></td><td class="subright">2017-01-02 00:34</td><td class="subright">1872326435</td></tr>
+<tr><td class="subregion"><a href="russia-180101.osm.pbf">russia-180101.osm.pbf</a></td><td class="subright">2018-01-01 23:24</td><td class="subright">2124723901</td></tr>
+<tr><td class="subregion"><a href="russia-190101.osm.pbf">russia-190101.osm.pbf</a></td><td class="subright">2019-01-01 23:03</td><td class="subright">2394156022</td></tr>
+<tr><td class="subregion"><a href="russia-200101.osm.pbf">russia-200101.osm.pbf</a></td><td class="subright">2020-02-19 15:52</td><td class="subright">2685779886</td></tr>
+<tr><td class="subregion"><a href="russia-210101.osm.pbf">russia-210101.osm.pbf</a></td><td class="subright">2021-01-01 23:40</td><td class="subright">2969339717</td></tr>
+<tr><td class="subregion"><a href="russia-220101.osm.pbf">russia-220101.osm.pbf</a></td><td class="subright">2022-01-01 23:40</td><td class="subright">3209983482</td></tr>
+<tr><td class="subregion"><a href="russia-230101.osm.pbf">russia-230101.osm.pbf</a></td><td class="subright">2023-01-02 00:37</td><td class="subright">3432309203</td></tr>
+<tr><td class="subregion"><a href="russia-240101.osm.pbf">russia-240101.osm.pbf</a></td><td class="subright">2024-01-01 23:58</td><td class="subright">3645174111</td></tr>
+<tr><td class="subregion"><a href="russia-250101.osm.pbf">russia-250101.osm.pbf</a></td><td class="subright">2025-01-02 00:09</td><td class="subright">3824336150</td></tr>
+<tr><td class="subregion"><a href="russia-260101.osm.pbf">russia-260101.osm.pbf</a></td><td class="subright">2026-01-01 23:22</td><td class="subright">4014118974</td></tr>
+<tr><td class="subregion"><a href="russia-260101.osm.pbf.md5">russia-260101.osm.pbf.md5</a></td><td class="subright">2026-01-01 23:23</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260401.osm.pbf">russia-260401.osm.pbf</a></td><td class="subright">2026-04-01 22:20</td><td class="subright">4065703615</td></tr>
+<tr><td class="subregion"><a href="russia-260401.osm.pbf.md5">russia-260401.osm.pbf.md5</a></td><td class="subright">2026-04-01 22:21</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260501.osm.pbf">russia-260501.osm.pbf</a></td><td class="subright">2026-05-01 22:03</td><td class="subright">4081367670</td></tr>
+<tr><td class="subregion"><a href="russia-260501.osm.pbf.md5">russia-260501.osm.pbf.md5</a></td><td class="subright">2026-05-01 22:03</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260601.osm.pbf">russia-260601.osm.pbf</a></td><td class="subright">2026-06-01 22:11</td><td class="subright">4098662160</td></tr>
+<tr><td class="subregion"><a href="russia-260601.osm.pbf.md5">russia-260601.osm.pbf.md5</a></td><td class="subright">2026-06-01 22:12</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260610.osm.pbf">russia-260610.osm.pbf</a></td><td class="subright">2026-06-10 22:45</td><td class="subright">4104731533</td></tr>
+<tr><td class="subregion"><a href="russia-260610.osm.pbf.md5">russia-260610.osm.pbf.md5</a></td><td class="subright">2026-06-10 22:48</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260611.osm.pbf">russia-260611.osm.pbf</a></td><td class="subright">2026-06-11 22:30</td><td class="subright">4105142443</td></tr>
+<tr><td class="subregion"><a href="russia-260611.osm.pbf.md5">russia-260611.osm.pbf.md5</a></td><td class="subright">2026-06-11 23:07</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260612.osm.pbf">russia-260612.osm.pbf</a></td><td class="subright">2026-06-13 03:22</td><td class="subright">4105731949</td></tr>
+<tr><td class="subregion"><a href="russia-260612.osm.pbf.md5">russia-260612.osm.pbf.md5</a></td><td class="subright">2026-06-13 03:24</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260613.osm.pbf">russia-260613.osm.pbf</a></td><td class="subright">2026-06-13 22:05</td><td class="subright">4106297974</td></tr>
+<tr><td class="subregion"><a href="russia-260613.osm.pbf.md5">russia-260613.osm.pbf.md5</a></td><td class="subright">2026-06-13 22:05</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260614.osm.pbf">russia-260614.osm.pbf</a></td><td class="subright">2026-06-14 22:05</td><td class="subright">4106874479</td></tr>
+<tr><td class="subregion"><a href="russia-260614.osm.pbf.md5">russia-260614.osm.pbf.md5</a></td><td class="subright">2026-06-14 22:05</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-260615.osm.pbf">russia-260615.osm.pbf</a></td><td class="subright">2026-06-15 22:06</td><td class="subright">4107486331</td></tr>
+<tr><td class="subregion"><a href="russia-260615.osm.pbf.md5">russia-260615.osm.pbf.md5</a></td><td class="subright">2026-06-15 22:07</td><td class="subright">56</td></tr>
+<tr><td class="subregion"><a href="russia-updates">russia-updates</a></td><td class="subright">2026-06-15 22:17</td><td class="subright">4096</td></tr>
+<tr><td class="subregion"><a href="russia.kml">russia.kml</a></td><td class="subright">2026-06-15 22:00</td><td class="subright">25423</td></tr>
+<tr><td class="subregion"><a href="russia.poly">russia.poly</a></td><td class="subright">2026-06-15 22:02</td><td class="subright">28191</td></tr>
+</table></div><h3>Sub Regions</h3><p>Click on the region name to see the overview page for that region, or select one of the
+file extension links for quick access.</p>
+<table id="subregions">
+<tr>
+   <th class="subregion">Sub Region</th>
+   <th colspan="3">Quick Links</th>
+</tr>
+<tr>
+   <th>&nbsp;</th>
+   <th colspan="2">.osm.pbf</th>
+   <th>.gpkg.zip</th>
+</tr>
+<tr onMouseOver="loadkml('russia/central-fed-district.kml')"><td class="subregion"><a href="russia/central-fed-district.html">Central Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/central-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(825&nbsp;MB)</td><td> <a href="russia/central-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/crimean-fed-district.kml')"><td class="subregion"><a href="russia/crimean-fed-district.html">Crimean Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/crimean-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(38.3&nbsp;MB)</td><td> <a href="russia/crimean-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/far-eastern-fed-district.kml')"><td class="subregion"><a href="russia/far-eastern-fed-district.html">Far Eastern Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/far-eastern-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(361&nbsp;MB)</td><td> <a href="russia/far-eastern-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/north-caucasus-fed-district.kml')"><td class="subregion"><a href="russia/north-caucasus-fed-district.html">North Caucasus Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/north-caucasus-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(121&nbsp;MB)</td><td> <a href="russia/north-caucasus-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/northwestern-fed-district.kml')"><td class="subregion"><a href="russia/northwestern-fed-district.html">Northwestern Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/northwestern-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(613&nbsp;MB)</td><td> <a href="russia/northwestern-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/siberian-fed-district.kml')"><td class="subregion"><a href="russia/siberian-fed-district.html">Siberian Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/siberian-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(551&nbsp;MB)</td><td> <a href="russia/siberian-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/south-fed-district.kml')"><td class="subregion"><a href="russia/south-fed-district.html">South Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/south-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(294&nbsp;MB)</td><td> <a href="russia/south-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/ural-fed-district.kml')"><td class="subregion"><a href="russia/ural-fed-district.html">Ural Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/ural-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(372&nbsp;MB)</td><td> <a href="russia/ural-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+<tr onMouseOver="loadkml('russia/volga-fed-district.kml')"><td class="subregion"><a href="russia/volga-fed-district.html">Volga Federal District</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/volga-fed-district-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(730&nbsp;MB)</td><td> <a href="russia/volga-fed-district-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+</table>
+<h3>Special Sub Regions</h3>
+<p>
+These regions are "special" because they are outside of the usual administrative
+hierarchies and may duplicate data already contained in the other sub regions.
+</p>
+<table id="specialsubregions">
+<tr>
+   <th class="subregion">Sub Region</th>
+   <th colspan="4">Quick Links</th>
+</tr>
+<tr>
+   <th>&nbsp;</th>
+   <th colspan="2">.osm.pbf</th>
+   <th>.gpkg.zip</th>
+</tr>
+<tr onMouseOver="loadkml('russia/kaliningrad.kml')"><td class="subregion"><a href="russia/kaliningrad.html">Kaliningrad</a></td>
+<td style="border-right: 0px; margin-right: 0px; padding-right: 0px;"><a href="russia/kaliningrad-latest.osm.pbf">[.osm.pbf]</a></td><td style="border-left: 0px; margin-left: 0px; padding-left: 0px;">(26.5&nbsp;MB)</td><td> <a href="russia/kaliningrad-latest-free.gpkg.zip">[.gpkg.zip]</a></td></tr>
+</table>
+</div>
+<div id="download-right">
+   <div id="noscroll">
+   <div id="map"></div>
+
+   <div class="customized_shapes">
+<p>
+      <img alt="small flag of UK" src="/img/en.png">
+Not what you were looking for?
+Geofabrik is a consulting and software development firm based in Karlsruhe, Germany
+specializing in OpenStreetMap services. We're happy to help you with data
+preparation, processing, server setup and the like. <a href="http://www.geofabrik.de/data/shapefiles.html">Check out our web site</a>
+and contact us if we can be of service.
+
+      </p>
+   </div>
+   
+   <div class="customized_shapes">
+      <p>
+      <img alt="small flag of Germany" src="/img/de.png">
+      Nicht das Richtige dabei? 
+Die Geofabrik ist ein auf OpenStreetMap spezialisiertes Beratungs- und Softwareentwicklungsunternehmen in Karlsruhe.
+Gern helfen wir Ihnen bei der Datenaufbereitung, Datenkonvertierung, Serverinstallation und &auml;hnlichen Aufgaben.
+<a href="http://www.geofabrik.de/data/shapefiles.html">Besuchen Sie unsere Webseite</a> und sprechen Sie mit uns, wenn wir Ihnen 
+helfen k&ouml;nnen.
+      </p>
+   </div>
+   </div>
+</div>
+</div>
+<div id="download-copyright">
+Data processed by
+<a href="http://www.geofabrik.de/">Geofabrik GmbH</a>
+and created by 
+<a href="http://www.openstreetmap.org/">OpenStreetMap Contributors</a>
+|
+<a href="http://opendatacommons.org/licenses/odbl/">License: ODbL 1.0</a>
+|
+<a href="http://www.geofabrik.de/geofabrik/contact.html">Contact</a>
+|
+<a href="http://www.geofabrik.de/geofabrik/imprint.html">Legal Notice/Privacy Policy</a>

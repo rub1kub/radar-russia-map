@@ -1,0 +1,134 @@
+{
+  "generated_at": "2026-06-16",
+  "last_reviewed_at": "2026-07-26",
+  "sources": [
+    {
+      "id": "radarmap_reference",
+      "name": "RadarMap public static files",
+      "url": "https://radar-map.ru/",
+      "local_paths": [
+        "research/radarmap_assets/icons/",
+        "research/radarmap_reference/data/",
+        "research/radarmap_reference/api_state_schema_sample.json"
+      ],
+      "license": "unknown",
+      "use": "reference_only",
+      "notes": "Useful for UX/data-shape analysis. Do not ship copied assets/data without permission. Current prepare-data.mjs still reads region and preferred place names from this reference; replace that dependency before production."
+    },
+    {
+      "id": "geoboundaries_rus",
+      "name": "geoBoundaries RUS ADM1/ADM2",
+      "url": "https://www.geoboundaries.org/api/current/gbOpen/RUS/ADM1/",
+      "local_paths": [
+        "research/data_sources/geoboundaries_RUS_ADM1_simplified.geojson",
+        "research/data_sources/geoboundaries_RUS_ADM2_simplified.geojson"
+      ],
+      "license": "ODbL 1.0 for RUS files per metadata; geoBoundaries site also describes CC BY 4.0 generally",
+      "use": "prototype_candidate",
+      "notes": "ADM1 has 83 objects, not current 89-subject official list. Needs normalization."
+    },
+    {
+      "id": "hydrosheds_hydrorivers",
+      "name": "HydroSHEDS HydroRIVERS v1.0",
+      "url": "https://www.hydrosheds.org/products/hydrorivers",
+      "local_paths": [
+        "research/data_sources/HydroRIVERS_v10_eu_shp.zip",
+        "research/data_sources/HydroRIVERS_v10_si_shp.zip",
+        "research/data_sources/HydroRIVERS_v10_as_shp.zip",
+        "research/data_sources/hydrorivers_russia_network.geojson"
+      ],
+      "license": "HydroSHEDS free for non-commercial and commercial use; citation/terms required",
+      "use": "detailed_river_network",
+      "notes": "scripts/prepare-hydrorivers.mjs extracts Russia-map river segments from Europe/Middle East, Siberia, and Asia archives. The app publishes grouped major/detail GeoJSON for lazy loading."
+    },
+    {
+      "id": "naturalearth",
+      "name": "Natural Earth Admin 1 and Populated Places",
+      "url": "https://www.naturalearthdata.com/",
+      "local_paths": [
+        "research/data_sources/ne_10m_admin_1_states_provinces.zip",
+        "research/data_sources/supplemental_regions_admin1.geojson",
+        "research/data_sources/ne_10m_populated_places.zip",
+        "research/data_sources/ne_10m_lakes.geojson",
+        "research/data_sources/ne_10m_rivers_lake_centerlines.geojson",
+        "research/data_sources/ne_10m_roads.zip",
+        "research/data_sources/ne_10m_railroads.zip",
+        "research/data_sources/ne_10m_urban_areas.zip",
+        "research/data_sources/ne_10m_geography_regions_polys.zip",
+        "research/data_sources/ne_10m_geography_regions_points.zip",
+        "research/data_sources/ne_10m_glaciated_areas.zip"
+      ],
+      "license": "public_domain",
+      "use": "overview_map_and_fallback",
+      "notes": "Great low-zoom/global context. supplemental_regions_admin1.geojson extracts Crimea, Sevastopol, Donetsk, Luhansk, Zaporizhzhia, and Kherson admin-1 features for the prototype. Lakes, rivers, roads, railways, urban areas, terrain regions, and glaciated areas are filtered against the app region polygons before publishing."
+    },
+    {
+      "id": "resolve_ecoregions_2017",
+      "name": "RESOLVE Ecoregions 2017",
+      "url": "https://ecoregions.appspot.com/",
+      "local_paths": [
+        "research/data_sources/Ecoregions2017.zip"
+      ],
+      "license": "CC BY 4.0",
+      "use": "overview_land_cover_biomes",
+      "notes": "Used for overview forest/taiga, tundra, and flooded/wetland-like biome polygons in public/data/land-cover.json. This is biome/ecoregion coverage, not parcel-level forest or marsh inventory."
+    },
+    {
+      "id": "geofabrik_osm",
+      "name": "Geofabrik OpenStreetMap Russia extracts",
+      "url": "https://download.geofabrik.de/russia.html",
+      "local_paths": [
+        "research/data_sources/geofabrik_russia_page.html",
+        "research/data_sources/geofabrik_kaliningrad_sample_free.gpkg.zip"
+      ],
+      "license": "ODbL",
+      "use": "production_geometry_candidate",
+      "notes": "Use subregion extracts or osmium pipeline. Full Russia PBF is multi-GB."
+    },
+    {
+      "id": "geonames_ru",
+      "name": "GeoNames RU dump",
+      "url": "https://download.geonames.org/export/dump/RU.zip",
+      "local_paths": [
+        "research/data_sources/geonames_RU.zip",
+        "research/data_sources/geonames_RU_populated_places_50k_or_admin.tsv"
+      ],
+      "license": "CC BY 4.0",
+      "use": "city_points_seed",
+      "notes": "Full RU dump: 412372 features; populated places: 203217; compact extracted seed: 2080 rows."
+    },
+    {
+      "id": "geonames_ua_supplemental",
+      "name": "GeoNames UA dump, filtered supplemental territories",
+      "url": "https://download.geonames.org/export/dump/UA.zip",
+      "local_paths": [
+        "research/data_sources/geonames_UA.zip"
+      ],
+      "license": "CC BY 4.0",
+      "use": "supplemental_city_points_seed",
+      "notes": "Only populated places with admin1 codes 05, 08, 11, 14, 20, and 26 are added to public/data/places.json."
+    },
+    {
+      "id": "rosstat_oktmo",
+      "name": "Росстат ОКТМО",
+      "url": "https://rosstat.gov.ru/opendata/7708234640-oktmo",
+      "local_paths": [
+        "research/data_sources/rosstat_oktmo_meta.csv",
+        "research/data_sources/rosstat_oktmo_structure_20260210T1102.csv",
+        "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"
+      ],
+      "license": "Russian official open data page",
+      "use": "official_municipal_codes_and_names",
+      "notes": "186604 CSV rows. No geometry. Use for canonical municipal hierarchy and names."
+    },
+    {
+      "id": "fias_gar",
+      "name": "ФИАС/ГАР",
+      "url": "https://fias.nalog.ru/",
+      "local_paths": [],
+      "license": "official government data; verify before redistribution",
+      "use": "future_canonical_address_hierarchy",
+      "notes": "Not downloaded: connection to fias.nalog.ru timed out from current environment."
+    }
+  ]
+}
