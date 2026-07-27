@@ -1395,13 +1395,16 @@ export default function App() {
           </section>
 
           <section className="tool-section">
-            <div
-              className="severity-legend"
-              title="Чем насыщеннее заливка, тем больше активных сообщений в зоне. Незалитая зона — сообщений нет."
-            >
-              <span><i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Ракета, взрыв, ПВО</span>
-              <span><i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога</span>
-              <span><i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность</span>
+            <div className="severity-legend">
+              <span data-tip="Так закрашиваются зоны, где сообщают о ракете, взрыве или работе ПВО">
+                <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Ракета, взрыв, ПВО
+              </span>
+              <span data-tip="Так закрашиваются зоны с объявленной тревогой">
+                <i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога
+              </span>
+              <span data-tip="Так закрашиваются зоны с сообщениями об опасности. Чем насыщеннее цвет, тем больше сообщений. Незакрашенная зона — сообщений нет">
+                <i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность
+              </span>
             </div>
 
             <button className="ghost-button" type="button" onClick={resetMap}>

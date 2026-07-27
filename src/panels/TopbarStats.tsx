@@ -6,9 +6,21 @@ type Props = {
 };
 
 const LEVELS = [
-  { key: "high", min: 8, title: "Ракета, взрыв, работа ПВО" },
-  { key: "mid", min: 6, title: "Тревога" },
-  { key: "low", min: 4, title: "Опасность" }
+  {
+    key: "high",
+    min: 8,
+    tip: "Высший уровень: ракета, взрыв или работа ПВО"
+  },
+  {
+    key: "mid",
+    min: 6,
+    tip: "Объявлена тревога или звучит сирена"
+  },
+  {
+    key: "low",
+    min: 4,
+    tip: "Сообщения об опасности и фиксации, чаще всего БПЛА"
+  }
 ] as const;
 
 /**
@@ -35,20 +47,25 @@ export function TopbarStats({ state }: Props) {
   return (
     <div className="topbar-stats" aria-label="Сводка обстановки">
       {quiet ? (
-        <span className="stat-quiet">Активных сообщений нет</span>
+        <span className="stat-quiet" data-tip="За последние часы сообщений об опасности не поступало">
+          Активных сообщений нет
+        </span>
       ) : (
         <>
           {counts.map((level) => (
             <span
               key={level.key}
               className={`stat-chip ${level.value ? "" : "is-zero"}`}
-              title={level.title}
+              data-tip={`${level.tip}. Сейчас: ${level.value}`}
             >
               <i style={{ background: severityColor(level.min, 0.95) }} aria-hidden="true" />
               {level.value}
             </span>
           ))}
-          <span className="stat-zones">
+          <span
+            className="stat-zones"
+            data-tip="В скольких районах и регионах сейчас есть активные сообщения"
+          >
             в {state.active_zones} {plural(state.active_zones, "зоне", "зонах", "зонах")}
           </span>
         </>

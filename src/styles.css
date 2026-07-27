@@ -1478,3 +1478,116 @@ button {
   line-height: 1.5;
   color: rgba(176, 184, 178, 0.62);
 }
+
+/* --- Единый ритм отступов между плавающими элементами --------------------- */
+/*
+ * Панели позиционируются абсолютно, поэтому их отступ от шапки нельзя
+ * оставлять на глаз: раньше низ бренда приходился на 68 px, а верх панели
+ * на 66 — они перекрывались на два пикселя.
+ */
+:root {
+  --edge: 14px;
+  --gap: 12px;
+  --topbar-h: 56px;
+  --panel-top: calc(var(--edge) + var(--topbar-h) + var(--gap));
+}
+
+.topbar {
+  padding: var(--edge) var(--edge) 0;
+  gap: var(--gap);
+}
+
+/* Плашки шапки одной высоты — иначе их нижние края идут лесенкой. */
+.brand,
+.topbar-stats,
+.topbar-action {
+  display: flex;
+  align-items: center;
+  min-height: var(--topbar-h);
+  box-sizing: border-box;
+}
+
+.topbar-stats { margin: 0 auto 0 0; }
+
+.sidebar,
+.details-panel,
+.panel-handle {
+  top: var(--panel-top);
+}
+
+.sidebar,
+.details-panel {
+  max-height: calc(100vh - var(--panel-top) - var(--edge));
+}
+
+.sidebar { left: var(--edge); }
+.details-panel { right: var(--edge); }
+.handle-left { left: var(--edge); }
+.handle-right { right: var(--edge); }
+
+.history-panel {
+  left: var(--edge);
+  bottom: var(--edge);
+}
+
+/* --- Всплывающие подсказки ----------------------------------------------- */
+/*
+ * Свои, а не системный title: тот всплывает через секунду и не поддаётся
+ * оформлению, из-за чего пояснения к счётчикам никто не замечал.
+ */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-3px);
+  z-index: 30;
+  width: max-content;
+  max-width: 230px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(24, 29, 27, 0.98);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  color: rgba(236, 241, 236, 0.95);
+  font-size: 11.5px;
+  font-weight: 450;
+  line-height: 1.45;
+  white-space: normal;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* У правой панели подсказка уходила бы за край окна. */
+.details-panel [data-tip]::after,
+.stat-zones::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(-3px);
+}
+
+.details-panel [data-tip]:hover::after,
+.stat-zones:hover::after {
+  transform: translateX(0) translateY(0);
+}
+
+@media (max-width: 760px) {
+  .sidebar,
+  .details-panel {
+    max-height: 52vh;
+  }
+  /* На узких экранах подсказка при наведении бесполезна — только мешает. */
+  [data-tip]::after { display: none; }
+}
