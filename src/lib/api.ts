@@ -28,8 +28,13 @@ export type ZoneCount = {
   /** Сколько событий названо самой этой зоной, а не унаследовано от вложенных. */
   own: number;
   max_severity: number;
-  /** Уровень только собственных событий зоны. */
+  /** Уровень события, самого весомого сейчас: уровень, взвешенный свежестью. */
+  severity: number;
+  /** Свежесть этого события: 1.0 — только что, 0.25 — три часа и старше. */
+  fade: number;
+  /** То же, но только по собственным событиям зоны. */
   own_severity: number;
+  own_fade: number;
   last_active: string;
   level?: "region" | "district" | "place";
   source_id?: string;

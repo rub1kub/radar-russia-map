@@ -10,7 +10,7 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import { Attribution, defaults as defaultControls, ScaleLine } from "ol/control";
-import { containsCoordinate, createEmpty, extend } from "ol/extent";
+import { containsCoordinate, createEmpty, extend, getCenter } from "ol/extent";
 import { unByKey } from "ol/Observable";
 import { fromLonLat } from "ol/proj";
 import Style from "ol/style/Style";
@@ -44,7 +44,7 @@ import {
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
-import { freshness, regionWeight, zoneFillAlpha } from "./lib/paint";
+import { regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
 import type { HistoryDay } from "./lib/api";
 import {
@@ -250,8 +250,7 @@ function createEventIconStyle(feature: FeatureLike, resolution: number) {
 
 function createRegionStyle(
   selectedKeyRef: React.MutableRefObject<string | null>,
-  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>,
-  momentRef: React.MutableRefObject<number>
+  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>
 ) {
   return (feature: FeatureLike, resolution: number) => {
     const selected = selectedKeyRef.current === featureKey(feature);
@@ -263,19 +262,19 @@ function createRegionStyle(
     const overview = resolutionToZoom(resolution) < DISTRICT_FILL_ZOOM;
     const ownHere = (active?.own ?? 0) > 0;
     const zone = overview || ownHere ? active : undefined;
-    const fade = zone ? freshness(zone.last_active, momentRef.current) : 1;
     const fillColor = zone
       ? overview
         // Вес по охвату: регион, подсвеченный одной фиксацией в одном
         // районе, почти прозрачен, а объявленная по всей области опасность
-        // закрашена в полную силу.
+        // закрашена в полную силу. Уровень и свежесть приходят от одного и
+        // того же события — самого весомого сейчас.
         ? severityColor(
-            zone.max_severity,
-            zoneFillAlpha(zone.active) * regionWeight(zone.own, zone.active) * fade
+            zone.severity,
+            zoneFillAlpha(zone.active) * regionWeight(zone.own, zone.active) * zone.fade
           )
         // Вблизи регион красится только своим уровнем: точечное красное уже
         // нарисовано районом поверх, и растягивать его на всю область нельзя.
-        : severityColor(zone.own_severity, zoneFillAlpha(zone.own) * fade)
+        : severityColor(zone.own_severity, zoneFillAlpha(zone.own) * zone.own_fade)
       : selected
         ? "rgba(228, 178, 93, 0.055)"
         : "rgba(255, 255, 255, 0.006)";
@@ -300,8 +299,7 @@ function createRegionStyle(
 
 function createDistrictStyle(
   selectedKeyRef: React.MutableRefObject<string | null>,
-  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>,
-  momentRef: React.MutableRefObject<number>
+  zoneStateRef: React.MutableRefObject<globalThis.Map<string, ZoneCount>>
 ) {
   return (feature: FeatureLike, resolution: number) => {
     const paintHere = resolutionToZoom(resolution) >= DISTRICT_FILL_ZOOM;
@@ -310,13 +308,15 @@ function createDistrictStyle(
 
     if (zone) {
       // Свежая тревога горит ярко, часовой давности — вполовину тусклее.
-      const fade = freshness(zone.last_active, momentRef.current);
+      // Уровень берётся от того же события, что и свежесть: иначе двухчасовая
+      // фиксация красила бы район в полный красный, стоило прийти любому
+      // новому сообщению по соседству.
       return new Style({
         fill: new Fill({
-          color: severityColor(zone.max_severity, zoneFillAlpha(zone.active) * fade)
+          color: severityColor(zone.severity, zoneFillAlpha(zone.active) * zone.fade)
         }),
         stroke: new Stroke({
-          color: severityColor(zone.max_severity, 0.62 * fade),
+          color: severityColor(zone.severity, 0.62 * zone.fade),
           width: 1
         })
       });
@@ -639,8 +639,6 @@ export default function App() {
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
-  // Момент, от которого считается свежесть заливки: сейчас или срез истории.
-  const zoneMomentRef = useRef<number>(Date.now());
   const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
   const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
@@ -651,6 +649,8 @@ export default function App() {
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [selected, setSelected] = useState<SelectedObject>(emptySelected);
+  // source_id полигона региона, внутри которого лежит выбранный район.
+  const [selectedRegionPolygon, setSelectedRegionPolygon] = useState<string | null>(null);
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<LayerState>({
@@ -808,9 +808,29 @@ export default function App() {
     return () => controller.abort();
   }, [historyOpen, historyEvents]);
 
+  /** Полигон региона, внутри которого лежит выбранный район. */
+  const regionPolygonOf = useCallback((feature: FeatureLike): string | null => {
+    if (String(feature.get("kind") ?? "") === "region") return String(feature.get("id") ?? "");
+    const geometry = (feature as Feature<Geometry>).getGeometry?.();
+    if (!geometry) return null;
+    const probe = getCenter(geometry.getExtent());
+    const source = regionLayerRef.current?.getSource();
+    if (!source) return null;
+    let found: string | null = null;
+    source.forEachFeatureAtCoordinateDirect(probe, (candidate) => {
+      found = String(candidate.get("id") ?? "");
+      return true;
+    });
+    return found;
+  }, []);
+
   const applySelectedFeature = useCallback((feature: FeatureLike | null) => {
     selectedKeyRef.current = feature ? featureKey(feature) : null;
     setSelected(feature ? selectedFromFeature(feature) : emptySelected);
+    // Регион выбранного района запоминается сразу: если в самом районе
+    // сообщений нет, лента показывает обстановку по области — иначе
+    // непонятно, почему район вообще закрашен.
+    setSelectedRegionPolygon(feature ? regionPolygonOf(feature) : null);
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
     // Выбор места — это вопрос «что там происходит», и ответ лежит в ленте.
@@ -922,9 +942,6 @@ export default function App() {
       index.set(zone.source_id, zone);
     }
     zoneStateRef.current = index;
-    zoneMomentRef.current = new Date(
-      historyAt ?? radarState?.generated_at ?? Date.now()
-    ).getTime();
 
     // Значки ставятся только там, где у сообщения есть конкретная точка:
     // фиксация, сбитие, взрыв, отбой. Площадная опасность — это заливка.
@@ -1078,14 +1095,14 @@ export default function App() {
       source: regionSource,
       visible: layers.regions,
       zIndex: 28,
-      style: createRegionStyle(selectedKeyRef, zoneStateRef, zoneMomentRef)
+      style: createRegionStyle(selectedKeyRef, zoneStateRef)
     });
     const districtLayer = new VectorLayer({
       source: districtSource,
       visible: layers.districts,
       zIndex: 20,
       minZoom: 4.15,
-      style: createDistrictStyle(selectedKeyRef, zoneStateRef, zoneMomentRef)
+      style: createDistrictStyle(selectedKeyRef, zoneStateRef)
     });
 
     basemapLayerRef.current = basemapLayer;
@@ -1391,8 +1408,29 @@ export default function App() {
     if (selected.id === "none" || selected.kind === "place") return [];
     const zoneId = polygonToZoneRef.current.get(selected.id);
     if (!zoneId) return [];
-    return feedEvents.filter((event) => event.zone_path.includes(zoneId));
+    const own = feedEvents.filter((event) => event.zone_path.includes(zoneId));
+    if (own.length || !selectedRegionPolygon) return own;
+    // В районе тихо, а закрашен он потому, что тревога объявлена по всей
+    // области. Показываем её, а не всю страну: человек нажал на район,
+    // чтобы понять этот цвет, а не чтобы получить общий поток.
+    const regionZone = polygonToZoneRef.current.get(selectedRegionPolygon);
+    if (!regionZone) return own;
+    return feedEvents.filter((event) => event.zone_path.includes(regionZone));
+  }, [feedEvents, selected, selectedRegionPolygon]);
+
+  // Показана ли в карточке обстановка соседей по области, а не самого места.
+  const zoneEventsFromRegion = useMemo(() => {
+    if (selected.id === "none" || selected.kind !== "district") return false;
+    const zoneId = polygonToZoneRef.current.get(selected.id);
+    if (!zoneId) return false;
+    return !feedEvents.some((event) => event.zone_path.includes(zoneId));
   }, [feedEvents, selected]);
+
+  const selectedRegionName = useMemo(() => {
+    if (!selectedRegionPolygon) return null;
+    const zoneId = polygonToZoneRef.current.get(selectedRegionPolygon);
+    return zoneId ? paintedZones[zoneId]?.name ?? null : null;
+  }, [selectedRegionPolygon, paintedZones]);
 
   const selectedZoneId = useMemo(
     () => (selected.id === "none" ? null : polygonToZoneRef.current.get(selected.id) ?? null),
@@ -1748,6 +1786,8 @@ export default function App() {
           selectedName={selected.id === "none" || selected.kind === "place" ? null : selected.name}
           selectedZoneId={selectedZoneId}
           zoneEvents={selectedZoneEvents}
+          zoneEventsFromRegion={zoneEventsFromRegion}
+          regionName={selectedRegionName}
           onlyVisible={onlyVisible}
           onToggleVisible={() => setOnlyVisible((value) => !value)}
           levelFilter={levelFilter}

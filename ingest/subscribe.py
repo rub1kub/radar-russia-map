@@ -35,13 +35,18 @@ async def current_state(client, folder_name: str):
 
     folders = await client.get_folders()
     folder = next((item for item in folders if item.name == folder_name), None)
+    included = list(folder.included_chats or []) if folder else []
     in_folder = {
         getattr(chat, "username", "").lower()
-        for chat in (folder.included_chats or [])
+        for chat in included
         if getattr(chat, "username", None)
-    } if folder else set()
+    }
+    # Идентификаторы всего, что уже лежит в папке, — включая чаты, которых
+    # нет в нашем списке источников. Без них состав пришлось бы собирать
+    # заново, а всё чужое из папки исчезло бы.
+    folder_ids = [chat.id for chat in included if getattr(chat, "id", None)]
 
-    return joined, folder, in_folder
+    return joined, folder, in_folder, folder_ids
 
 
 async def main() -> None:
@@ -56,7 +61,7 @@ async def main() -> None:
     client = build_client()
 
     async with client:
-        joined, folder, in_folder = await current_state(client, args.folder)
+        joined, folder, in_folder, folder_ids = await current_state(client, args.folder)
         todo = [s for s in sources if s.username.lower() not in joined]
 
         print(f"источников {len(sources)}, уже подписан на {len(sources) - len(todo)}")
@@ -100,22 +105,31 @@ async def main() -> None:
         # include_chat() состав не дополняет, а перезаписывает: вызов по
         # одному каналу оставляет в папке ровно последний и стирает всё
         # остальное. На этом уже был потерян исходный список.
-        peers = [
+        #
+        # И полный состав — это объединение, а не только наши источники.
+        # Раньше здесь стоял список из sources, и всё, что человек положил в
+        # папку сам, при первом же прогоне пропадало. Папка принадлежит
+        # человеку, а не скрипту: чужое из неё не убираем.
+        ours = [
             joined[s.username.lower()]
             for s in sources
             if s.username.lower() in joined
         ]
+        peers = list(dict.fromkeys(folder_ids + ours))
+        added = len(peers) - len(folder_ids)
 
         if folder is None:
             print(f"папки «{args.folder}» нет — создаю")
             await client.create_folder(args.folder, included_chats=peers)
-        elif len(peers) != len(in_folder):
+        elif added:
             await folder.edit(included_chats=peers)
-            print(f"состав папки «{args.folder}» задан: {len(peers)} каналов")
+            print(f"в папку «{args.folder}» добавлено {added}, "
+                  f"было {len(folder_ids)}, стало {len(peers)}")
         else:
-            print(f"папка «{args.folder}» уже содержит все подписки")
+            print(f"папка «{args.folder}» уже содержит все подписки "
+                  f"({len(folder_ids)} чатов)")
 
-        _, folder, in_folder = await current_state(client, args.folder)
+        _, folder, in_folder, _ = await current_state(client, args.folder)
         print(f"итог: в папке «{args.folder}» {len(in_folder)} каналов")
 
 

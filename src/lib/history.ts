@@ -7,6 +7,7 @@
  */
 
 import type { RadarEvent, ZoneCount } from "./api";
+import { freshness } from "./paint";
 
 export const SLOT_MS = 15 * 60 * 1000;
 
@@ -47,8 +48,10 @@ export function eventsAt(events: RadarEvent[], atIso: string): RadarEvent[] {
 }
 
 /**
- * Счётчики зон на момент — та же форма, что отдаёт /api/v1/state,
- * чтобы карта красилась одним и тем же кодом и в живом режиме, и в истории.
+ * Счётчики зон на момент — та же форма и та же арифметика, что в
+ * api/server.py build_state(), чтобы карта красилась одним кодом и в живом
+ * режиме, и в истории. Расхождение здесь означало бы, что перемотка на
+ * «сейчас» показывает не то же самое, что живая карта.
  */
 export function zoneCountsAt(
   events: RadarEvent[],
@@ -56,18 +59,41 @@ export function zoneCountsAt(
   meta: Record<string, ZoneCount>
 ): Record<string, ZoneCount> {
   const counts: Record<string, ZoneCount> = {};
+  const atMs = new Date(atIso).getTime();
 
   for (const event of eventsAt(events, atIso)) {
+    const fade = freshness(event.last_seen_at, atMs);
+    const weight = event.severity * fade;
+
     for (const zoneId of event.zone_path) {
       const bucket = counts[zoneId] ?? {
         active: 0,
+        own: 0,
         max_severity: 0,
+        severity: 0,
+        own_severity: 0,
+        fade: 1,
+        own_fade: 1,
         last_active: event.last_seen_at,
         level: meta[zoneId]?.level,
         source_id: meta[zoneId]?.source_id,
         name: meta[zoneId]?.name
       };
       bucket.active += 1;
+
+      // Цвет выбирает самое весомое сейчас событие: уровень на свежесть.
+      if (weight > bucket.severity * bucket.fade) {
+        bucket.severity = event.severity;
+        bucket.fade = fade;
+      }
+      if (zoneId === event.zone_id) {
+        bucket.own += 1;
+        if (weight > bucket.own_severity * bucket.own_fade) {
+          bucket.own_severity = event.severity;
+          bucket.own_fade = fade;
+        }
+      }
+
       bucket.max_severity = Math.max(bucket.max_severity, event.severity);
       if (event.last_seen_at > bucket.last_active) bucket.last_active = event.last_seen_at;
       counts[zoneId] = bucket;

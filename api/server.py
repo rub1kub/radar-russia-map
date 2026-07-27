@@ -57,6 +57,18 @@ app.include_router(geo_router)
 
 ACTIVE_WINDOW = timedelta(hours=6)
 
+# Через сколько событие перестаёт красить зону в свой цвет. Тот же порог, что
+# у затухания в конвейере и у выцветания значков.
+ZONE_FADE = timedelta(hours=3)
+
+
+def zone_fade(last_seen: str, now: datetime) -> float:
+    """Насколько выцвело событие к моменту просмотра. 1.0 — только что."""
+    age = (now - parse_utc(last_seen)).total_seconds()
+    if age <= 0:
+        return 1.0
+    return max(0.25, 1.0 - age / ZONE_FADE.total_seconds())
+
 # Ответ /state пересобирается не чаще раза в 3 секунды: клиент опрашивает его
 # каждые 10 секунд, websocket-цикл — каждые 5, и каждый вызов это несколько
 # запросов к SQLite плюс сборка счётчиков по зонам.
@@ -162,8 +174,22 @@ def build_state() -> dict:
             bucket = zone_counts.setdefault(
                 zone_id,
                 {"active": 0, "own": 0, "max_severity": 0, "own_severity": 0,
-                 "last_active": None})
+                 "severity": 0, "fade": 1.0, "own_fade": 1.0, "last_active": None})
             bucket["active"] += 1
+
+            # Цвет зоны выбирает не самое страшное событие, а самое весомое
+            # сейчас: уровень, умноженный на свежесть. Двухчасовая фиксация
+            # (9 x 0.33 = 3.0) уступает свежей тревоге (7 x 1.0 = 7.0), и
+            # район перестаёт гореть красным из-за того, что было и прошло.
+            # Раньше уровень брался максимумом по всем событиям, а свежесть —
+            # по самому позднему из них, и стоило прийти любому новому
+            # сообщению, как старая фиксация снова вспыхивала в полную силу.
+            fade = zone_fade(event["last_seen_at"], now)
+            weight = event["severity"] * fade
+            if weight > bucket["severity"] * bucket["fade"]:
+                bucket["severity"] = event["severity"]
+                bucket["fade"] = round(fade, 3)
+
             # Собственные события зоны — те, что названы именно ею, а не
             # унаследованы от района внутри. Регион с собственной тревогой
             # закрашивается на любом масштабе, иначе оповещение «по области»
@@ -173,7 +199,10 @@ def build_state() -> dict:
                 # Свой уровень отдельно от общего: иначе красный район внутри
                 # красил бы весь регион, хотя по области объявлена жёлтая
                 # опасность, а красное — точечное и уже нарисовано районом.
-                bucket["own_severity"] = max(bucket["own_severity"], event["severity"])
+                if weight > bucket["own_severity"] * bucket["own_fade"]:
+                    bucket["own_severity"] = event["severity"]
+                    bucket["own_fade"] = round(fade, 3)
+
             bucket["max_severity"] = max(bucket["max_severity"], event["severity"])
             if not bucket["last_active"] or event["last_seen_at"] > bucket["last_active"]:
                 bucket["last_active"] = event["last_seen_at"]

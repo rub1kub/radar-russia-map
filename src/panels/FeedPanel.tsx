@@ -23,6 +23,10 @@ type Props = {
   selectedName: string | null;
   selectedZoneId: string | null;
   zoneEvents: RadarEvent[];
+  /** В самом месте сообщений нет — показана обстановка по его области. */
+  zoneEventsFromRegion: boolean;
+  /** Как называется эта область. */
+  regionName: string | null;
   bookmarks: Bookmark[];
   onClearSelection: () => void;
   onPickEvent: (event: RadarEvent) => void;
@@ -57,6 +61,8 @@ export function FeedPanel({
   selectedName,
   selectedZoneId,
   zoneEvents,
+  zoneEventsFromRegion,
+  regionName,
   bookmarks,
   onClearSelection,
   onPickEvent,
@@ -160,15 +166,22 @@ export function FeedPanel({
                   ×
                 </button>
               </div>
+              {/* Район бывает закрашен не своей тревогой, а областной. Тогда
+                  «сообщений нет» — правда, но она не объясняет цвет, и
+                  человек видит вместо ответа общий поток по стране. */}
               <p className={zoneEvents.length ? undefined : "zone-card-quiet"}>
-                {zoneEvents.length
-                  ? `${zoneEvents.length} ${plural(
-                      zoneEvents.length,
-                      "активное сообщение",
-                      "активных сообщения",
-                      "активных сообщений"
-                    )}`
-                  : "Сообщений нет"}
+                {!zoneEvents.length
+                  ? "Сообщений нет"
+                  : zoneEventsFromRegion
+                    ? `Здесь тихо. Показана обстановка по региону${
+                        regionName ? `: ${regionName}` : ""
+                      }`
+                    : `${zoneEvents.length} ${plural(
+                        zoneEvents.length,
+                        "активное сообщение",
+                        "активных сообщения",
+                        "активных сообщений"
+                      )}`}
               </p>
             </div>
           ) : null}
