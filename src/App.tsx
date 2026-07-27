@@ -45,6 +45,8 @@ import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
 import { AlertToast } from "./panels/AlertToast";
+import { BookmarksSection } from "./panels/BookmarksSection";
+import { TopbarStats } from "./panels/TopbarStats";
 import type { FeatureLike } from "ol/Feature";
 import type { Geometry } from "ol/geom";
 
@@ -257,20 +259,30 @@ function createDistrictStyle(
       });
     }
 
-    // Сетка районов проявляется с приближением: на обзоре 2327 контуров
-    // сливаются в кашу, а вблизи они и нужны, чтобы понимать границы зоны.
+    // Пустые районы не рисуются, пока карта работает на уровне регионов:
+    // 2327 контуров без единого события — это шум, забивающий заливку,
+    // которая и есть сигнал. Сетка появляется там же, где карта переходит
+    // на районный уровень, и дальше проявляется с приближением.
     const zoom = resolutionToZoom(resolution);
-    const growth = clamp01((zoom - 4.1) / 2.6);
+    if (zoom < DISTRICT_FILL_ZOOM) return EMPTY_STYLE;
+
+    const growth = clamp01((zoom - DISTRICT_FILL_ZOOM) / 1.8);
 
     return new Style({
       fill: new Fill({ color: "rgba(255, 255, 255, 0.004)" }),
       stroke: new Stroke({
-        color: `rgba(196, 208, 202, ${0.14 + growth * 0.3})`,
-        width: 0.4 + growth * 0.5
+        color: `rgba(196, 208, 202, ${0.16 + growth * 0.28})`,
+        width: 0.45 + growth * 0.45
       })
     });
   };
 }
+
+// Стиль без отрисовки: возвращать undefined нельзя — слой всё равно должен
+// оставаться кликабельным для выбора района.
+const EMPTY_STYLE = new Style({
+  fill: new Fill({ color: "rgba(255, 255, 255, 0.002)" })
+});
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -1116,6 +1128,40 @@ export default function App() {
     });
   }, []);
 
+  const flyToBookmark = useCallback(
+    (bookmark: Bookmark) => {
+      const map = mapRef.current;
+      if (!map) return;
+
+      // У региона и района геометрия уже загружена — подлетаем к границам.
+      if (bookmark.source_id) {
+        const level = bookmark.level === "region" ? "region" : "district";
+        const feature = featureIndexRef.current.get(`${level}:${bookmark.source_id}`);
+        if (feature) {
+          applySelectedFeature(feature);
+          fitFeature(map, feature, bookmark.level === "region" ? 5.2 : 7.4);
+          return;
+        }
+      }
+
+      if (typeof bookmark.lat === "number" && typeof bookmark.lon === "number") {
+        map.getView().animate({
+          center: fromLonLat([bookmark.lon, bookmark.lat]),
+          zoom: Math.max(map.getView().getZoom() ?? 5, 7.4),
+          duration: 420
+        });
+      }
+    },
+    [applySelectedFeature]
+  );
+
+  const removeBookmark = useCallback((zoneId: string) => {
+    setBookmarks((current) => {
+      const target = current.find((item) => item.zone_id === zoneId);
+      return target ? toggleBookmark(current, target) : current;
+    });
+  }, []);
+
   const handleToggleBookmark = useCallback(() => {
     if (selected.id === "none" || selected.kind === "place") return;
     const zoneId = polygonToZoneRef.current.get(selected.id);
@@ -1164,6 +1210,8 @@ export default function App() {
             <p>По открытым источникам</p>
           </div>
         </div>
+
+        <TopbarStats state={radarState} />
 
         <button className="topbar-action" type="button" onClick={() => setAnalyticsOpen(true)}>
           <BarChart3 size={17} aria-hidden="true" />
@@ -1239,6 +1287,13 @@ export default function App() {
               <span>Сбросить вид</span>
             </button>
           </section>
+
+          <BookmarksSection
+            bookmarks={bookmarks}
+            state={radarState}
+            onPick={flyToBookmark}
+            onRemove={removeBookmark}
+          />
 
           <details className="extra-layers">
             <summary>

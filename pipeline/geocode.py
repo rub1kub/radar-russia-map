@@ -41,6 +41,9 @@ STOPWORDS = {
     "соблюдать", "продолжаем", "паники", "погодные", "условия", "еще", "ещё",
     "суда", "судно", "судов", "гражданские", "побережье", "полуостров",
     "тыл", "приграничье", "акватория", "море", "залив", "мост", "аэропорту",
+    # Стороны света в сводках всегда описывают направление подлёта («на восток»,
+    # «с востока»), но в справочнике есть посёлок Восток — и он собирал их все.
+    "восток", "запад", "север", "юг",
 }
 
 # Стеммированные варианты защитных списков. Без них «по краю», «в районе»,
@@ -69,16 +72,22 @@ MIN_PLACE_POPULATION = 1_000
 # «в свободном доступе» разрешалось в городской округ Свободный.
 PROMINENT_POPULATION = 20_000
 
-# Окончания прилагательных. Одиночное прилагательное в косвенном падеже почти
-# всегда называет административную единицу с опущенным типовым словом:
-# «в Воронежской» — область, а не село Воронежское; «Краснодарского и
-# Ставропольского» — края. Существительное («Михайловки») такой пометки не
-# получает и разрешается обычным порядком.
-ADJECTIVE_ENDINGS = (
+# Окончания, которые у существительного не встречаются: «Раевскую»,
+# «Анапского», «Воронежскими» — только прилагательное.
+ADJECTIVE_ONLY_ENDINGS = (
     "ого", "его", "ому", "ему", "ыми", "ими",
     "ая", "яя", "ое", "ее", "ую", "юю", "ые", "ие", "ых", "их",
-    "ым", "им", "ом", "ем", "ой", "ей", "ий", "ый",
+    "ым", "им", "ий", "ый",
 )
+# «-ой/-ей/-ом/-ем» несут двойную нагрузку: «Воронежской» — прилагательное,
+# «Анапой», «Ростовом» — существительное. Для выбора админ-единицы этого
+# хватает (в _candidates есть безопасный откат), для отсечения чужих тёзок
+# нет — там нужен только ADJECTIVE_ONLY_ENDINGS.
+#
+# Одиночное прилагательное в косвенном падеже почти всегда называет
+# административную единицу с опущенным типовым словом: «в Воронежской» —
+# область, а не село Воронежское; «Краснодарского и Ставропольского» — края.
+ADJECTIVE_ENDINGS = ADJECTIVE_ONLY_ENDINGS + ("ом", "ем", "ой", "ей")
 
 MAX_NGRAM = 4
 
@@ -100,7 +109,18 @@ class Match:
     key: str
     zone_ids: list[str]
     exact: bool
-    adjectival: bool = False
+    # Исходная словоформа одиночного стеммированного матча: по её окончанию
+    # видно, прилагательное это или существительное. У остальных матчей пусто.
+    word: str = ""
+
+    @property
+    def adjectival(self) -> bool:
+        return self.word.endswith(ADJECTIVE_ENDINGS)
+
+    @property
+    def adjective_only(self) -> bool:
+        """Окончание, невозможное у существительного."""
+        return self.word.endswith(ADJECTIVE_ONLY_ENDINGS)
 
 
 class Geocoder:
@@ -142,14 +162,33 @@ class Geocoder:
         return tuple(path)
 
     @staticmethod
-    def _is_event_word(key: str, size: int) -> bool:
-        """Одиночное слово из лексики обстановки — не топоним ни в каком падеже."""
-        return size == 1 and (key in STOPWORDS or stem_word(key) in STOPWORD_STEMS)
+    def _is_event_word(key: str, size: int, stemmed: bool) -> bool:
+        """Одиночное слово из лексики обстановки — не топоним ни в каком падеже.
+
+        Ключ стеммированного прохода уже обрезан, и стеммировать его повторно
+        нельзя: stem_word не идемпотентна («мория» -> «мори» -> «мор»), от
+        второго прохода под запрет попадали посторонние имена.
+        """
+        if size != 1:
+            return False
+        stem = key if stemmed else stem_word(key)
+        return key in STOPWORDS or stem in STOPWORD_STEMS
 
     @staticmethod
-    def _heads_feature(words: list[str], after: int) -> bool:
-        """Следом за n-граммой стоит физико-географический объект?"""
-        return after < len(words) and stem_word(words[after]) in FEATURE_HEAD_STEMS
+    def _heads_feature(words: list[str], index: int, size: int) -> bool:
+        """N-грамма — определение к стоящему следом физико-географическому объекту?
+
+        Проверяется в обоих проходах: «Таманский полуостров» и «Крымский мост»
+        стоят в сводках в именительном падеже и попадали в точный индекс мимо
+        этого правила, разрешаясь в посёлок Таманский и Крымский район.
+
+        Существительное перед объектом, наоборот, называет самостоятельное
+        место: «Новороссийск НПЗ», «Славянск-на-Кубани НПЗ» — это города.
+        """
+        after = index + size
+        if after >= len(words) or stem_word(words[after]) not in FEATURE_HEAD_STEMS:
+            return False
+        return words[after - 1].endswith(ADJECTIVE_ENDINGS)
 
     def _lookup(self, words: list[str], index: int,
                 exact: bool) -> tuple[str, list[str], int] | None:
@@ -159,9 +198,9 @@ class Geocoder:
             key = " ".join(words[index:index + size])
             if not exact:
                 key = stem_key(key)
-            if len(key) < 4 or self._is_event_word(key, size):
+            if len(key) < 4 or self._is_event_word(key, size, stemmed=not exact):
                 continue
-            if not exact and self._heads_feature(words, index + size):
+            if self._heads_feature(words, index, size):
                 continue
             hits = table.get(key)
             if hits:
@@ -177,9 +216,8 @@ class Geocoder:
         if hit is None:
             return None
         key, zone_ids, size = hit
-        adjectival = (not exact and size == 1
-                      and words[index].endswith(ADJECTIVE_ENDINGS))
-        return Match(key, zone_ids, exact, adjectival), size
+        word = "" if exact or size != 1 else words[index]
+        return Match(key, zone_ids, exact, word), size
 
     def _scan(self, phrase: str) -> list[Match]:
         """Скользящее сопоставление n-грамм, длинные совпадения приоритетнее.
@@ -260,10 +298,18 @@ class Geocoder:
         # «Мирный» и «Мира» сходятся в один ключ.
         weak = single and not match.exact
 
-        ambiguous = key in AMBIGUOUS or (single and stem_word(key) in AMBIGUOUS_STEMS)
+        # Ключ стеммированного прохода уже обрезан, второй проход запрещён:
+        # см. оговорку про идемпотентность в _is_event_word.
+        stem = key if not match.exact else stem_word(key)
+        ambiguous = key in AMBIGUOUS or (single and stem in AMBIGUOUS_STEMS)
 
         candidates = self._candidates(match)
-        prominent = weak and self._is_prominent(candidates)
+        # Прилагательное в косвенном падеже, за которым в справочнике стоят
+        # только НП, без контекста почти всегда чужой тёзка: «через Раевскую»
+        # под Новороссийском разрешалось в Раевский в Башкортостане (1 600 км).
+        stray_adjective = match.adjective_only and all(
+            self.zones[zone_id]["level"] == "place" for zone_id in candidates)
+        prominent = weak and not stray_adjective and self._is_prominent(candidates)
 
         scored: list[tuple[float, str]] = []
         for zone_id in candidates:
@@ -290,9 +336,10 @@ class Geocoder:
             # Административные единицы надежнее одноименных деревень.
             score += (2 - LEVEL_RANK[zone["level"]]) * 10_000
             score += min(zone["population"] or 0, 500_000) / 100
-            # Точное совпадение всегда весомее стеммированного.
-            if not match.exact:
-                score -= 5_000
+            # Штрафовать стеммированное совпадение здесь бессмысленно: скоринг
+            # идёт внутри одного матча, где match.exact общий для всех зон, и
+            # константа не меняет порядок. Приоритет точной формы обеспечивает
+            # порядок проходов в _match.
             scored.append((score, zone_id))
 
         if not scored:
