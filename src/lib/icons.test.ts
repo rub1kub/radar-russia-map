@@ -85,3 +85,23 @@ describe("значок дальнобойного дрона", () => {
     expect(fpv).toContain("circle cx=\"11\"");
   });
 });
+
+describe("значок значит «здесь»", () => {
+  it("оповещение по целой области значка не получает", () => {
+    // Центр области — точка случайная: она попадает в тихий район, человек
+    // нажимает именно туда и получает «сообщений нет». Треть значков на
+    // карте стояла так. Область показывает заливка.
+    expect(isPointEvent("detection", "region")).toBe(false);
+    expect(isPointEvent("intercept", "region")).toBe(false);
+  });
+
+  it("район и населённый пункт значок получают", () => {
+    expect(isPointEvent("detection", "district")).toBe(true);
+    expect(isPointEvent("intercept", "place")).toBe(true);
+  });
+
+  it("площадные сигналы значка не получают нигде", () => {
+    expect(isPointEvent("danger", "place")).toBe(false);
+    expect(isPointEvent("alarm", "district")).toBe(false);
+  });
+});

@@ -959,7 +959,7 @@ export default function App() {
     const referenceMs = new Date(historyAt ?? radarState?.generated_at ?? Date.now()).getTime();
 
     for (const event of shownEvents) {
-      if (!isPointEvent(event.signal_type)) continue;
+      if (!isPointEvent(event.signal_type, event.zone_level)) continue;
       if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
 
       iconSource.addFeature(

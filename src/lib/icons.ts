@@ -137,6 +137,17 @@ export function iconKindFor(signalType: string, threatType: string): IconKind {
 /** Сигналы, у которых есть конкретная точка, а не площадь. */
 const POINT_SIGNALS = new Set(["detection", "intercept", "impact", "allclear"]);
 
-export function isPointEvent(signalType: string): boolean {
+/**
+ * Ставить ли на карту значок.
+ *
+ * Значок означает «здесь». Координаты события — центр его зоны, и для НП или
+ * района это честно: место названо, размер его невелик. Для оповещения по
+ * целой области центр — точка случайная: она попадает в какой-нибудь тихий
+ * район, человек нажимает именно туда и получает «сообщений нет». Треть
+ * значков на карте стояла так. Область показывает заливка, она для того и
+ * нужна; значок ей не помощник, а помеха.
+ */
+export function isPointEvent(signalType: string, zoneLevel?: string): boolean {
+  if (zoneLevel === "region") return false;
   return POINT_SIGNALS.has(signalType);
 }
