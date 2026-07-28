@@ -142,6 +142,8 @@ REGION_ALIASES = {
     "кчр": "карачаево-черкесия",
     "карачаево-черкесская республика": "карачаево-черкесия",
     "чувашская республика": "чувашия",
+    "башкирия": "республика башкортостан",
+    "республика башкирия": "республика башкортостан",
     "удмуртская республика": "удмуртия",
     "чеченская республика": "чечня",
     "северная осетия": "республика северная осетия-алания",
@@ -276,6 +278,21 @@ class Geocoder:
             self.zones[row["id"]] = dict(row)
 
         self._add_aliases(name_sets, stem_sets)
+
+        # Трёхбуквенные имена настоящих городов. Страж длины в _lookup
+        # отсекает ключи короче четырёх букв как мусор — и вместе с мусором
+        # отсекал Уфу с её миллионом жителей: «Уфа», «Реж», «Аша», «Обь»
+        # не находились вовсе. Пропускаем короткий ключ, если за ним стоит
+        # заметный город или регион, — деревни в три буквы остаются за
+        # порогом, как и прежде.
+        self._short_names = {
+            norm for norm, ids in name_sets.items()
+            if len(norm) == 3 and any(
+                self.zones[zone_id]["level"] == "region"
+                or (self.zones[zone_id]["population"] or 0) >= 20_000
+                for zone_id in ids
+            )
+        }
         # Порядок фиксируем, чтобы разбор был воспроизводимым от запуска к запуску.
         self.by_name = {name: sorted(ids) for name, ids in name_sets.items()}
         self.by_stem = {stem: sorted(ids) for stem, ids in stem_sets.items()}
@@ -384,7 +401,7 @@ class Geocoder:
             key = " ".join(words[index:index + size])
             if not exact:
                 key = stem_key(key)
-            if len(key) < 4 and key not in SHORT_KEYS:
+            if len(key) < 4 and key not in SHORT_KEYS and key not in self._short_names:
                 continue
             if self._is_event_word(key, size, stemmed=not exact):
                 continue

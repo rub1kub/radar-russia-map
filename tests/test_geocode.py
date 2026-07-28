@@ -284,3 +284,30 @@ def test_district_polygons_carry_their_region():
     features = payload["features"]
     without = [f for f in features if not (f.get("properties") or {}).get("region")]
     assert not without, f"без региона: {len(without)} из {len(features)}"
+
+
+def test_short_city_names_resolve(geocoder):
+    """Трёхбуквенные города не гибнут на страже длины.
+
+    Страж отсекает ключи короче четырёх букв как мусор — и вместе с мусором
+    отсекал Уфу с её миллионом жителей: сообщения «Аэропорт Уфа, ограничения
+    на ИВП» не находили зоны вовсе.
+    """
+    resolved = geocoder.resolve(["Уфа"])
+    assert resolved
+    assert "respublika_bashkortostan" in geocoder.zone_path(resolved[0].zone_id)
+
+
+def test_bashkiria_is_bashkortostan(geocoder):
+    """«Башкирия» — обиходное имя республики, каналы пишут только так."""
+    resolved = geocoder.resolve(["Республика Башкирия Опасность по БПЛА"])
+    assert resolved
+    assert geocoder.zones[resolved[0].zone_id]["name_ru"] == "Республика Башкортостан"
+
+
+def test_three_letter_villages_stay_below_threshold(geocoder):
+    """Деревни в три буквы остаются за порогом: там по-прежнему шум."""
+    assert geocoder.resolve(["Яя"]) == [] or all(
+        (geocoder.zones[item.zone_id]["population"] or 0) >= 20_000
+        for item in geocoder.resolve(["Яя"])
+    )

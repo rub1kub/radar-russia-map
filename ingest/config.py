@@ -323,6 +323,9 @@ SOURCES: list[Source] = [
     Source("radar_yuzniy", "radar_yuzniy", "Южный РАДАР", "regional", 357, region="other", network=None),
     Source("rschschyvashi", "RSCHSChyvashi", "РСЧС Чувашии", "official", 177, region="chuvashia", network=None),
     Source("sochi_online", "sochi_online", "Сочи Онлайн", "mixed", 112098, region="sochi", network=None),
+    # Добавлен по просьбе владельца проекта: оповещения по приграничью
+    # вперемешку с новостями, фильтр релевантности обязателен.
+    Source("atypicalday", "atypicalday", "Приграничье", "mixed", 64473, region="other", network=None),
 ]
 
 
