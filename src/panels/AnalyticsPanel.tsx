@@ -86,6 +86,7 @@ export function AnalyticsPanel({ open, onClose }: Props) {
               <p className="analytics-note">
                 Кто чаще сообщает первым и как часто его сообщения подтверждают другие ленты.
               </p>
+              <div className="analytics-table-wrap">
               <table className="analytics-table">
                 <thead>
                   <tr>
@@ -114,6 +115,7 @@ export function AnalyticsPanel({ open, onClose }: Props) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </section>
 
             <section>

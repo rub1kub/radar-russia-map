@@ -1605,9 +1605,15 @@ export default function App() {
           className={`panel-handle handle-left ${leftOpen ? "is-hidden" : ""}`}
           type="button"
           onClick={openLeft}
-          aria-label="Показать панель управления"
+          aria-label="Поиск места и что значат цвета"
         >
           <SlidersHorizontal size={17} aria-hidden="true" />
+          {/* Подпись обязательна: это единственный вход в поиск и легенду, а
+              безымянную иконку человек с улицы просто не находит — цвета на
+              карте так и остаются нерасшифрованными. */}
+          <span className="handle-label">
+            Поиск<span className="handle-label-more"> и легенда</span>
+          </span>
         </button>
 
         <aside

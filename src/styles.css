@@ -1185,6 +1185,11 @@ button {
 }
 
 .analytics-body { display: flex; flex-direction: column; gap: 22px; }
+
+/* Таблица источников шире телефона: колонка «Задержка» обрезалась посреди
+   символа. Прокрутка идёт внутри самой таблицы, страница при этом стоит. */
+.analytics-table-wrap { overflow-x: auto; }
+.analytics-table-wrap .analytics-table { min-width: 460px; }
 .analytics-body h3 { margin: 0 0 4px; font-size: 13.5px; }
 .analytics-note { margin: 0 0 10px; font-size: 11.5px; color: rgba(190, 198, 192, 0.6); }
 
@@ -1232,7 +1237,6 @@ button {
   .topbar-action span { display: none; }
   .topbar-action { padding: 8px 10px; }
 
-  .history-panel { left: 10px; right: 10px; bottom: 10px; max-width: none; }
   .alert-toast { left: 10px; right: 10px; transform: none; max-width: none; }
 
   .analytics-card { max-height: 92vh; padding: 15px 15px 18px; }
@@ -1411,6 +1415,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   min-width: 40px;
   height: 40px;
   padding: 0 11px;
@@ -1479,7 +1484,6 @@ button {
   }
 
   .panel-handle { top: auto; bottom: 12px; }
-  .history-panel { bottom: auto; top: 108px; left: 12px; right: 12px; max-width: none; }
 }
 
 /* --- Компактная левая панель --------------------------------------------- */
@@ -1571,11 +1575,23 @@ button {
   bottom: var(--edge);
 }
 
+.handle-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
 /* --- Всплывающие подсказки ----------------------------------------------- */
 /*
  * Свои, а не системный title: тот всплывает через секунду и не поддаётся
  * оформлению, из-за чего пояснения к счётчикам никто не замечал.
  */
+/* Осторожно: это правило перебивает position у элемента с той же силой, что
+   и одиночный класс, и стоит в файле ниже. Кнопка с абсолютным
+   позиционированием, получив data-tip, тихо становится relative и уезжает из
+   своего угла — так вышло с ярлыком свёрнутой панели. Подсказку вешаем на
+   элементы в обычном потоке. */
 [data-tip] {
   position: relative;
 }
@@ -1923,6 +1939,9 @@ button {
     height: 38px;
   }
 
+  /* На телефоне в нижний ряд помещается только короткое слово. */
+  .handle-label-more { display: none; }
+
   .handle-left { left: var(--edge); }
   .handle-right { right: calc(var(--edge) + 46px); }
 
@@ -1932,23 +1951,54 @@ button {
     padding: 9px 11px;
   }
 
+  /* Свёрнутая история — кнопка, а не плита. Раньше здесь сходились два
+     правила из разных медиазапросов: одно задавало top, другое bottom, и
+     пустая панель растягивалась между ними на 722 px, накрывая карту и
+     всё под собой. Явный top: auto эту сцепку разрывает. */
   .history-panel {
-    left: calc(var(--edge) + 46px);
-    right: calc(var(--edge) + 92px);
+    top: auto;
     bottom: var(--edge);
-    max-width: none;
+    /* Левый нижний угол занят поиском, правый — аналитикой. История встаёт
+       между ними, иначе кнопки наезжают друг на друга и попасть можно
+       только в одну. */
+    left: calc(var(--edge) + 108px);
+    right: auto;
+    max-width: calc(100% - var(--edge) * 2 - 104px);
   }
 
-  .history-panel:not(.is-open) .history-toggle span { display: none; }
+  /* Слово «История» остаётся: без него кнопка — безымянная иконка 16 px,
+     и догадаться, что это вообще кнопка, нельзя. */
   .history-panel.is-open {
     left: var(--edge);
     right: var(--edge);
+    max-width: none;
     bottom: calc(var(--edge) + 46px);
   }
 
   .topbar { flex-wrap: wrap; gap: 8px; }
   .brand p { display: none; }
   .topbar-stats { width: 100%; margin: 0; }
+
+  /* Пальцем на улице в мишень 15 px не попасть. Кнопки сворачивания,
+     цветные кружки фильтра и чекбоксы слоёв доводим до пригодного размера. */
+  .panel-collapse,
+  .panel-handle,
+  .analytics-close,
+  .bookmark-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .map-action { min-width: 44px; min-height: 44px; }
+  .history-toggle { min-height: 44px; }
+  .filter-dot { min-width: 40px; min-height: 34px; }
+  .filter-chip { min-height: 34px; }
+  .layer-row { min-height: 38px; }
+  .search-row input { min-height: 38px; }
+
+  /* Левая панель в ландшафте не помещалась целиком, и «Слои карты» с
+     подписью об источниках были недостижимы. */
+  .sidebar { overflow-y: auto; }
 }
 
 /* Свёрнутая панель убирается из отрисовки целиком. Одного opacity: 0 мало:
