@@ -38,7 +38,37 @@ def ensure_state(connection) -> None:
         "CREATE TABLE IF NOT EXISTS poll_state ("
         " source_key TEXT PRIMARY KEY, last_message_id INTEGER NOT NULL)"
     )
+    # Числовой идентификатор канала. Имя владелец меняет когда угодно, и
+    # опрос по имени в этот момент просто перестаёт что-либо находить —
+    # молча, без ошибки, как будто в канале стало тихо. Идентификатор не
+    # меняется никогда, поэтому имя нужно ровно один раз: чтобы его узнать.
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(poll_state)")}
+    if "chat_id" not in columns:
+        connection.execute("ALTER TABLE poll_state ADD COLUMN chat_id INTEGER")
     connection.commit()
+
+
+def known_chat_id(connection, source_key: str) -> int | None:
+    """Идентификатор канала, если он уже известен."""
+    row = connection.execute(
+        "SELECT chat_id FROM poll_state WHERE source_key = ?", (source_key,)
+    ).fetchone()
+    if row and row["chat_id"]:
+        return row["chat_id"]
+    # Канал мог собираться раньше — идентификатор лежит в самих сообщениях.
+    row = connection.execute(
+        "SELECT chat_id FROM raw_messages WHERE source_key = ? ORDER BY id DESC LIMIT 1",
+        (source_key,),
+    ).fetchone()
+    return row["chat_id"] if row and row["chat_id"] else None
+
+
+def remember_chat_id(connection, source_key: str, chat_id: int) -> None:
+    connection.execute(
+        "INSERT INTO poll_state (source_key, last_message_id, chat_id) VALUES (?, 0, ?)"
+        " ON CONFLICT(source_key) DO UPDATE SET chat_id = excluded.chat_id",
+        (source_key, chat_id),
+    )
 
 
 def last_seen(connection, source_key: str) -> int:
@@ -62,30 +92,52 @@ def remember(connection, source_key: str, message_id: int) -> None:
     )
 
 
+async def fetch(client, source, peer, seen, limit) -> tuple[list[tuple], int]:
+    """Забрать новые сообщения канала. Пустой список — либо тихо, либо не ответил."""
+    rows: list[tuple] = []
+    highest = seen
+    async for message in client.get_chat_history(peer, limit=limit):
+        if message.id <= seen:
+            break
+        text = message.text or message.caption or ""
+        if not text.strip():
+            continue
+        highest = max(highest, message.id)
+        rows.append((
+            source.key, message.chat.id, message.id,
+            utc_iso(message.date) if message.date else now_utc().isoformat(),
+            now_utc().isoformat(), text, message.views,
+        ))
+    return rows, highest
+
+
 async def poll_source(client, connection, source) -> int:
     seen = last_seen(connection, source.key)
     limit = FIRST_RUN_LIMIT if seen == 0 else CATCH_UP_LIMIT
 
-    rows: list[tuple] = []
-    highest = seen
+    # Ходим по идентификатору: имя владелец меняет когда угодно, и опрос по
+    # имени в этот момент просто перестаёт что-либо находить — молча, без
+    # ошибки, как будто в канале стало тихо. Имя остаётся запасным ключом на
+    # два случая: первое знакомство и потерянный кеш сессии, в котором
+    # идентификатор не разрешается.
+    chat_id = known_chat_id(connection, source.key)
     try:
-        async for message in client.get_chat_history(source.username, limit=limit):
-            if message.id <= seen:
-                break
-            text = message.text or message.caption or ""
-            if not text.strip():
-                continue
-            highest = max(highest, message.id)
-            rows.append((
-                source.key, message.chat.id, message.id,
-                utc_iso(message.date) if message.date else now_utc().isoformat(),
-                now_utc().isoformat(), text, message.views,
-            ))
+        if chat_id:
+            rows, highest = await fetch(client, source, chat_id, seen, limit)
+        else:
+            rows, highest = await fetch(client, source, source.username, seen, limit)
     except FloodWait as wait:
         await asyncio.sleep(wait.value + 1)
         return 0
     except RPCError:
-        return 0
+        if not chat_id:
+            return 0
+        # Идентификатор не разрешился — берём имя, и тем же проходом узнаём
+        # актуальный идентификатор из самих сообщений.
+        try:
+            rows, highest = await fetch(client, source, source.username, seen, limit)
+        except (FloodWait, RPCError):
+            return 0
 
     if rows:
         connection.executemany(
@@ -94,6 +146,7 @@ async def poll_source(client, connection, source) -> int:
             " VALUES (?,?,?,?,?,?,?)",
             rows,
         )
+        remember_chat_id(connection, source.key, rows[0][1])
     if highest > seen:
         remember(connection, source.key, highest)
     connection.commit()
