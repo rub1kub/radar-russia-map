@@ -30,13 +30,17 @@ def test_fresh_event_burns_at_full():
     assert zone_fade(ago(seconds=0), NOW) == 1.0
 
 
-def test_hour_old_is_about_half():
-    """Кривая крутая в начале: за час зона теряет половину яркости.
+def test_hour_old_is_nearly_out():
+    """За час без нового сообщения зона догорает до трети.
 
-    Линейная убыль была слишком щадящей — за пятьдесят минут без единого
-    нового сообщения район терял четверть и выглядел как горящий сейчас.
+    Линейная убыль была слишком щадящей: за пятьдесят минут район терял
+    четверть яркости и выглядел как горящий сейчас.
     """
-    assert zone_fade(ago(hours=1), NOW) == pytest.approx(0.48, abs=0.02)
+    assert zone_fade(ago(hours=1), NOW) == pytest.approx(0.29, abs=0.02)
+
+
+def test_half_hour_is_half():
+    assert zone_fade(ago(minutes=30), NOW) == pytest.approx(0.5, abs=0.02)
 
 
 def test_first_minutes_matter_most():
@@ -48,7 +52,7 @@ def test_first_minutes_matter_most():
 
 def test_old_event_does_not_vanish():
     """Событие ещё не закрыто — стирать его с карты рано."""
-    assert zone_fade(ago(hours=10), NOW) == 0.2
+    assert zone_fade(ago(hours=10), NOW) == 0.12
 
 
 def test_future_stamp_is_treated_as_fresh():
@@ -75,6 +79,6 @@ def test_when_everything_is_old_the_strongest_still_wins_but_dim():
     assert fade < 0.4
 
 
-def test_fade_threshold_matches_the_pipeline():
-    """Порог тот же, что у затухания события и у выцветания значков."""
-    assert ZONE_FADE == timedelta(hours=3)
+def test_fade_window_is_two_hours():
+    """Карта показывает, что происходит, а не что случалось."""
+    assert ZONE_FADE == timedelta(hours=2)

@@ -225,7 +225,9 @@ function severityLevel(severity: number): number {
   return 4;
 }
 
-const ICON_FADE_MS = 3 * 60 * 60 * 1000;
+// Значки выцветают с той же скоростью, что и заливка: иначе на бледной
+// зоне остаётся яркая метка и спорит с ней.
+const ICON_FADE_MS = 2 * 60 * 60 * 1000;
 const iconStyleCache = new globalThis.Map<string, Style>();
 
 function createEventIconStyle(feature: FeatureLike, resolution: number) {
@@ -237,7 +239,7 @@ function createEventIconStyle(feature: FeatureLike, resolution: number) {
   const ageMs = asNumber(feature.get("ageMs"), 0);
 
   // Свежая фиксация видна отчётливо, трёхчасовая почти растворяется.
-  const freshness = Math.max(0.28, 1 - ageMs / ICON_FADE_MS);
+  const freshness = Math.max(0.2, 1 - Math.min(1, ageMs / ICON_FADE_MS) ** 0.5);
   const bucket = Math.round(freshness * 5) / 5;
   const key = `${kind}|${severity}|${bucket}`;
 
@@ -1740,9 +1742,9 @@ export default function App() {
             </div>
 
             <p className="legend-note">
-              Цвет тускнеет со временем: свежее сообщение горит ярко, к трём
-              часам гаснет. Область целиком закрашивается бледно — тревога
-              объявлена по ней, а не по каждому её району.
+              Цвет тускнеет со временем: полчаса без нового сообщения — вполовину
+              тусклее, час — почти погасло. Область целиком закрашивается бледно:
+              тревога объявлена по ней, а не по каждому её району.
             </p>
 
             <button className="ghost-button" type="button" onClick={resetMap}>

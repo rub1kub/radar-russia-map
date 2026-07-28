@@ -8,9 +8,11 @@
  * ярко, как минутная.
  */
 
-/** Через сколько заливка выцветает до минимума. Порог тот же, что у значков
- *  и у затухания события в конвейере. */
-export const ZONE_FADE_MS = 3 * 60 * 60 * 1000;
+/** Через сколько заливка выцветает до минимума. Тот же порог, что в
+ *  api/server.py: карта показывает, что происходит, а не что случалось. */
+export const ZONE_FADE_MS = 2 * 60 * 60 * 1000;
+/** Ниже этого зона не гаснет: событие ещё не закрыто. */
+export const ZONE_FADE_FLOOR = 0.12;
 
 /** Базовая густота по числу событий в зоне. */
 export function zoneFillAlpha(active: number): number {
@@ -28,15 +30,14 @@ export function zoneFillAlpha(active: number): number {
  * выглядел как горящий сейчас. Человеку важна разница между «пять минут» и
  * «час», а между «два часа» и «три» — уже нет.
  *
- * Пять минут — 0.86, полчаса — 0.65, час — 0.48, два часа — 0.28. Ниже
- * 0.2 не опускаемся: событие ещё не закрыто, и стирать его с карты рано.
+ * Пять минут — 0.80, полчаса — 0.50, час — 0.29, полтора — 0.13.
  */
 export function freshness(lastActive: string | undefined, nowMs: number): number {
   if (!lastActive) return 1;
   const age = nowMs - new Date(lastActive).getTime();
   if (!Number.isFinite(age) || age <= 0) return 1;
   const share = Math.min(1, age / ZONE_FADE_MS);
-  return Math.max(0.2, 1 - share ** 0.6);
+  return Math.max(ZONE_FADE_FLOOR, 1 - share ** 0.5);
 }
 
 /**

@@ -9,8 +9,12 @@ describe("freshness", () => {
     expect(freshness(ago(0), NOW)).toBe(1);
   });
 
-  it("час давности примерно вдвое тусклее", () => {
-    expect(freshness(ago(60 * 60 * 1000), NOW)).toBeCloseTo(0.48, 2);
+  it("час давности догорает до трети", () => {
+    expect(freshness(ago(60 * 60 * 1000), NOW)).toBeCloseTo(0.29, 2);
+  });
+
+  it("полчаса — половина яркости", () => {
+    expect(freshness(ago(30 * 60 * 1000), NOW)).toBeCloseTo(0.5, 2);
   });
 
   it("первые минуты значат больше поздних", () => {
@@ -21,7 +25,7 @@ describe("freshness", () => {
   });
 
   it("старое не гаснет совсем: событие ещё не закрыто", () => {
-    expect(freshness(ago(ZONE_FADE_MS * 5), NOW)).toBe(0.2);
+    expect(freshness(ago(ZONE_FADE_MS * 5), NOW)).toBe(0.12);
   });
 
   it("без отметки времени не выцветает", () => {
