@@ -116,20 +116,25 @@ class Fuser:
             return None
         return hashlib.sha1(squeezed.encode()).hexdigest()[:16]
 
-    def _voice(self, event: Event, key: str, tier: str, text: str) -> None:
+    def _voice(self, event: Event, key: str, tier: str, text: str) -> bool:
         """Учесть голос, если это не пересказ чужими словами.
 
         Сеть перепостов ловится заранее по графу (networks.py), но утренняя
         сводка Минобороны расходится по лентам, между которыми постоянной
         связи нет, — граф её не видит. Здесь ловится сам факт: тот же текст,
         который уже принесли, независимым свидетельством не является.
+
+        Возвращает, принёс ли вклад что-то новое: перепост не только не
+        добавляет голоса, но и не должен обновлять время события.
         """
         stamp = self._repost_key(text)
         if stamp is not None:
             owner = event.texts.setdefault(stamp, key)
             if owner != key:
-                return
+                return False
+        fresh = key not in event.voices
         event.voices.setdefault(key, tier)
+        return fresh
 
     def __init__(self) -> None:
         self.events: list[Event] = []
@@ -226,7 +231,14 @@ class Fuser:
 
         existing = self._match(zone_path, observation.threat_type, moment)
         if existing:
-            existing.last_seen = max(existing.last_seen, moment)
+            # Перепост чужого текста и вторая ветка той же сети не приносят
+            # ничего нового, а значит и время события двигать не должны:
+            # иначе сообщение, пересказанное через семь минут, делало
+            # событие «свежим» и оставляло зону гореть на карте.
+            said = self._voice(existing, network or source_key, tier,
+                               getattr(observation, "body", ""))
+            if said:
+                existing.last_seen = max(existing.last_seen, moment)
             # Подпись должна соответствовать цвету. Слияние брало максимум
             # severity, но оставляло тип сигнала от первого сообщения: событие
             # показывалось как «Опасность» и красилось красным, потому что
@@ -243,7 +255,6 @@ class Fuser:
             role = "confirm" if source_key not in existing.sources else "repeat"
             existing.sources.setdefault(source_key, tier)
             existing.networks.setdefault(network or source_key, tier)
-            self._voice(existing, network or source_key, tier, getattr(observation, "body", ""))
             existing.contributions.append((raw_id, source_key, role, moment))
             return existing
 

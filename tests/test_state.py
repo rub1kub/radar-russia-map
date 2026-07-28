@@ -38,9 +38,9 @@ def test_district_goes_out_in_half_an_hour():
     73 км. Через полчаса без нового сообщения фиксация означает не «он
     здесь», а «он был здесь и ушёл».
     """
-    assert zone_fade(ago(minutes=5), NOW, "district", "uav") == pytest.approx(0.59, abs=0.03)
-    assert zone_fade(ago(minutes=15), NOW, "district", "uav") == pytest.approx(0.29, abs=0.03)
-    assert zone_fade(ago(minutes=30), NOW, "district", "uav") == 0.12
+    assert zone_fade(ago(minutes=5), NOW, "district", "uav") == pytest.approx(0.62, abs=0.03)
+    assert zone_fade(ago(minutes=15), NOW, "district", "uav") == pytest.approx(0.35, abs=0.03)
+    assert zone_fade(ago(minutes=35), NOW, "district", "uav") == 0.12
 
 
 def test_region_holds_much_longer_than_district():

@@ -19,8 +19,8 @@ describe("freshness", () => {
   it("район гаснет за полчаса: борт его за это время пересекает", () => {
     // Украинские дальнобойные — Хорнет, Бобр, Дартс, Лютый — идут около
     // 150 км/ч, район поперёк 73 км.
-    expect(freshness(ago(15 * 60 * 1000), NOW, "district", "uav")).toBeCloseTo(0.29, 2);
-    expect(freshness(ago(30 * 60 * 1000), NOW, "district", "uav")).toBe(0.12);
+    expect(freshness(ago(15 * 60 * 1000), NOW, "district", "uav")).toBeCloseTo(0.35, 2);
+    expect(freshness(ago(35 * 60 * 1000), NOW, "district", "uav")).toBe(0.12);
   });
 
   it("регион держится дольше района: он вшестеро шире", () => {
@@ -72,6 +72,13 @@ describe("regionWeight", () => {
 });
 
 describe("zoneFillAlpha", () => {
+  it("свежее сообщение видно и от одного источника", () => {
+    // Густота умножается на свежесть: произведение двух малых чисел давало
+    // почти прозрачное пятно, и трёхминутное сообщение было не видно.
+    const fresh = zoneFillAlpha(1) * freshness(ago(3 * 60 * 1000), NOW, "place", "uav");
+    expect(fresh).toBeGreaterThan(0.15);
+  });
+
   it("растёт с числом событий", () => {
     expect(zoneFillAlpha(6)).toBeGreaterThan(zoneFillAlpha(3));
     expect(zoneFillAlpha(3)).toBeGreaterThan(zoneFillAlpha(1));

@@ -1050,3 +1050,28 @@ def test_alarm_long_after_allclear_is_a_new_event():
     add(fuser, 5, "b", signal="allclear", severity=0)
     add(fuser, 40, "c")
     assert len(fuser.events) == 2
+
+
+def test_repost_does_not_refresh_the_event():
+    """Перепост не приносит нового и время события двигать не должен.
+
+    Сообщение, пересказанное через семь минут, делало событие «свежим» и
+    оставляло зону гореть на карте, хотя новых наблюдений не было.
+    """
+    fuser = Fuser()
+    text = (
+        "Краснофлотское, Петропавловский район, Воронежская область — БПЛА вдоль "
+        "границы с Верхнедонским районом Ростовской области и далее на Волгоградскую"
+    )
+    add(fuser, 0, "a", body=text)
+    add(fuser, 7, "b", body=text)
+    event = fuser.events[0]
+    assert event.independent_sources == 1
+    assert event.last_seen == datetime(2026, 7, 27, 10, 0, tzinfo=timezone.utc)
+
+
+def test_own_wording_does_refresh_the_event():
+    fuser = Fuser()
+    add(fuser, 0, "a", body="Краснофлотское, опасность по БПЛА")
+    add(fuser, 7, "b", body="Краснофлотское, работа ПВО, слышны взрывы")
+    assert fuser.events[0].last_seen == datetime(2026, 7, 27, 10, 7, tzinfo=timezone.utc)

@@ -19,8 +19,8 @@
  * аппарат пересекает за полчаса, регион за три часа.
  */
 export const ZONE_FADE_BY_LEVEL: Record<string, number> = {
-  place: 15 * 60 * 1000,
-  district: 30 * 60 * 1000,
+  place: 20 * 60 * 1000,
+  district: 35 * 60 * 1000,
   region: 165 * 60 * 1000
 };
 export const ZONE_FADE_MS = ZONE_FADE_BY_LEVEL.region;
@@ -56,11 +56,18 @@ export function fadeWindow(level?: string, threat?: string): number {
   return Math.max(ZONE_FADE_MIN_MS, base * (THREAT_SPEED[threat ?? "uav"] ?? 1));
 }
 
-/** Базовая густота по числу событий в зоне. */
+/**
+ * Базовая густота по числу событий в зоне.
+ *
+ * Нижняя ступень поднята: густота умножается на свежесть, и произведение
+ * двух малых чисел давало почти прозрачное пятно. Сообщение трёхминутной
+ * давности из одного источника было на карте не видно вовсе — а это ровно
+ * то, ради чего сюда приходят.
+ */
 export function zoneFillAlpha(active: number): number {
-  if (active >= 5) return 0.42;
-  if (active >= 3) return 0.3;
-  return 0.19;
+  if (active >= 5) return 0.46;
+  if (active >= 3) return 0.38;
+  return 0.3;
 }
 
 /**
@@ -72,7 +79,7 @@ export function zoneFillAlpha(active: number): number {
  * выглядел как горящий сейчас. Человеку важна разница между «пять минут» и
  * «час», а между «два часа» и «три» — уже нет.
  *
- * Для района и ударного дрона: 5 минут — 0.59, 15 — 0.29, 30 — 0.12.
+ * Для района и ударного дрона: 5 минут — 0.62, 15 — 0.35, 35 — 0.12.
  */
 export function freshness(
   lastActive: string | undefined,
