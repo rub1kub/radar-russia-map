@@ -1725,9 +1725,6 @@ export default function App() {
           events={radarState ? shownEvents : null}
           zones={Object.keys(paintedZones).length}
           quietRegions={quietRegions}
-          bridgeClosedAt={
-            radarState?.bridge?.closed ? radarState.bridge.at : null
-          }
           historyLabel={historyAt ? formatDayTime(historyAt) : null}
           moment={radarState?.generated_at ?? null}
         />

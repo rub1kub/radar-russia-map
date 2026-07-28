@@ -8,10 +8,8 @@ type Props = {
   moment: string | null;
   /** Сколько зон подсвечено на этот же момент. */
   zones: number;
-  /** В скольких регионах нет ни одного события. */
+  /** В скольких регионах нет ни одного события — для подсказки. */
   quietRegions: number | null;
-  /** Крымский мост перекрыт (null — данных нет или открыт). */
-  bridgeClosedAt: string | null;
   /** Показан архив, а не эфир. */
   historyLabel: string | null;
 };
@@ -40,7 +38,7 @@ const LEVELS = [
  * Шапка была почти пустой: заголовок слева, кнопка справа. Сводка по уровням
  * опасности — то, что человек хочет увидеть, не читая ленту.
  */
-export function TopbarStats({ events, zones, quietRegions, bridgeClosedAt, historyLabel, moment }: Props) {
+export function TopbarStats({ events, zones, quietRegions, historyLabel, moment }: Props) {
   if (!events) return null;
 
   const counts = LEVELS.map((level, index) => {
@@ -60,16 +58,6 @@ export function TopbarStats({ events, zones, quietRegions, bridgeClosedAt, histo
       {/* В режиме истории счётчики шли живые: над пустой архивной картой
           висело «77 79 135 в 237 зонах». Скриншот такого экрана
           неотличим от эфира, и это готовый повод для недоразумения. */}
-      {/* Мост показывается только перекрытым: открытый мост не новость.
-          Данные — официальный канал оперативной информации моста. */}
-      {!historyLabel && bridgeClosedAt ? (
-        <span
-          className="stat-bridge"
-          data-tip={`Движение по Крымскому мосту перекрыто. Официальный канал моста, ${formatDate(bridgeClosedAt)}`}
-        >
-          мост перекрыт
-        </span>
-      ) : null}
       {historyLabel ? (
         <span className="stat-archive" data-tip="Показан архив, а не текущая обстановка">
           архив · {historyLabel}
@@ -100,20 +88,12 @@ export function TopbarStats({ events, zones, quietRegions, bridgeClosedAt, histo
           ))}
           <span
             className="stat-zones"
-            data-tip="В скольких местах сейчас есть события. Одно событие поднимается по всей цепочке: посёлок, его район и область — это три зоны"
+            data-tip={`В скольких местах сейчас есть события; одно событие поднимается по цепочке: посёлок, район, область — это три зоны.${
+              quietRegions ? ` Спокойно в ${quietRegions} из 89 регионов` : ""
+            }`}
           >
             в {zones} {plural(zones, "зоне", "зонах", "зонах")}
           </span>
-          {/* Спокойные регионы — честное успокоение: карта показывает только
-              тревоги, и без этого числа кажется, что горит вся страна. */}
-          {quietRegions ? (
-            <span
-              className="stat-quiet-regions"
-              data-tip="Регионы, где сейчас нет ни одного активного события"
-            >
-              спокойно в {quietRegions}
-            </span>
-          ) : null}
         </>
       )}
     </div>
