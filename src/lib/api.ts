@@ -93,6 +93,10 @@ export type EventSource = {
   first_from_source: boolean;
   /** Дословный перепост уже принесённого текста: в подтверждение не идёт. */
   repost: boolean;
+  /** Канал той же сети, что и уже засчитанный: у сети один голос. */
+  clone: boolean;
+  /** Пошло ли сообщение в счёт независимых источников. */
+  counted: boolean;
   text: string;
 };
 
@@ -131,7 +135,7 @@ export const api = {
   historyDay: (day: string, signal?: AbortSignal) =>
     get<History>(`/api/v1/history?day=${encodeURIComponent(day)}`, signal),
   eventSources: (id: string, signal?: AbortSignal) =>
-    get<{ sources: EventSource[]; distinct: number }>(
+    get<{ sources: EventSource[]; counted: number }>(
       `/api/v1/events/${encodeURIComponent(id)}/sources`,
       signal
     ),

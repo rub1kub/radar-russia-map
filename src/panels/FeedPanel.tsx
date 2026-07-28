@@ -7,6 +7,7 @@ import { isBookmarked } from "../lib/bookmarks";
 import {
   durationMinutes,
   formatAge,
+  formatDayTime,
   formatDuration,
   formatMoment,
   formatSince,
@@ -54,6 +55,10 @@ const LEVELS = [
 
 const THREATS = ["uav", "fpv", "rocket", "kab", "bek", "aviation"];
 
+// Сколько карточек рисуем. Больше шестидесяти человек всё равно не читает,
+// а список ниже становится дороже самой карты.
+const FEED_LIMIT = 60;
+
 export function FeedPanel({
   events: allEvents,
   state,
@@ -97,6 +102,9 @@ export function FeedPanel({
   // показывала бы будущее относительно выбранного среза.
   const reference = referenceIso ?? state?.generated_at ?? new Date().toISOString();
 
+  // Событие могло получить последнее сообщение уже после просматриваемого
+  // момента. Тогда «сколько прошло» считать не от него, а от среза: иначе
+  // архивная карточка писала «только что» и делалась неотличимой от эфира.
   const clamp = (iso: string) => (new Date(iso) > new Date(reference) ? reference : iso);
 
   return (
@@ -169,18 +177,22 @@ export function FeedPanel({
               {/* Район бывает закрашен не своей тревогой, а областной. Тогда
                   «сообщений нет» — правда, но она не объясняет цвет, и
                   человек видит вместо ответа общий поток по стране. */}
+              {/* Район бывает закрашен не своей тревогой, а областной.
+                  «Здесь тихо» рядом с действующей тревогой читалось как
+                  отбой — то есть как разрешение выходить из дома. Пишем
+                  факт: своих сообщений нет, показана обстановка по области. */}
               <p className={zoneEvents.length ? undefined : "zone-card-quiet"}>
                 {!zoneEvents.length
                   ? "Сообщений нет"
                   : zoneEventsFromRegion
-                    ? `Здесь тихо. Показана обстановка по региону${
+                    ? `Своих сообщений нет. Ниже — обстановка по региону${
                         regionName ? `: ${regionName}` : ""
                       }`
                     : `${zoneEvents.length} ${plural(
                         zoneEvents.length,
-                        "активное сообщение",
-                        "активных сообщения",
-                        "активных сообщений"
+                        "событие здесь",
+                        "события здесь",
+                        "событий здесь"
                       )}`}
               </p>
             </div>
@@ -222,11 +234,17 @@ export function FeedPanel({
             ))}
           </div>
 
+          {/* Список обрезан до шестидесяти, а число сверху говорило про все
+              события: «283 сообщения», карточек 60, догрузки нет. Читатель
+              вправе знать, что видит не всё. */}
           <p className="feed-summary">
             <strong>{events.length}</strong>{" "}
-            {plural(events.length, "сообщение", "сообщения", "сообщений")}
+            {plural(events.length, "событие", "события", "событий")}
             {events.length !== totalEvents ? (
               <span className="feed-total"> из {totalEvents}</span>
+            ) : null}
+            {events.length > FEED_LIMIT ? (
+              <span className="feed-total"> · показаны первые {FEED_LIMIT}</span>
             ) : null}
           </p>
 
@@ -240,7 +258,7 @@ export function FeedPanel({
             </p>
           ) : (
             <ul className="event-feed">
-              {events.slice(0, 60).map((event) => (
+              {events.slice(0, FEED_LIMIT).map((event) => (
                 <li
                   key={event.id}
                   className={event.status === "fading" ? "is-fading" : undefined}
@@ -283,7 +301,12 @@ export function FeedPanel({
                         {durationMinutes(event.first_seen_at, clamp(event.last_seen_at)) >= 1
                           ? `шло ${formatDuration(event.first_seen_at, clamp(event.last_seen_at))} · `
                           : ""}
-                        {formatSince(clamp(event.last_seen_at), reference)}
+                        {/* В архиве «12 минут назад» — это относительно
+                            просматриваемого момента, а не сегодняшнего дня.
+                            Без оговорки лента читается как прямой эфир. */}
+                        {historyLabel
+                          ? `${formatDayTime(event.last_seen_at)}`
+                          : formatSince(clamp(event.last_seen_at), reference)}
                         {event.source_count > 1
                           ? ` · ${event.source_count} ${plural(
                               event.source_count,
@@ -318,24 +341,23 @@ export function FeedPanel({
                             "сообщений"
                           )}
                           {", засчитано "}
-                          {event.source_count}{" "}
-                          {plural(
-                            event.source_count,
-                            "независимый источник",
-                            "независимых источника",
-                            "независимых источников"
-                          )}
-                          : перепосты и повторы не в счёт
+                          {sources[event.id].filter((item) => item.counted).length}
+                          {". Не в счёт: "}
+                          {sources[event.id].filter((item) => item.repost).length} перепост,{" "}
+                          {sources[event.id].filter((item) => item.clone).length} из той же сети
                         </li>
                       ) : null}
                       {(sources[event.id] ?? []).map((item, index) => (
                         <li
                           key={`${item.source_key}-${index}`}
-                          className={item.repost ? "is-repost" : undefined}
+                          className={item.counted ? undefined : "is-repost"}
                         >
                           <span className="source-head">
                             <span className="source-name">{item.source_key}</span>
                             {item.repost ? <span className="source-tag">перепост</span> : null}
+                            {item.clone && !item.repost ? (
+                              <span className="source-tag">та же сеть</span>
+                            ) : null}
                             <span className="source-time">
                               {formatMoment(item.at, reference)}
                             </span>

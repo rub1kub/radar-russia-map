@@ -1596,7 +1596,11 @@ export default function App() {
           </div>
         </div>
 
-        <TopbarStats state={radarState} />
+        <TopbarStats
+          events={radarState ? shownEvents : null}
+          zones={Object.keys(paintedZones).length}
+          historyLabel={historyAt ? formatDayTime(historyAt) : null}
+        />
 
       </header>
 
@@ -1684,17 +1688,28 @@ export default function App() {
           </section>
 
           <section className="tool-section">
+            {/* Легенда обязана описывать то, что на карте, а не то, что
+                задумывалось. Прежняя обещала «чем насыщеннее цвет, тем
+                больше сообщений» и «незакрашенная зона — сообщений нет»;
+                после того как заливка стала выцветать со временем и
+                считаться по охвату, оба утверждения стали неправдой. */}
             <div className="severity-legend">
-              <span data-tip="Борт уже видят: фиксация, работа ПВО, взрыв. Самый достоверный уровень">
+              <span data-tip="Борт уже видят: фиксация, работа ПВО, взрыв. Это про то, ЧТО сообщили, а не про то, сколько лент это подтвердило">
                 <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Фиксация, взрыв, ПВО
               </span>
               <span data-tip="Объявлена тревога или звучит сирена, но подтверждённой фиксации нет">
                 <i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога
               </span>
-              <span data-tip="Предупреждение об опасности: борт может прилететь. Чем насыщеннее цвет, тем больше сообщений. Незакрашенная зона — сообщений нет">
+              <span data-tip="Предупреждение об опасности: борт может прилететь">
                 <i style={{ background: severityColor(5, 0.95) }} aria-hidden="true" />Опасность
               </span>
             </div>
+
+            <p className="legend-note">
+              Цвет тускнеет со временем: свежее сообщение горит ярко, к трём
+              часам гаснет. Область целиком закрашивается бледно — тревога
+              объявлена по ней, а не по каждому её району.
+            </p>
 
             <button className="ghost-button" type="button" onClick={resetMap}>
               <Home size={17} aria-hidden="true" />

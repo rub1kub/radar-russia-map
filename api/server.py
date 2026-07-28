@@ -44,12 +44,48 @@ from api.limits import (
 from api.geometry import router as geo_router
 from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
+from pipeline.incremental import resolve_networks
+from pipeline.provenance import counted, walk
 from pipeline.parse import strip_footer
 from pipeline.timeutil import MSK, now_utc, parse_utc
 
 # Тот же ключ перепоста, что и в слиянии: если считать его здесь по-своему,
 # пометка в списке разойдётся с числом под заголовком.
 repost_key = Fuser._repost_key
+
+
+def recount_sources(events: list[dict]) -> None:
+    """Проставить событиям число засчитанных источников."""
+    if not events:
+        return
+    ids = [event["id"] for event in events]
+    placeholders = ",".join("?" * len(ids))
+    rows = query(
+        f"""
+        SELECT es.event_id, es.source_key, es.role, es.contributed_at, m.text
+        FROM event_sources es
+        LEFT JOIN raw_messages m ON m.id = es.raw_message_id
+        WHERE es.event_id IN ({placeholders})
+        ORDER BY es.contributed_at, es.raw_message_id
+        """,
+        tuple(ids),
+    )
+    by_event: dict[str, list[dict]] = {}
+    for row in rows:
+        by_event.setdefault(row["event_id"], []).append(row)
+
+    networks = source_networks()
+    for event in events:
+        own = by_event.get(event["id"])
+        if own:
+            event["source_count"] = counted(own, networks)
+
+
+def source_networks() -> dict[str, str | None]:
+    """Сеть канала — та же, что видит конвейер при подсчёте голосов."""
+    with closing(sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)) as connection:
+        connection.row_factory = sqlite3.Row
+        return resolve_networks(connection)
 
 app = FastAPI(title="Radar API", version="1.0")
 
@@ -165,6 +201,10 @@ def build_state() -> dict:
         max(0, int((last_message - last_event).total_seconds())) if last_event else None
     )
     events = [row for row in event_rows(now - ACTIVE_WINDOW) if row["status"] != "resolved"]
+    # Число под заголовком считается ровно тем же правилом, что и список
+    # источников под ним. Раньше их считали в разных местах, и в шапке
+    # стояло 20 там, где в списке набиралось 16.
+    recount_sources(events)
 
     zone_counts: dict[str, dict] = {}
     for event in events:
@@ -276,32 +316,29 @@ def event_sources(event_id: str):
     if not rows:
         return {"event_id": event_id, "sources": []}
 
-    seen: set[str] = set()
-    # Кто сказал этот текст первым. Дословный перепост помечается, чтобы
-    # число под заголовком можно было проверить глазами: сообщений в списке
-    # всегда больше, чем засчитанных источников.
-    said_first: dict[str, str] = {}
-    items = []
-    for row in rows:
-        # repeat — повтор того же канала, в подтверждение он не идёт.
-        if row["role"] == "repeat":
-            continue
-        first_time = row["source_key"] not in seen
-        seen.add(row["source_key"])
-        stamp = repost_key(strip_footer(row["text"] or ""))
-        repost = stamp is not None and said_first.setdefault(stamp, row["source_key"]) != row["source_key"]
-        # Список собирается по времени вперёд — иначе перепостом окажется
-        # оригинал, — а наружу отдаётся в обратном порядке: свежее сверху.
-        items.append({
-            "source_key": row["source_key"],
-            "role": row["role"],
-            "at": row["contributed_at"],
-            "first_from_source": first_time,
-            "repost": repost,
-            "text": " ".join(row["text"].split())[:220],
-        })
+    networks = source_networks()
+    items = [
+        {
+            "source_key": item.source_key,
+            "role": item.role,
+            "at": item.at,
+            "first_from_source": item.first_from_source,
+            "repost": item.repost,
+            # Канал той же сети, что и уже засчитанный: голос у сети один.
+            "clone": item.clone,
+            "counted": item.counted,
+            "text": item.text,
+        }
+        for item in walk(rows, networks)
+    ]
+    # Список собирается по времени вперёд — иначе перепостом окажется
+    # оригинал, — а наружу отдаётся в обратном порядке: свежее сверху.
     items.reverse()
-    return {"event_id": event_id, "sources": items, "distinct": len(seen)}
+    return {
+        "event_id": event_id,
+        "sources": items,
+        "counted": sum(1 for item in items if item["counted"]),
+    }
 
 
 @app.get("/api/v1/history/days")
