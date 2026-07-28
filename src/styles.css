@@ -1073,6 +1073,27 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
 .history-body { padding: 8px 16px 14px; }
 
+.history-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: rgba(200, 208, 201, 0.55);
+  cursor: pointer;
+}
+
+.history-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(240, 245, 240, 0.9);
+}
+
 .history-controls {
   display: flex;
   align-items: center;

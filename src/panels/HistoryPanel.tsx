@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Clock, Pause, Play, Radio } from "lucide-react";
+import { Clock, Pause, Play, Radio, X } from "lucide-react";
 import type { HistoryDay } from "../lib/api";
 import { formatDayTime, plural, severityColor } from "../lib/format";
 import type { Slot } from "../lib/history";
@@ -196,6 +196,19 @@ export function HistoryPanel({
         <Clock size={16} aria-hidden="true" />
         <span>История</span>
       </button>
+
+      {/* Явный выход. Заголовок тоже закрывает, но кнопкой он не выглядит,
+          и рука ищет крестик там же, где он у всех остальных панелей. */}
+      {open ? (
+        <button
+          className="history-close"
+          type="button"
+          onClick={onToggleOpen}
+          aria-label="Закрыть историю"
+        >
+          <X size={15} aria-hidden="true" />
+        </button>
+      ) : null}
 
       {open ? (
         <div className="history-body">
