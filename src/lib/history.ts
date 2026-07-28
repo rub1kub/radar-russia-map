@@ -62,10 +62,16 @@ export function zoneCountsAt(
   const atMs = new Date(atIso).getTime();
 
   for (const event of eventsAt(events, atIso)) {
-    const fade = freshness(event.last_seen_at, atMs);
-    const weight = event.severity * fade;
-
     for (const zoneId of event.zone_path) {
+      // Скорость выцветания зависит от размера зоны и скорости цели:
+      // район борт пересекает за минуты, регион — за часы.
+      const fade = freshness(
+        event.last_seen_at,
+        atMs,
+        meta[zoneId]?.level,
+        event.threat_type
+      );
+      const weight = event.severity * fade;
       const bucket = counts[zoneId] ?? {
         active: 0,
         own: 0,

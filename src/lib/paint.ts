@@ -8,11 +8,42 @@
  * ярко, как минутная.
  */
 
-/** Через сколько заливка выцветает до минимума. Тот же порог, что в
- *  api/server.py: карта показывает, что происходит, а не что случалось. */
-export const ZONE_FADE_MS = 2 * 60 * 60 * 1000;
+/**
+ * За сколько цель успевает покинуть зону такого размера. Те же числа, что в
+ * api/server.py.
+ *
+ * Считается по тем аппаратам, которые здесь и летают: над нашей территорией
+ * это украинские дальнобойные, и ленты их прямо называют — Хорнет, Бобр,
+ * Дартс, Лютый, Рубака. Крейсерская у класса порядка 150 км/ч. Поперечник
+ * зон по справочнику: район в среднем 73 км, регион 416 км — значит район
+ * аппарат пересекает за полчаса, регион за три часа.
+ */
+export const ZONE_FADE_BY_LEVEL: Record<string, number> = {
+  place: 15 * 60 * 1000,
+  district: 30 * 60 * 1000,
+  region: 165 * 60 * 1000
+};
+export const ZONE_FADE_MS = ZONE_FADE_BY_LEVEL.region;
+
+/** Поправка на скорость цели относительно ударного дрона. */
+export const THREAT_SPEED: Record<string, number> = {
+  rocket: 0.2,
+  aviation: 0.3,
+  kab: 0.4,
+  uav: 1,
+  fpv: 1,
+  bek: 2
+};
+
 /** Ниже этого зона не гаснет: событие ещё не закрыто. */
 export const ZONE_FADE_FLOOR = 0.12;
+/** Меньше этого срок не берём: сообщение и так приходит с задержкой. */
+export const ZONE_FADE_MIN_MS = 8 * 60 * 1000;
+
+export function fadeWindow(level?: string, threat?: string): number {
+  const base = ZONE_FADE_BY_LEVEL[level ?? "district"] ?? ZONE_FADE_BY_LEVEL.district;
+  return Math.max(ZONE_FADE_MIN_MS, base * (THREAT_SPEED[threat ?? "uav"] ?? 1));
+}
 
 /** Базовая густота по числу событий в зоне. */
 export function zoneFillAlpha(active: number): number {
@@ -30,13 +61,18 @@ export function zoneFillAlpha(active: number): number {
  * выглядел как горящий сейчас. Человеку важна разница между «пять минут» и
  * «час», а между «два часа» и «три» — уже нет.
  *
- * Пять минут — 0.80, полчаса — 0.50, час — 0.29, полтора — 0.13.
+ * Для района и ударного дрона: 5 минут — 0.59, 15 — 0.29, 30 — 0.12.
  */
-export function freshness(lastActive: string | undefined, nowMs: number): number {
+export function freshness(
+  lastActive: string | undefined,
+  nowMs: number,
+  level?: string,
+  threat?: string
+): number {
   if (!lastActive) return 1;
   const age = nowMs - new Date(lastActive).getTime();
   if (!Number.isFinite(age) || age <= 0) return 1;
-  const share = Math.min(1, age / ZONE_FADE_MS);
+  const share = Math.min(1, age / fadeWindow(level, threat));
   return Math.max(ZONE_FADE_FLOOR, 1 - share ** 0.5);
 }
 

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from api.server import ZONE_FADE, zone_fade
+from api.server import ZONE_FADE_BY_LEVEL, fade_window, zone_fade
 
 NOW = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
 
@@ -30,17 +30,40 @@ def test_fresh_event_burns_at_full():
     assert zone_fade(ago(seconds=0), NOW) == 1.0
 
 
-def test_hour_old_is_nearly_out():
-    """За час без нового сообщения зона догорает до трети.
+def test_district_goes_out_in_half_an_hour():
+    """Борт пересекает средний район за полчаса.
 
-    Линейная убыль была слишком щадящей: за пятьдесят минут район терял
-    четверть яркости и выглядел как горящий сейчас.
+    Считано по тем аппаратам, что здесь летают: украинские дальнобойные
+    Хорнет, Бобр, Дартс, Лютый — крейсер порядка 150 км/ч, район поперёк
+    73 км. Через полчаса без нового сообщения фиксация означает не «он
+    здесь», а «он был здесь и ушёл».
     """
-    assert zone_fade(ago(hours=1), NOW) == pytest.approx(0.29, abs=0.02)
+    assert zone_fade(ago(minutes=5), NOW, "district", "uav") == pytest.approx(0.59, abs=0.03)
+    assert zone_fade(ago(minutes=15), NOW, "district", "uav") == pytest.approx(0.29, abs=0.03)
+    assert zone_fade(ago(minutes=30), NOW, "district", "uav") == 0.12
 
 
-def test_half_hour_is_half():
-    assert zone_fade(ago(minutes=30), NOW) == pytest.approx(0.5, abs=0.02)
+def test_region_holds_much_longer_than_district():
+    """Регион поперёк 400 км — его пересекают часа за два, а не за двадцать минут."""
+    assert (zone_fade(ago(minutes=30), NOW, "region", "uav")
+            > zone_fade(ago(minutes=30), NOW, "district", "uav"))
+
+
+def test_rocket_leaves_the_zone_faster_than_a_drone():
+    """«Нептун» идёт вшестеро быстрее дрона и покидает зону во столько же раз раньше."""
+    assert (zone_fade(ago(minutes=6), NOW, "district", "rocket")
+            < zone_fade(ago(minutes=6), NOW, "district", "uav"))
+
+
+def test_naval_drone_lingers():
+    """Безэкипажный катер ползёт по морю и висит в зоне дольше всех."""
+    assert (zone_fade(ago(minutes=20), NOW, "district", "bek")
+            > zone_fade(ago(minutes=20), NOW, "district", "uav"))
+
+
+def test_window_never_shorter_than_the_reporting_lag():
+    """Сообщение и так приходит с задержкой — меньше восьми минут не берём."""
+    assert fade_window("place", "rocket") == 8 * 60
 
 
 def test_first_minutes_matter_most():
@@ -79,6 +102,8 @@ def test_when_everything_is_old_the_strongest_still_wins_but_dim():
     assert fade < 0.4
 
 
-def test_fade_window_is_two_hours():
-    """Карта показывает, что происходит, а не что случалось."""
-    assert ZONE_FADE == timedelta(hours=2)
+def test_windows_follow_zone_size():
+    """Срок берётся из размера зоны, а не из круглого числа часов."""
+    assert (ZONE_FADE_BY_LEVEL["place"]
+            < ZONE_FADE_BY_LEVEL["district"]
+            < ZONE_FADE_BY_LEVEL["region"])

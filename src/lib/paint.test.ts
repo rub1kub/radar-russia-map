@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { freshness, regionWeight, ZONE_FADE_MS, zoneFillAlpha } from "./paint";
+import { fadeWindow, freshness, regionWeight, ZONE_FADE_MS, zoneFillAlpha } from "./paint";
 
 const NOW = new Date("2026-07-28T12:00:00Z").getTime();
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -9,12 +9,27 @@ describe("freshness", () => {
     expect(freshness(ago(0), NOW)).toBe(1);
   });
 
-  it("час давности догорает до трети", () => {
-    expect(freshness(ago(60 * 60 * 1000), NOW)).toBeCloseTo(0.29, 2);
+  it("район гаснет за полчаса: борт его за это время пересекает", () => {
+    // Украинские дальнобойные — Хорнет, Бобр, Дартс, Лютый — идут около
+    // 150 км/ч, район поперёк 73 км.
+    expect(freshness(ago(15 * 60 * 1000), NOW, "district", "uav")).toBeCloseTo(0.29, 2);
+    expect(freshness(ago(30 * 60 * 1000), NOW, "district", "uav")).toBe(0.12);
   });
 
-  it("полчаса — половина яркости", () => {
-    expect(freshness(ago(30 * 60 * 1000), NOW)).toBeCloseTo(0.5, 2);
+  it("регион держится дольше района: он вшестеро шире", () => {
+    expect(freshness(ago(30 * 60 * 1000), NOW, "region", "uav")).toBeGreaterThan(
+      freshness(ago(30 * 60 * 1000), NOW, "district", "uav")
+    );
+  });
+
+  it("ракета покидает зону быстрее дрона", () => {
+    expect(freshness(ago(6 * 60 * 1000), NOW, "district", "rocket")).toBeLessThan(
+      freshness(ago(6 * 60 * 1000), NOW, "district", "uav")
+    );
+  });
+
+  it("срок не короче задержки самого сообщения", () => {
+    expect(fadeWindow("place", "rocket")).toBe(8 * 60 * 1000);
   });
 
   it("первые минуты значат больше поздних", () => {
