@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { fadeWindow, freshness, regionWeight, ZONE_FADE_MS, zoneFillAlpha } from "./paint";
+import {
+  fadeWindow,
+  freshness,
+  REGION_NEAR_WASH,
+  regionWeight,
+  ZONE_FADE_MS,
+  zoneFillAlpha
+} from "./paint";
 
 const NOW = new Date("2026-07-28T12:00:00Z").getTime();
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -68,5 +75,21 @@ describe("zoneFillAlpha", () => {
   it("растёт с числом событий", () => {
     expect(zoneFillAlpha(6)).toBeGreaterThan(zoneFillAlpha(3));
     expect(zoneFillAlpha(3)).toBeGreaterThan(zoneFillAlpha(1));
+  });
+});
+
+describe("область вблизи — фон, а не сигнал", () => {
+  it("собственная заливка области приглушается заметно", () => {
+    // Погасший район выглядел таким же красным, как горящий рядом: видно
+    // было не его, а область поверх.
+    expect(REGION_NEAR_WASH).toBeLessThan(0.5);
+    expect(REGION_NEAR_WASH).toBeGreaterThan(0.15);
+  });
+
+  it("район в полную силу перебивает фон области", () => {
+    const district = zoneFillAlpha(4) * freshness(ago(2 * 60 * 1000), NOW, "district", "uav");
+    const regionWash =
+      zoneFillAlpha(8) * freshness(ago(60 * 60 * 1000), NOW, "region", "uav") * REGION_NEAR_WASH;
+    expect(district).toBeGreaterThan(regionWash);
   });
 });

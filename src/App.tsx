@@ -45,7 +45,7 @@ import {
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
 import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
-import { regionWeight, zoneFillAlpha } from "./lib/paint";
+import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
 import type { HistoryDay } from "./lib/api";
 import {
@@ -281,9 +281,14 @@ function createRegionStyle(
             zone.severity,
             zoneFillAlpha(zone.active) * regionWeight(zone.own, zone.active) * zone.fade
           )
-        // Вблизи регион красится только своим уровнем: точечное красное уже
-        // нарисовано районом поверх, и растягивать его на всю область нельзя.
-        : severityColor(zone.own_severity, zoneFillAlpha(zone.own) * zone.own_fade)
+        // Вблизи регион красится только своим уровнем и вполсилы: здесь
+        // сигнал — район, а область только фон. В полную силу этот фон
+        // забивал всё под собой, и погасший район выглядел таким же
+        // красным, как горящий рядом.
+        : severityColor(
+            zone.own_severity,
+            zoneFillAlpha(zone.own) * zone.own_fade * REGION_NEAR_WASH
+          )
       : selected
         ? "rgba(228, 178, 93, 0.055)"
         : "rgba(255, 255, 255, 0.006)";
