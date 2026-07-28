@@ -318,22 +318,29 @@ function createDistrictStyle(
       // Уровень берётся от того же события, что и свежесть: иначе двухчасовая
       // фиксация красила бы район в полный красный, стоило прийти любому
       // новому сообщению по соседству.
-      return new Style({
-        fill: new Fill({
-          color: severityColor(zone.severity, zoneFillAlpha(zone.active) * zone.fade)
-        }),
-        stroke: new Stroke({
-          color: severityColor(zone.severity, 0.62 * zone.fade),
-          width: 1
+      const painted = [
+        new Style({
+          fill: new Fill({
+            color: severityColor(zone.severity, zoneFillAlpha(zone.active) * zone.fade)
+          }),
+          stroke: new Stroke({
+            color: severityColor(zone.severity, 0.62 * zone.fade),
+            width: 1
+          })
         })
-      });
+      ];
+      // Выбранный район с событиями до этой проверки не доходил вовсе:
+      // ветка с заливкой возвращалась раньше. Человек нажимал на район,
+      // не видел его границы и решал, что ему показали соседей.
+      if (selected) painted.push(SELECTION_OUTLINE);
+      return painted;
     }
 
     if (selected) {
-      return new Style({
-        fill: new Fill({ color: "rgba(246, 199, 61, 0.09)" }),
-        stroke: new Stroke({ color: "rgba(246, 199, 61, 0.7)", width: 1.5 })
-      });
+      return [
+        new Style({ fill: new Fill({ color: "rgba(246, 199, 61, 0.09)" }) }),
+        SELECTION_OUTLINE
+      ];
     }
 
     // Пустые районы не рисуются, пока карта работает на уровне регионов:
@@ -354,6 +361,12 @@ function createDistrictStyle(
     });
   };
 }
+
+// Обводка выбранной зоны. Рисуется поверх заливки, поэтому вынесена
+// отдельно: иначе выбранный район с событиями оставался без границы.
+const SELECTION_OUTLINE = new Style({
+  stroke: new Stroke({ color: "rgba(255, 248, 220, 0.95)", width: 2.6 })
+});
 
 // Стиль без отрисовки: возвращать undefined нельзя — слой всё равно должен
 // оставаться кликабельным для выбора района.

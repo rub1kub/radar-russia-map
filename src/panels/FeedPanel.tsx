@@ -315,7 +315,16 @@ export function FeedPanel({
                       aria-hidden="true"
                     />
                     <span className="event-body">
-                      <span className="event-title">{event.place_name}</span>
+                      <span className="event-title">
+                        {event.place_name}
+                        {/* Станица без района читается как чужая: человек
+                            выбрал Динской район, увидел «Пластуновскую» и
+                            решил, что ему показали соседей. Место обязано
+                            называть, где оно. */}
+                        {event.parent_name ? (
+                          <span className="event-where">{event.parent_name}</span>
+                        ) : null}
+                      </span>
                       <span className="event-meta">
                         {event.status === "resolved"
                           ? `Отбой · ${signalLabel(event.signal_type).toLowerCase()}`

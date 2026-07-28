@@ -16,6 +16,8 @@ export type RadarEvent = {
   zone_id: string;
   zone_path: string[];
   place_name: string;
+  /** Где это место: район для НП, область для района. */
+  parent_name?: string | null;
   zone_level: string;
   lat: number | null;
   lon: number | null;

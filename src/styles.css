@@ -980,6 +980,13 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
 .event-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 .event-title { font-size: 13.5px; font-weight: 600; color: rgba(238, 242, 236, 0.96); }
+
+.event-where {
+  margin-left: 6px;
+  font-size: 11.5px;
+  font-weight: 450;
+  color: rgba(170, 180, 172, 0.62);
+}
 .event-meta  { font-size: 11.5px; color: rgba(196, 204, 197, 0.75); }
 .event-since { font-size: 11px; color: rgba(170, 180, 172, 0.6); }
 

@@ -187,8 +187,10 @@ def event_rows(since: datetime, limit: int = 400) -> list[dict]:
                e.signal_type, e.threat_type, e.severity, e.confidence, e.source_count,
                e.zone_id, e.zone_path, e.lat, e.lon, e.accuracy_m,
                e.direction_deg, e.target_count,
-               z.name_ru AS place_name, z.level AS zone_level
+               z.name_ru AS place_name, z.level AS zone_level,
+               parent.name_ru AS parent_name
         FROM events e JOIN zones z ON z.id = e.zone_id
+        LEFT JOIN zones parent ON parent.id = z.parent_id
         WHERE e.last_seen_at >= ?
         ORDER BY e.last_seen_at DESC LIMIT ?
         """,
