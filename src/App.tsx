@@ -43,6 +43,7 @@ import {
   threatLabel
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
+import { zoneFeed } from "./lib/feed";
 import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
 import { regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
@@ -651,6 +652,8 @@ export default function App() {
   const [selected, setSelected] = useState<SelectedObject>(emptySelected);
   // source_id полигона региона, внутри которого лежит выбранный район.
   const [selectedRegionPolygon, setSelectedRegionPolygon] = useState<string | null>(null);
+  // Значок под курсором и его место на экране — для всплывающей подсказки.
+  const [iconHint, setIconHint] = useState<{ feature: FeatureLike; pixel: number[] } | null>(null);
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<LayerState>({
@@ -811,9 +814,15 @@ export default function App() {
   /** Полигон региона, внутри которого лежит выбранный район. */
   const regionPolygonOf = useCallback((feature: FeatureLike): string | null => {
     if (String(feature.get("kind") ?? "") === "region") return String(feature.get("id") ?? "");
+    // Родителя записал справочник — он его знает точно. Поиск геометрией
+    // оставлен запасным: у изогнутого района любая пробная точка норовит
+    // попасть в соседний субъект, и лента показывала обстановку соседей.
+    const declared = feature.get("region");
+    if (declared) return String(declared);
+
     const geometry = (feature as Feature<Geometry>).getGeometry?.();
     if (!geometry) return null;
-    const probe = getCenter(geometry.getExtent());
+    const probe = geometry.getClosestPoint(getCenter(geometry.getExtent()));
     const source = regionLayerRef.current?.getSource();
     if (!source) return null;
     let found: string | null = null;
@@ -960,6 +969,14 @@ export default function App() {
           id: event.id,
           iconKind: iconKindFor(event.signal_type, event.threat_type),
           severity: event.severity,
+          // Подпись подсказки: значок стоит в точке события, а точка
+          // события — центр его зоны, и в тихом районе рядом он выглядит
+          // необъяснимо. Подсказка отвечает, чей он и когда поставлен.
+          title: event.place_name,
+          signal: signalLabel(event.signal_type),
+          threat: event.threat_type === "unknown" ? "" : threatLabel(event.threat_type),
+          sources: event.source_count,
+          at: event.last_seen_at,
           ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime())
         })
       );
@@ -1295,6 +1312,18 @@ export default function App() {
       });
       const target = map.getTargetElement();
       if (target) target.style.cursor = hit ? "pointer" : "";
+
+      // Значок стоит в центре своей зоны, а не там, где борт: в тихом
+      // районе по соседству он выглядел необъяснимо. Подсказка отвечает,
+      // чей это значок и когда он поставлен.
+      let icon: FeatureLike | null = null;
+      map.forEachFeatureAtPixel(
+        event.pixel,
+        (feature) => { icon = feature; return true; },
+        { hitTolerance: 6, layerFilter: (layer) => layer === eventIconLayer }
+      );
+      setIconHint(icon ? { feature: icon, pixel: event.pixel } : null);
+      if (icon && target) target.style.cursor = "pointer";
     });
 
     map.on("singleclick", (event) => {
@@ -1404,27 +1433,21 @@ export default function App() {
     return list;
   }, [shownEvents, onlyVisible, viewExtent, levelFilter, threatFilter]);
 
-  const selectedZoneEvents = useMemo(() => {
-    if (selected.id === "none" || selected.kind === "place") return [];
-    const zoneId = polygonToZoneRef.current.get(selected.id);
-    if (!zoneId) return [];
-    const own = feedEvents.filter((event) => event.zone_path.includes(zoneId));
-    if (own.length || !selectedRegionPolygon) return own;
-    // В районе тихо, а закрашен он потому, что тревога объявлена по всей
-    // области. Показываем её, а не всю страну: человек нажал на район,
-    // чтобы понять этот цвет, а не чтобы получить общий поток.
-    const regionZone = polygonToZoneRef.current.get(selectedRegionPolygon);
-    if (!regionZone) return own;
-    return feedEvents.filter((event) => event.zone_path.includes(regionZone));
+  // Что показать в ленте при выбранном месте. Правило вынесено в lib/feed.ts
+  // и покрыто тестами: здесь оно трижды разошлось с ожиданием.
+  const selectedFeed = useMemo(() => {
+    if (selected.id === "none" || selected.kind === "place") {
+      return { events: [] as RadarEvent[], fromRegion: false };
+    }
+    const zoneId = polygonToZoneRef.current.get(selected.id) ?? null;
+    const regionZone = selectedRegionPolygon
+      ? polygonToZoneRef.current.get(selectedRegionPolygon) ?? null
+      : null;
+    return zoneFeed(feedEvents, zoneId, regionZone);
   }, [feedEvents, selected, selectedRegionPolygon]);
 
-  // Показана ли в карточке обстановка соседей по области, а не самого места.
-  const zoneEventsFromRegion = useMemo(() => {
-    if (selected.id === "none" || selected.kind !== "district") return false;
-    const zoneId = polygonToZoneRef.current.get(selected.id);
-    if (!zoneId) return false;
-    return !feedEvents.some((event) => event.zone_path.includes(zoneId));
-  }, [feedEvents, selected]);
+  const selectedZoneEvents = selectedFeed.events;
+  const zoneEventsFromRegion = selectedFeed.fromRegion;
 
   const selectedRegionName = useMemo(() => {
     if (!selectedRegionPolygon) return null;
@@ -1714,6 +1737,38 @@ export default function App() {
 
         <section className="map-panel" aria-label="Интерактивная карта">
           <div className="map-surface" ref={mapNodeRef} />
+
+          {/* Подсказка к значку. Значок стоит в центре своей зоны, а не там,
+              где борт: без подписи он выглядит меткой соседнего района, в
+              котором «сообщений нет». */}
+          {iconHint ? (
+            <div
+              className="icon-hint"
+              style={{ left: iconHint.pixel[0], top: iconHint.pixel[1] }}
+              role="tooltip"
+            >
+              <b>{asText(iconHint.feature.get("title"), "—")}</b>
+              <span>
+                {asText(iconHint.feature.get("signal"))}
+                {iconHint.feature.get("threat") ? ` · ${asText(iconHint.feature.get("threat"))}` : ""}
+              </span>
+              <span className="icon-hint-foot">
+                {formatMoment(
+                  asText(iconHint.feature.get("at")),
+                  historyAt ?? radarState?.generated_at ?? new Date().toISOString()
+                )}
+                {Number(iconHint.feature.get("sources")) > 1
+                  ? ` · ${Number(iconHint.feature.get("sources"))} ${plural(
+                      Number(iconHint.feature.get("sources")),
+                      "источник",
+                      "источника",
+                      "источников"
+                    )}`
+                  : ""}
+              </span>
+            </div>
+          ) : null}
+
           {loading ? <div className="map-loader">Загрузка карты…</div> : null}
           {error ? <div className="map-error">{error}</div> : null}
 

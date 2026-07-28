@@ -260,3 +260,27 @@ def test_district_of_named_place_matches_it(geocoder):
         chain = geocoder.chain(resolved[0].zone_id)
         names = [geocoder.zones[zid]["name_ru"] for zid in chain]
         assert district in names, f"{place}: {names}"
+
+
+def test_every_district_knows_its_region(geocoder):
+    """Родитель района нужен карте, а не только разбору.
+
+    В тихом районе карта не знает его зоны — соответствие полигонов зонам
+    строится из счётчиков обстановки. Родитель, записанный в файл полигонов,
+    и позволяет показать обстановку по области вместо ленты всей страны.
+    """
+    orphans = [
+        zone["name_ru"] for zone in geocoder.zones.values()
+        if zone["level"] == "district" and not zone["parent_id"]
+    ]
+    assert orphans == []
+
+
+def test_district_polygons_carry_their_region():
+    import json
+    from pipeline.db import ROOT
+
+    payload = json.loads((ROOT / "public" / "data" / "districts.json").read_text(encoding="utf-8"))
+    features = payload["features"]
+    without = [f for f in features if not (f.get("properties") or {}).get("region")]
+    assert not without, f"без региона: {len(without)} из {len(features)}"

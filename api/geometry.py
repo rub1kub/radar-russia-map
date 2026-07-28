@@ -214,6 +214,10 @@ def _slim_feature(feature: dict, precision: int, level: str | None) -> dict | No
     properties = feature.get("properties") or {}
     source_id = str(properties.get("id") or feature.get("id") or "")
     slim = {"id": source_id, "name": properties.get("name")}
+    # Родительский регион едет вместе с районом: по нему лента находит, что
+    # показать, когда в самом районе тихо, а закрашен он областной тревогой.
+    if properties.get("region"):
+        slim["region"] = properties["region"]
     if level:
         # При levels=district,region иначе не разобрать, что чем красить.
         slim["level"] = level

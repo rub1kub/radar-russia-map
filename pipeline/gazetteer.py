@@ -42,25 +42,38 @@ def load_polygons(path: Path) -> list[dict]:
     return [row for row in rows if row["name"]]
 
 
-def write_district_names(path: Path, districts: list[dict]) -> int:
-    """Вернуть исправленные имена в файл полигонов.
+def write_district_facts(path: Path, districts: list[dict]) -> int:
+    """Вернуть в файл полигонов исправленное имя и родительский регион.
 
     Подпись района на карте берётся из districts.json, а не из базы: клиент
     красит и подписывает полигон тем, что приехало с геометрией. Если
     исправить имя только в справочнике, лента скажет «Анапа», а карта под
     курсором по-прежнему «городской округ Новороссий».
 
+    Родитель нужен по той же причине. В тихом районе карта не знает его
+    зоны — соответствие полигонов зонам строится из счётчиков обстановки, а
+    там только те зоны, где что-то происходит. Без родителя клиенту
+    приходилось искать регион геометрией, по точке внутри района, и у
+    изогнутых районов эта точка попадала в соседний субъект. Справочник
+    родителя знает точно, поэтому пусть он его и запишет.
+
     Порядок в конвейере поэтому такой: prepare:data собирает геометрию,
-    pipeline.gazetteer правит имена здесь и в базе разом.
+    pipeline.gazetteer правит имена и родителей здесь и в базе разом.
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
-    by_source = {district["source_id"]: district["name"] for district in districts}
+    facts = {
+        district["source_id"]: (district["name"], district.get("region_source_id"))
+        for district in districts
+    }
     changed = 0
     for feature in payload["features"]:
         properties = feature.get("properties") or {}
-        name = by_source.get(str(properties.get("id") or ""))
+        name, region = facts.get(str(properties.get("id") or ""), (None, None))
         if name and name != properties.get("name"):
             properties["name"] = name
+            changed += 1
+        if region and region != properties.get("region"):
+            properties["region"] = region
             changed += 1
     path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                     encoding="utf-8")
@@ -161,6 +174,12 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
         return region_ids[min(close, key=lambda index: regions[index]["geom"].area)]
 
     district_region = [find_region_by_overlap(district["geom"]) for district in districts]
+    # Полигон региона рядом с его зоной: клиенту нужен именно source_id,
+    # потому что районы и регионы он связывает по идентификаторам полигонов.
+    region_polygon = {zone_id: region["source_id"]
+                      for zone_id, region in zip(region_ids, regions)}
+    for index, district in enumerate(districts):
+        district["region_source_id"] = region_polygon.get(district_region[index] or "")
 
     # Опознание в два прохода. Первый идёт по составу НП и потому надёжен
     # без всяких рамок; он же и показывает, какому коду ОКТМО отвечает наш
@@ -210,9 +229,8 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
             districts[index]["name"] = entry.name
             renamed += 1
 
-    if renamed:
-        touched = write_district_names(DATA / "districts.json", districts)
-        print(f"подписей полигонов обновлено: {touched}")
+    touched = write_district_facts(DATA / "districts.json", districts)
+    print(f"полей в файле полигонов обновлено: {touched}")
 
     district_ids: list[str] = []
     for index, district in enumerate(districts):
