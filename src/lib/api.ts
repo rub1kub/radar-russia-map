@@ -120,6 +120,8 @@ export type History = {
 };
 
 export type HistoryDay = {
+  /** Сколько каналов отчитывалось в этот день: по нему видно, шёл ли сбор. */
+  sources?: number;
   day: string;
   events: number;
   confirmed: number;

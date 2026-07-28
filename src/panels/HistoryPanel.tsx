@@ -101,18 +101,29 @@ function timeTicks(slots: Slot[]): Array<{ at: number; label: string }> {
   return out;
 }
 
-/** Отметки месяцев под полосой дней: подписываем там, где месяц сменился. */
+/**
+ * Отметки месяцев под полосой дней: подписываем там, где месяц сменился.
+ *
+ * Соседние подписи разводятся по ширине: после того как из полосы убрали
+ * дни без сбора, апрель и июль встали вплотную, и «апр» с «июл» слиплись
+ * в нечитаемое «икатр».
+ */
+const TICK_GAP = 0.12;
+
 function monthTicks(days: HistoryDay[]): Array<{ at: number; label: string }> {
   const out: Array<{ at: number; label: string }> = [];
   let previous = "";
+  let lastAt = -1;
   days.forEach((entry, index) => {
     const month = entry.day.slice(5, 7);
     if (month === previous) return;
     previous = month;
-    out.push({
-      at: days.length > 1 ? index / (days.length - 1) : 0,
-      label: MONTHS[Number(month) - 1] ?? month
-    });
+    const at = days.length > 1 ? index / (days.length - 1) : 0;
+    // Слиплись — оставляем поздний: он занимает полосу дальше вправо, а
+    // ранний это хвост в один-два дня.
+    if (lastAt >= 0 && at - lastAt < TICK_GAP) out.pop();
+    lastAt = at;
+    out.push({ at, label: MONTHS[Number(month) - 1] ?? month });
   });
   return out;
 }
@@ -202,7 +213,11 @@ export function HistoryPanel({
                     "событие",
                     "события",
                     "событий"
-                  )}, подтверждено ${entry.confirmed}`}
+                  )}, подтверждено ${entry.confirmed}${
+                    entry.sources ? `, отчитывалось ${entry.sources} ${plural(
+                      entry.sources, "канал", "канала", "каналов"
+                    )}` : ""
+                  }`}
                   aria-label={`${entry.day}, событий ${entry.events}`}
                 >
                   <i

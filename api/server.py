@@ -101,6 +101,9 @@ ACTIVE_WINDOW = timedelta(hours=6)
 # Сколько отбой остаётся на виду после закрытия события.
 RESOLVED_WINDOW = timedelta(minutes=30)
 
+# Сколько каналов должно было отчитаться, чтобы день считался собранным.
+MIN_DAY_SOURCES = 5
+
 # Через сколько зона перестаёт гореть, если сообщений больше нет.
 #
 # Срок не выдуман, а посчитан: борт летит и зону покидает. Считать надо по
@@ -443,20 +446,29 @@ def event_sources(event_id: str):
 
 @app.get("/api/v1/history/days")
 def history_days(limit: int = Query(60, ge=1, le=400)):
-    """Дни, за которые есть события, с плотностью.
+    """Дни, за которые сбор действительно шёл.
 
-    Плотность нужна интерфейсу: корпус растянут на месяцы, но до недавнего
-    времени в нём единицы событий в сутки. Без подсказки человек будет
-    перематывать пустоту.
+    Плотность нужна интерфейсу: корпус растянут на месяцы, но перематывать
+    в нём почти нечего. Из 164 дней в базе у 137 отчитывался один-два
+    канала — это не «тихий день», а обрывки чужой истории, подобранные при
+    первом знакомстве с лентой. Полоса из таких дней обещает архив, которого
+    нет, и человек мотает в пустоту.
+
+    Порог по числу отчитавшихся каналов, а не по числу событий: спокойный
+    день при работающем сборе — это правда о дне, а пять событий от одного
+    канала — правда только об этом канале.
     """
     rows = query(
-        """
-        SELECT date(datetime(first_seen_at, '+3 hours')) AS day,
-               COUNT(*) AS events,
-               MAX(severity) AS max_severity,
-               SUM(CASE WHEN source_count > 1 THEN 1 ELSE 0 END) AS confirmed
-        FROM events
+        f"""
+        SELECT date(datetime(e.first_seen_at, '+3 hours')) AS day,
+               COUNT(DISTINCT e.id) AS events,
+               MAX(e.severity) AS max_severity,
+               COUNT(DISTINCT es.source_key) AS sources,
+               COUNT(DISTINCT CASE WHEN e.source_count > 1 THEN e.id END) AS confirmed
+        FROM events e
+        LEFT JOIN event_sources es ON es.event_id = e.id
         GROUP BY day
+        HAVING sources >= {MIN_DAY_SOURCES}
         ORDER BY day DESC
         LIMIT ?
         """,
