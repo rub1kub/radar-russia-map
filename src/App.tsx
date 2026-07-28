@@ -44,7 +44,7 @@ import {
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
-import { activeAt, buildSlots, zoneCountsAt } from "./lib/history";
+import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
 import type { HistoryDay } from "./lib/api";
@@ -804,10 +804,16 @@ export default function App() {
     if (!historyEvents || slots.length === 0) return [];
     return slots.map((slot) => {
       const at = new Date(slot.at).getTime();
+      // Диаграмма считает события, по которым в этот срез шли сообщения,
+      // а не «ещё не закрытые». Административное правило трёх часов
+      // размазывало каждое событие на три лишних столбика, и хвост ночного
+      // налёта выглядел как атака прямо сейчас — при пустом эфире.
+      const from = at - SLOT_MS;
       let count = 0;
       let severity = 0;
       for (const event of historyEvents) {
-        if (!activeAt(event, at)) continue;
+        if (new Date(event.first_seen_at).getTime() > at) continue;
+        if (new Date(event.last_seen_at).getTime() < from) continue;
         count += 1;
         severity = Math.max(severity, event.severity);
       }
@@ -958,12 +964,13 @@ export default function App() {
 
   const shownEvents = useMemo(() => {
     if (inHistory && historyEvents && historyAt) {
-      const atMs = new Date(historyAt).getTime();
-      // Без среза: карта обязана показать всё, что было в этот момент.
-      // Шестьдесят — это предел списка в ленте, и он режется там же.
-      return historyEvents
-        .filter((event) => new Date(event.first_seen_at).getTime() <= atMs)
-        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs);
+      // Тем же правилом, что и заливка: событие живёт три часа после
+      // последнего сообщения, как в конвейере. Прежний фильтр проверял
+      // только начало и явный отбой, а отбой есть у меньшинства событий —
+      // и фиксация 03:43 стояла значком на карте в 20:00, потому что её
+      // никто не «закрыл». Срезов больше нет: карта показывает всё, что
+      // было живо в этот момент, предел в шестьдесят — забота ленты.
+      return eventsAt(historyEvents, historyAt);
     }
     return radarState?.events ?? [];
   }, [inHistory, historyEvents, historyAt, radarState]);
