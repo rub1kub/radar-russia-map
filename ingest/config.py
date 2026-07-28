@@ -300,6 +300,29 @@ SOURCES: list[Source] = [
     Source("rodnaya_ryazan", "rodnaya_ryazan", "РОДНАЯ РЯЗАНЬ | РАДАР", "regional", 553, region="ryazan", network="rodnoy"),
     Source("penzaradar", "PenzaRadar", "Радар ПЕНЗА‼️", "regional", 1805, region="penza", network=None),
     Source("radar_77_76_37_44_52_33_35", "radar_77_76_37_44_52_33_35", "РАДАР Москва. Ярославль. Иваново. Кострома. Ни", "regional", 2230, region="moscow", network=None),
+
+    # --- Найдено проходом по непокрытым субъектам, 29.07.2026 ----------------
+    # Из 75 проверенных лент отобрано 17. Не взяты, как и прежде: украинские
+    # каналы воздушной тревоги, реклама («Рупор России») и каналы, у которых
+    # имя не совпадает с содержимым («Радар — новости Новосибирска» это ДПС
+    # и городские новости, доля оповещений 0-3%).
+    Source("radar_ru_russiaa", "radar_ru_russiaa", "Радар.ру • Приграничье • По всей России", "federal", 114836, region="other", network="radar_ru"),
+    Source("radar_bashkortostan", "radar_bashkortostan", "Радар Башкортостан", "regional", 49076, region="bashkortostan", network=None),
+    Source("radar_102", "radar_102", "Радар Башкортостан | БПЛА", "regional", 6667, region="bashkortostan", network=None),
+    Source("radar_bashkortostan102", "Radar_Bashkortostan102", "Радар — Башкортостан!", "regional", 997, region="bashkortostan", network=None),
+    Source("bshradar", "bshradar", "Радар Башкортостан | БПЛА (2)", "regional", 374, region="bashkortostan", network=None),
+    Source("radar_mordoviya", "radar_mordoviya", "Радар Мордовия", "regional", 7353, region="mordovia", network=None),
+    Source("internetsaransk", "internetsaransk", "Радар Саранска", "regional", 4341, region="mordovia", network=None),
+    Source("radar_dagestann", "radar_dagestann", "Радар Дагестан", "regional", 4814, region="dagestan", network=None),
+    Source("radarhmao", "radarhmao", "Радар ХМАО-Югра", "regional", 3059, region="khmao", network=None),
+    Source("radar_komi", "radar_komi", "Радар Коми", "regional", 432, region="komi", network=None),
+    Source("radarkomi", "radarkomi", "РАДАР КОМИ", "regional", 362, region="komi", network=None),
+    Source("radarspbbpla", "radarspbbpla", "Радар БПЛА Санкт-Петербург и Ленобласть", "regional", 2354, region="spb", network=None),
+    Source("radarpiterbpla", "radarpiterbpla", "Мониторинг Питер и Ленинградская область", "regional", 661, region="spb", network=None),
+    Source("pforadar", "pforadar", "Купол Приволжья", "federal", 469, region="other", network=None),
+    Source("radar_yuzniy", "radar_yuzniy", "Южный РАДАР", "regional", 357, region="other", network=None),
+    Source("rschschyvashi", "RSCHSChyvashi", "РСЧС Чувашии", "official", 177, region="chuvashia", network=None),
+    Source("sochi_online", "sochi_online", "Сочи Онлайн", "mixed", 112098, region="sochi", network=None),
 ]
 
 
