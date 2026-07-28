@@ -151,7 +151,8 @@ describe("цвет зоны в истории", () => {
       {}
     );
     expect(counts.kursk_district.severity).toBe(9);
-    expect(counts.kursk_district.fade).toBeCloseTo(0.333, 2);
+    // Два часа без нового сообщения — примерно пятая часть яркости.
+    expect(counts.kursk_district.fade).toBeCloseTo(0.216, 2);
   });
 
   it("собственные события зоны считаются отдельно от унаследованных", () => {

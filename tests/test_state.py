@@ -30,13 +30,25 @@ def test_fresh_event_burns_at_full():
     assert zone_fade(ago(seconds=0), NOW) == 1.0
 
 
-def test_hour_old_is_about_two_thirds():
-    assert zone_fade(ago(hours=1), NOW) == pytest.approx(0.667, abs=0.01)
+def test_hour_old_is_about_half():
+    """Кривая крутая в начале: за час зона теряет половину яркости.
+
+    Линейная убыль была слишком щадящей — за пятьдесят минут без единого
+    нового сообщения район терял четверть и выглядел как горящий сейчас.
+    """
+    assert zone_fade(ago(hours=1), NOW) == pytest.approx(0.48, abs=0.02)
+
+
+def test_first_minutes_matter_most():
+    """Разница между «пять минут» и «час» важнее, чем между «два» и «три»."""
+    early = zone_fade(ago(minutes=5), NOW) - zone_fade(ago(minutes=35), NOW)
+    late = zone_fade(ago(minutes=125), NOW) - zone_fade(ago(minutes=155), NOW)
+    assert early > late
 
 
 def test_old_event_does_not_vanish():
     """Событие ещё не закрыто — стирать его с карты рано."""
-    assert zone_fade(ago(hours=10), NOW) == 0.25
+    assert zone_fade(ago(hours=10), NOW) == 0.2
 
 
 def test_future_stamp_is_treated_as_fresh():

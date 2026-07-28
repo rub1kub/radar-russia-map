@@ -10,11 +10,18 @@ describe("freshness", () => {
   });
 
   it("час давности примерно вдвое тусклее", () => {
-    expect(freshness(ago(60 * 60 * 1000), NOW)).toBeCloseTo(0.667, 2);
+    expect(freshness(ago(60 * 60 * 1000), NOW)).toBeCloseTo(0.48, 2);
+  });
+
+  it("первые минуты значат больше поздних", () => {
+    const early = freshness(ago(5 * 60 * 1000), NOW) - freshness(ago(35 * 60 * 1000), NOW);
+    const late =
+      freshness(ago(125 * 60 * 1000), NOW) - freshness(ago(155 * 60 * 1000), NOW);
+    expect(early).toBeGreaterThan(late);
   });
 
   it("старое не гаснет совсем: событие ещё не закрыто", () => {
-    expect(freshness(ago(ZONE_FADE_MS * 5), NOW)).toBe(0.25);
+    expect(freshness(ago(ZONE_FADE_MS * 5), NOW)).toBe(0.2);
   });
 
   it("без отметки времени не выцветает", () => {

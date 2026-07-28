@@ -1371,9 +1371,16 @@ export default function App() {
         }
       );
 
-      applySelectedFeature(
-        zoom >= DISTRICT_SELECTION_ZOOM ? districtFeature ?? regionFeature : regionFeature ?? districtFeature
-      );
+      const picked =
+        zoom >= DISTRICT_SELECTION_ZOOM
+          ? districtFeature ?? regionFeature
+          : regionFeature ?? districtFeature;
+
+      // Повторное нажатие по уже выбранному месту снимает выбор: иначе
+      // выйти из него можно было только крестиком в ленте, а рука тянется
+      // ткнуть туда же ещё раз.
+      const same = picked && featureKey(picked) === selectedKeyRef.current;
+      applySelectedFeature(same ? null : picked);
     });
 
     mapRef.current = map;
