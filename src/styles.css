@@ -1071,7 +1071,7 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   cursor: pointer;
 }
 
-.history-body { padding: 4px 13px 12px; }
+.history-body { padding: 8px 16px 14px; }
 
 .history-controls {
   display: flex;
@@ -1083,8 +1083,8 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   border: 0;
   border-radius: 8px;
@@ -1937,7 +1937,7 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 40px;
+  height: 46px;
   margin-bottom: 10px;
   padding-bottom: 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -1972,8 +1972,8 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .history-chart {
   display: flex;
   align-items: flex-end;
-  gap: 1px;
-  height: 52px;
+  gap: 2px;
+  height: 68px;
   margin-bottom: 0;
 }
 
@@ -2005,10 +2005,10 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .chart-axis,
 .strip-axis {
   position: relative;
-  height: 14px;
-  margin: 2px 0 8px;
-  font-size: 10px;
-  color: rgba(160, 170, 163, 0.55);
+  height: 16px;
+  margin: 4px 0 10px;
+  font-size: 11px;
+  color: rgba(170, 180, 173, 0.62);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2069,7 +2069,11 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   color: rgba(246, 226, 170, 0.96);
 }
 
-.history-panel { max-width: min(460px, calc(100% - 28px)); }
+/* Раскрытая панель заметно шире: в 420 px девяносто шесть столбиков
+   диаграммы сливались в гребёнку, по которой не попасть ни курсором, ни
+   взглядом. Свёрнутая остаётся кнопкой. */
+.history-panel.is-open { width: min(640px, calc(100% - 28px)); max-width: none; }
+.history-panel { max-width: min(640px, calc(100% - 28px)); }
 
 /* --- Узкий экран: карта остаётся главной ---------------------------------- */
 /*
