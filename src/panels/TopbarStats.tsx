@@ -1,9 +1,11 @@
 import type { RadarEvent } from "../lib/api";
-import { plural, severityColor } from "../lib/format";
+import { formatDate, plural, severityColor } from "../lib/format";
 
 type Props = {
   /** События на показываемый момент: сейчас или срез истории. */
   events: RadarEvent[] | null;
+  /** Момент, к которому относится сводка. */
+  moment: string | null;
   /** Сколько зон подсвечено на этот же момент. */
   zones: number;
   /** Показан архив, а не эфир. */
@@ -34,7 +36,7 @@ const LEVELS = [
  * Шапка была почти пустой: заголовок слева, кнопка справа. Сводка по уровням
  * опасности — то, что человек хочет увидеть, не читая ленту.
  */
-export function TopbarStats({ events, zones, historyLabel }: Props) {
+export function TopbarStats({ events, zones, historyLabel, moment }: Props) {
   if (!events) return null;
 
   const counts = LEVELS.map((level, index) => {
@@ -57,6 +59,13 @@ export function TopbarStats({ events, zones, historyLabel }: Props) {
       {historyLabel ? (
         <span className="stat-archive" data-tip="Показан архив, а не текущая обстановка">
           архив · {historyLabel}
+        </span>
+      ) : moment ? (
+        /* Даты на карте не было вовсе — только время. Человек, услышавший
+           взрывы ночью, не мог понять, о сегодняшней ночи речь или о
+           вчерашней. */
+        <span className="stat-date" data-tip="Дата и время московские">
+          {formatDate(moment)}
         </span>
       ) : null}
       {quiet ? (

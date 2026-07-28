@@ -17,6 +17,18 @@ const MSK_DAY = new Intl.DateTimeFormat("ru-RU", {
   month: "2-digit"
 });
 
+const MSK_DATE = new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  day: "numeric",
+  month: "long"
+});
+
+/** «28 июля» по Москве. Даты на карте не было вовсе — только время, и
+ *  человек не мог понять, о сегодняшней ночи речь или о вчерашней. */
+export function formatDate(iso: string): string {
+  return MSK_DATE.format(new Date(iso));
+}
+
 export const numberFormat = new Intl.NumberFormat("ru-RU");
 
 /** Русское склонление по числу: 1 сообщение, 2 сообщения, 5 сообщений. */

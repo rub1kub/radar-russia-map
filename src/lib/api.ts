@@ -66,6 +66,8 @@ export type SearchItem = {
 };
 
 export type SourceStat = {
+  /** official — МЧС, оперштабы, губернаторы; остальные ленты неофициальны. */
+  tier?: string;
   source_key: string;
   messages: number;
   contributions: number;
@@ -97,6 +99,8 @@ export type EventSource = {
   clone: boolean;
   /** Пошло ли сообщение в счёт независимых источников. */
   counted: boolean;
+  /** Постоянная ссылка на сообщение в Telegram. */
+  link: string | null;
   text: string;
 };
 
@@ -142,7 +146,10 @@ export const api = {
   historyDays: (limit: number, signal?: AbortSignal) =>
     get<{ days: HistoryDay[]; peak: number }>(`/api/v1/history/days?limit=${limit}`, signal),
   analyticsSources: (signal?: AbortSignal) =>
-    get<{ sources: SourceStat[] }>("/api/v1/analytics/sources", signal),
+    get<{ sources: SourceStat[]; since: string | null; until: string | null }>(
+      "/api/v1/analytics/sources",
+      signal
+    ),
   analyticsZones: (hours: number, signal?: AbortSignal) =>
     get<Analytics>(`/api/v1/analytics/zones?hours=${hours}`, signal),
   search: (query: string, limit: number, signal?: AbortSignal) =>

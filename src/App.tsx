@@ -86,6 +86,8 @@ type SelectedObject = {
   name: string;
   subtitle: string;
   details: Array<[string, string]>;
+  /** Зона справочника, объявленная прямо в полигоне. */
+  zone?: string | null;
 };
 
 type LayerState = {
@@ -163,6 +165,7 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
   const kind = asText(feature.get("kind"), "region") as SelectedObject["kind"];
   const id = asText(feature.get("id"), asText(feature.get("name")));
   const name = asText(feature.get("name"));
+  const zone = feature.get("zone") ? String(feature.get("zone")) : null;
 
   if (kind === "place") {
     const population = feature.get("population");
@@ -170,6 +173,7 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
       kind,
       id,
       name,
+      zone,
       subtitle: asText(feature.get("typeLabel"), "Населенный пункт"),
       details: [
         ["Тип", asText(feature.get("typeLabel"), "Населенный пункт")],
@@ -184,6 +188,7 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
       kind,
       id,
       name,
+      zone,
       subtitle: "Административный район / округ ADM2",
       details: [
         ["Тип", "Район / округ"],
@@ -197,6 +202,7 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
     kind: "region",
     id,
     name,
+    zone,
     subtitle: "Субъект Российской Федерации",
     details: [
       ["Тип", "Регион"],
@@ -959,6 +965,9 @@ export default function App() {
     const referenceMs = new Date(historyAt ?? radarState?.generated_at ?? Date.now()).getTime();
 
     for (const event of shownEvents) {
+      // Закрытое событие в ленте остаётся отбоем, но значок на карте
+      // означает «здесь сейчас», и ему там не место.
+      if (event.status === "resolved") continue;
       if (!isPointEvent(event.signal_type, event.zone_level)) continue;
       if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
 
@@ -1455,10 +1464,14 @@ export default function App() {
     return zoneId ? paintedZones[zoneId]?.name ?? null : null;
   }, [selectedRegionPolygon, paintedZones]);
 
-  const selectedZoneId = useMemo(
-    () => (selected.id === "none" ? null : polygonToZoneRef.current.get(selected.id) ?? null),
-    [selected]
-  );
+  // Зона выбранного места. Соответствие полигонов зонам строится из
+  // счётчиков обстановки и потому знает только шумные места; в самом
+  // полигоне зона объявлена всегда, поэтому подписаться можно и на тихий
+  // город — то есть заранее, когда это и нужно.
+  const selectedZoneId = useMemo(() => {
+    if (selected.id === "none") return null;
+    return selected.zone ?? polygonToZoneRef.current.get(selected.id) ?? null;
+  }, [selected]);
 
   const selectSearchItem = useCallback(
     (item: SearchItem) => {
@@ -1600,6 +1613,7 @@ export default function App() {
           events={radarState ? shownEvents : null}
           zones={Object.keys(paintedZones).length}
           historyLabel={historyAt ? formatDayTime(historyAt) : null}
+          moment={radarState?.generated_at ?? null}
         />
 
       </header>

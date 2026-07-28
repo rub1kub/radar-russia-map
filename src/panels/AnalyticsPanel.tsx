@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BarChart3, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Analytics, SourceStat } from "../lib/api";
-import { plural, severityColor, threatLabel } from "../lib/format";
+import { formatDayTime, plural, severityColor, threatLabel } from "../lib/format";
 
 type Props = {
   open: boolean;
@@ -23,6 +23,10 @@ function formatLag(seconds: number | null): string {
  */
 export function AnalyticsPanel({ open, onClose }: Props) {
   const [sources, setSources] = useState<SourceStat[] | null>(null);
+  const [span, setSpan] = useState<{ since: string | null; until: string | null }>({
+    since: null,
+    until: null
+  });
   const [zones, setZones] = useState<Analytics | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -37,6 +41,7 @@ export function AnalyticsPanel({ open, onClose }: Props) {
       .then(([sourceData, zoneData]) => {
         if (controller.signal.aborted) return;
         setSources(sourceData.sources);
+        setSpan({ since: sourceData.since, until: sourceData.until });
         setZones(zoneData);
       })
       .catch(() => {
@@ -83,8 +88,20 @@ export function AnalyticsPanel({ open, onClose }: Props) {
           <div className="analytics-body">
             <section>
               <h3>Источники</h3>
+              {/* Период не был указан вовсе, знаменателей не было, а
+                  официальный канал с «0%» читался как ненадёжный. */}
               <p className="analytics-note">
-                Кто чаще сообщает первым и как часто его сообщения подтверждают другие ленты.
+                Кто чаще сообщает первым и как часто его сообщения подтверждают другие
+                ленты.{" "}
+                {span.since && span.until
+                  ? `За весь собранный корпус: ${formatDayTime(span.since)} — ${formatDayTime(
+                      span.until
+                    )}.`
+                  : ""}{" "}
+                «Первым» — сколько раз канал открыл событие. «Подтв.» — доля его
+                сообщений, попавших в события, которые подтвердил кто-то ещё; ноль
+                означает, что канал пишет о том, чего никто не повторяет, а не что он
+                врёт. «Задержка» — насколько он отстал от первого сообщения о событии.
               </p>
               <div className="analytics-table-wrap">
               <table className="analytics-table">
@@ -99,7 +116,12 @@ export function AnalyticsPanel({ open, onClose }: Props) {
                 <tbody>
                   {sources.map((item) => (
                     <tr key={item.source_key}>
-                      <td>{item.source_key}</td>
+                      <td>
+                        {item.source_key}
+                        {item.tier === "official" ? (
+                          <span className="source-tag">офиц.</span>
+                        ) : null}
+                      </td>
                       <td>
                         <span className="bar-cell">
                           <span
@@ -120,7 +142,10 @@ export function AnalyticsPanel({ open, onClose }: Props) {
 
             <section>
               <h3>Где чаще всего</h3>
-              <p className="analytics-note">За последнюю неделю.</p>
+              <p className="analytics-note">
+                За последнюю неделю. Считаются и области, и районы внутри них —
+                поэтому суммы по строкам перекрываются.
+              </p>
               <ul className="analytics-zones">
                 {zones.top_zones.slice(0, 12).map((zone) => (
                   <li key={zone.zone_id}>

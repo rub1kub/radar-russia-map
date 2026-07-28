@@ -499,9 +499,17 @@ button {
   bottom: 18px;
 }
 
+/* Атрибуция подложки стояла в правом нижнем углу, ровно под кнопкой
+   «Аналитика», и та перехватывала нажатие: до значка нельзя было
+   дотянуться. Между тем указание источника карты — требование лицензии
+   OpenStreetMap, а не украшение. Уводим левее кнопки. */
 .ol-attribution {
   right: 12px;
-  bottom: 12px;
+  /* Над кнопкой «Аналитика», а не под ней: раньше кнопка перехватывала
+     нажатие и до значка нельзя было дотянуться, хотя указание источника
+     подложки — требование лицензии OpenStreetMap, а не украшение. */
+  bottom: 60px;
+  z-index: 9;
   border-radius: 4px;
   background: rgba(10, 12, 12, 0.68);
   color: rgba(235, 240, 232, 0.72);
@@ -704,6 +712,21 @@ button {
 .event-feed li.is-fading {
   opacity: 0.55;
 }
+
+/* Отбой: событие закончилось. Оно ещё в ленте полчаса, но карту не красит. */
+.event-feed li.is-resolved .event-title,
+.event-feed li.is-resolved .event-meta {
+  color: rgba(150, 200, 170, 0.86);
+}
+
+a.source-name {
+  color: rgba(226, 233, 227, 0.86);
+  text-decoration: underline;
+  text-decoration-color: rgba(226, 233, 227, 0.3);
+  text-underline-offset: 2px;
+}
+
+a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
 .event-dot {
   width: 9px;
@@ -1271,6 +1294,15 @@ button {
   white-space: nowrap;
 }
 
+.stat-date {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(196, 204, 197, 0.8);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
 .topbar-stats {
   display: flex;
   align-items: center;
@@ -1407,6 +1439,15 @@ button {
   white-space: nowrap;
 }
 
+.stat-date {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(196, 204, 197, 0.8);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
 .topbar-stats { margin-left: 16px; gap: 6px; }
   .stat-zones { display: none; }
 }
@@ -1423,6 +1464,15 @@ button {
   color: rgba(246, 226, 170, 0.95);
   font-size: 11.5px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-date {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(196, 204, 197, 0.8);
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
@@ -1619,6 +1669,15 @@ button {
   color: rgba(246, 226, 170, 0.95);
   font-size: 11.5px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-date {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(196, 204, 197, 0.8);
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
@@ -2058,6 +2117,15 @@ button {
   color: rgba(246, 226, 170, 0.95);
   font-size: 11.5px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-date {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(196, 204, 197, 0.8);
+  font-size: 11.5px;
   white-space: nowrap;
 }
 

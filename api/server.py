@@ -46,6 +46,7 @@ from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
 from pipeline.incremental import resolve_networks
 from pipeline.provenance import counted, walk
+from ingest.config import sources_from_env
 from pipeline.parse import strip_footer
 from pipeline.timeutil import MSK, now_utc, parse_utc
 
@@ -81,6 +82,10 @@ def recount_sources(events: list[dict]) -> None:
             event["source_count"] = counted(own, networks)
 
 
+# Имя канала нужно только для ссылки на сообщение: t.me/<канал>/<id>.
+SOURCE_USERNAMES = {source.key: source.username for source in sources_from_env()}
+
+
 def source_networks() -> dict[str, str | None]:
     """Сеть канала — та же, что видит конвейер при подсчёте голосов."""
     with closing(sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)) as connection:
@@ -92,6 +97,9 @@ app = FastAPI(title="Radar API", version="1.0")
 app.include_router(geo_router)
 
 ACTIVE_WINDOW = timedelta(hours=6)
+
+# Сколько отбой остаётся на виду после закрытия события.
+RESOLVED_WINDOW = timedelta(minutes=30)
 
 # Через сколько событие перестаёт красить зону в свой цвет. Тот же порог, что
 # у затухания в конвейере и у выцветания значков.
@@ -200,7 +208,19 @@ def build_state() -> dict:
     pipeline_lag_sec = (
         max(0, int((last_message - last_event).total_seconds())) if last_event else None
     )
-    events = [row for row in event_rows(now - ACTIVE_WINDOW) if row["status"] != "resolved"]
+    # Отбой человек должен увидеть. Раньше событие с отбоем просто исчезало
+    # из выдачи, тревога на карте молча тускнела, и вопрос «можно уже
+    # выходить?» оставался без ответа. Закрытые события держим ещё полчаса —
+    # лента показывает их как отбой, карту они не красят.
+    fresh = event_rows(now - ACTIVE_WINDOW)
+    events = []
+    for row in fresh:
+        if row["status"] != "resolved":
+            events.append(row)
+            continue
+        closed = row["resolved_at"] or row["last_seen_at"]
+        if closed and now - parse_utc(closed) <= RESOLVED_WINDOW:
+            events.append(row)
     # Число под заголовком считается ровно тем же правилом, что и список
     # источников под ним. Раньше их считали в разных местах, и в шапке
     # стояло 20 там, где в списке набиралось 16.
@@ -208,6 +228,10 @@ def build_state() -> dict:
 
     zone_counts: dict[str, dict] = {}
     for event in events:
+        # Закрытое событие остаётся в ленте как отбой, но зону не красит:
+        # цвет обязан означать «сейчас», а отбой — это «уже нет».
+        if event["status"] == "resolved":
+            continue
         # Событие поднимается по всей цепочке родителей — регион светится,
         # если горит любое поселение внутри него.
         for zone_id in event["zone_path"]:
@@ -305,11 +329,11 @@ def event_sources(event_id: str):
     """
     rows = query(
         """
-        SELECT es.source_key, es.role, es.contributed_at, m.text
+        SELECT es.source_key, es.role, es.contributed_at, m.text, m.message_id
         FROM event_sources es
         JOIN raw_messages m ON m.id = es.raw_message_id
         WHERE es.event_id = ?
-        ORDER BY es.contributed_at
+        ORDER BY es.contributed_at, es.raw_message_id
         """,
         (event_id,),
     )
@@ -327,9 +351,10 @@ def event_sources(event_id: str):
             # Канал той же сети, что и уже засчитанный: голос у сети один.
             "clone": item.clone,
             "counted": item.counted,
+            "link": item.link,
             "text": item.text,
         }
-        for item in walk(rows, networks)
+        for item in walk(rows, networks, SOURCE_USERNAMES)
     ]
     # Список собирается по времени вперёд — иначе перепостом окажется
     # оригинал, — а наружу отдаётся в обратном порядке: свежее сверху.
@@ -449,7 +474,20 @@ def analytics_sources():
         })
 
     out.sort(key=lambda row: -row["first_reports"])
-    return {"sources": out}
+    span = query("SELECT MIN(first_seen_at) AS a, MAX(last_seen_at) AS b FROM events")
+    tiers = {source.key: source.tier for source in sources_from_env()}
+    for row in out:
+        # Официальный источник и анонимный радар в таблице выглядели
+        # одинаково, и колонка «подтв. 0%» у МЧС читалась как «верить
+        # нельзя», хотя означает лишь, что его сообщения редко дублируют.
+        row["tier"] = tiers.get(row["source_key"], "regional")
+    return {
+        "sources": out,
+        # Период у таблицы не был указан вовсе, и числа читались как
+        # «вообще», хотя это весь собранный корпус целиком.
+        "since": span[0]["a"] if span else None,
+        "until": span[0]["b"] if span else None,
+    }
 
 
 @app.get("/api/v1/analytics/zones")

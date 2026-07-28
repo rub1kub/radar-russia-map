@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Bell, BellRing, Building2, ChevronDown, ChevronRight, Crosshair } from "lucide-react";
 import { api } from "../lib/api";
 import type { EventSource, RadarEvent, RadarState } from "../lib/api";
@@ -86,6 +86,10 @@ export function FeedPanel({
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sources, setSources] = useState<Record<string, EventSource[]>>({});
+  // Порядок карточек, замороженный на время чтения. Лента пересобирается
+  // каждые несколько секунд, и список успевал переехать между взглядом и
+  // нажатием: человек метил в одно событие, раскрывалось другое.
+  const frozen = useRef<string[] | null>(null);
 
   const toggleSources = (id: string) => {
     setExpanded((current) => (current === id ? null : id));
@@ -97,7 +101,22 @@ export function FeedPanel({
   };
 
   const live = apiOnline && state && !state.stale && !historyLabel;
-  const events = zoneEvents.length ? zoneEvents : allEvents;
+  const listed = zoneEvents.length ? zoneEvents : allEvents;
+
+  // Пока какая-то карточка раскрыта, порядок держится: читающему важнее,
+  // чтобы список не уезжал под курсором, чем чтобы он был отсортирован
+  // посекундно. Новые события при этом не теряются — они встают в конец.
+  if (!expanded) frozen.current = null;
+  else if (!frozen.current) frozen.current = listed.map((event) => event.id);
+
+  const order = frozen.current;
+  const events = order
+    ? [...listed].sort((left, right) => {
+        const a = order.indexOf(left.id);
+        const b = order.indexOf(right.id);
+        return (a === -1 ? order.length : a) - (b === -1 ? order.length : b);
+      })
+    : listed;
   // В режиме истории отсчёт идёт от просматриваемого момента, иначе лента
   // показывала бы будущее относительно выбранного среза.
   const reference = referenceIso ?? state?.generated_at ?? new Date().toISOString();
@@ -261,7 +280,13 @@ export function FeedPanel({
               {events.slice(0, FEED_LIMIT).map((event) => (
                 <li
                   key={event.id}
-                  className={event.status === "fading" ? "is-fading" : undefined}
+                  className={
+                    event.status === "resolved"
+                      ? "is-resolved"
+                      : event.status === "fading"
+                        ? "is-fading"
+                        : undefined
+                  }
                 >
                   {/* Вся карточка — одна кнопка: нажатие показывает место на
                       карте и раскрывает сообщения, из которых событие сложено.
@@ -276,15 +301,25 @@ export function FeedPanel({
                       toggleSources(event.id);
                     }}
                   >
+                    {/* Отбой человек должен увидеть: раньше событие просто
+                        исчезало, тревога молча тускнела, и вопрос «можно уже
+                        выходить?» оставался без ответа. */}
                     <span
                       className="event-dot"
-                      style={{ background: severityColor(event.severity, 0.95) }}
+                      style={{
+                        background:
+                          event.status === "resolved"
+                            ? "rgba(126, 190, 150, 0.95)"
+                            : severityColor(event.severity, 0.95)
+                      }}
                       aria-hidden="true"
                     />
                     <span className="event-body">
                       <span className="event-title">{event.place_name}</span>
                       <span className="event-meta">
-                        {signalLabel(event.signal_type)}
+                        {event.status === "resolved"
+                          ? `Отбой · ${signalLabel(event.signal_type).toLowerCase()}`
+                          : signalLabel(event.signal_type)}
                         {event.threat_type !== "unknown"
                           ? ` · ${threatLabel(event.threat_type)}`
                           : ""}
@@ -353,7 +388,21 @@ export function FeedPanel({
                           className={item.counted ? undefined : "is-repost"}
                         >
                           <span className="source-head">
-                            <span className="source-name">{item.source_key}</span>
+                            {/* Ник без ссылки — число «19 источников»,
+                                которое остаётся принимать на веру. */}
+                            {item.link ? (
+                              <a
+                                className="source-name"
+                                href={item.link}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                onClick={(click) => click.stopPropagation()}
+                              >
+                                {item.source_key}
+                              </a>
+                            ) : (
+                              <span className="source-name">{item.source_key}</span>
+                            )}
                             {item.repost ? <span className="source-tag">перепост</span> : null}
                             {item.clone && !item.repost ? (
                               <span className="source-tag">та же сеть</span>

@@ -62,22 +62,46 @@ def write_district_facts(path: Path, districts: list[dict]) -> int:
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
     facts = {
-        district["source_id"]: (district["name"], district.get("region_source_id"))
-        for district in districts
+        district["source_id"]: district for district in districts
     }
     changed = 0
     for feature in payload["features"]:
         properties = feature.get("properties") or {}
-        name, region = facts.get(str(properties.get("id") or ""), (None, None))
-        if name and name != properties.get("name"):
-            properties["name"] = name
-            changed += 1
-        if region and region != properties.get("region"):
-            properties["region"] = region
-            changed += 1
+        fact = facts.get(str(properties.get("id") or ""))
+        if not fact:
+            continue
+        for key, value in (
+            ("name", fact["name"]),
+            ("region", fact.get("region_source_id")),
+            # Идентификатор зоны. Клиент знал его только для мест, где
+            # что-то происходит: соответствие полигонов зонам строится из
+            # счётчиков обстановки. Из-за этого нельзя было подписаться на
+            # свой тихий город — то есть именно тогда, когда это и нужно.
+            ("zone", fact.get("zone_id")),
+        ):
+            if value and value != properties.get(key):
+                properties[key] = value
+                changed += 1
     path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                     encoding="utf-8")
     return changed
+
+
+def write_region_facts(path: Path, regions: list[dict]) -> None:
+    """Идентификатор зоны рядом с полигоном региона.
+
+    Нужен ровно затем же, зачем и району: без него нельзя отслеживать
+    место, в котором сейчас тихо.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    zones = {region["source_id"]: region.get("zone_id") for region in regions}
+    for feature in payload["features"]:
+        properties = feature.get("properties") or {}
+        zone_id = zones.get(str(properties.get("id") or ""))
+        if zone_id:
+            properties["zone"] = zone_id
+    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    encoding="utf-8")
 
 
 def assign_unique(slug: str, taken: set[str]) -> str:
@@ -110,6 +134,7 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
     region_ids: list[str] = []
     for region in regions:
         zone_id = assign_unique(slugify(region["name"]), taken)
+        region["zone_id"] = zone_id
         region_ids.append(zone_id)
         centroid = region["geom"].representative_point()
         add_zone(zone_id, None, "region", region["name"],
@@ -229,9 +254,6 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
             districts[index]["name"] = entry.name
             renamed += 1
 
-    touched = write_district_facts(DATA / "districts.json", districts)
-    print(f"полей в файле полигонов обновлено: {touched}")
-
     district_ids: list[str] = []
     for index, district in enumerate(districts):
         parent = district_region[index]
@@ -239,12 +261,16 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
         if parent:
             base = f"{base}_{parent}"
         zone_id = assign_unique(base, taken)
+        district["zone_id"] = zone_id
         district_ids.append(zone_id)
         centroid = district["geom"].representative_point()
         add_zone(zone_id, parent, "district", district["name"],
                  centroid.y, centroid.x, None, None, district["source_id"])
 
-    print(f"районов:  {len(districts)}, имя исправлено по ОКТМО у {renamed}")
+    touched = write_district_facts(DATA / "districts.json", districts)
+    write_region_facts(DATA / "regions.json", regions)
+    print(f"районов:  {len(districts)}, имя исправлено по ОКТМО у {renamed}, "
+          f"полей в файле полигонов {touched}")
 
     # --- Населенные пункты ---------------------------------------------
     for row, index in zip(places, place_parent):

@@ -70,3 +70,19 @@ def test_short_identical_text_is_not_a_repost():
     """«Опасность по БПЛА» две ленты пишут одинаково — иначе не скажешь."""
     rows = [row("a", "first"), row("b")]
     assert counted(rows, {}) == 2
+
+
+# --- Ссылка на сообщение ----------------------------------------------------
+
+def test_link_points_at_the_original_message():
+    """Ник без ссылки — число, которое остаётся принимать на веру."""
+    rows = [{"source_key": "locatorru", "role": "first", "contributed_at": "2026-07-28T21:00:00Z",
+             "text": "Опасность по БПЛА", "message_id": 8166}]
+    marked = walk(rows, {}, {"locatorru": "locatorru"})
+    assert marked[0].link == "https://t.me/locatorru/8166"
+
+
+def test_link_is_absent_when_channel_is_unknown():
+    rows = [{"source_key": "ghost", "role": "first", "contributed_at": "2026-07-28T21:00:00Z",
+             "text": "Опасность по БПЛА", "message_id": 5}]
+    assert walk(rows, {}, {})[0].link is None

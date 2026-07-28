@@ -29,14 +29,30 @@ class Contribution:
     role: str
     at: str
     text: str
+    # Ссылка на само сообщение в Telegram. Без неё «19 источников» —
+    # число, которое остаётся принимать на веру: ники в списке не
+    # кликаются, и проверить их нельзя.
+    link: str | None
     first_from_source: bool
     repost: bool
     clone: bool
     counted: bool
 
 
-def walk(rows, networks: dict[str, str | None]) -> list[Contribution]:
+def message_link(username: str | None, message_id) -> str | None:
+    """Постоянная ссылка на сообщение публичного канала."""
+    if not username or not message_id:
+        return None
+    return f"https://t.me/{username}/{message_id}"
+
+
+def walk(
+    rows,
+    networks: dict[str, str | None],
+    usernames: dict[str, str] | None = None,
+) -> list[Contribution]:
     """Разметить вклады события. rows — по возрастанию времени."""
+    usernames = usernames or {}
     seen: set[str] = set()
     said_first: dict[str, str] = {}
     network_first: dict[str, str] = {}
@@ -62,6 +78,7 @@ def walk(rows, networks: dict[str, str | None]) -> list[Contribution]:
             source_key=source_key,
             role=row["role"],
             at=row["contributed_at"],
+            link=message_link(usernames.get(source_key), row.get("message_id")),
             text=" ".join((row["text"] or "").split())[:220],
             first_from_source=first_from_source,
             repost=repost,
