@@ -54,6 +54,8 @@ async def main() -> None:
     parser.add_argument("--folder", default="Радары")
     parser.add_argument("--limit", type=int, default=None,
                         help="ограничить число вступлений за прогон")
+    parser.add_argument("--folder-only", action="store_true",
+                        help="ничего не делать, только показать состав папки")
     args = parser.parse_args()
 
     require_session()
@@ -68,7 +70,9 @@ async def main() -> None:
         print(f"вступить нужно в {len(todo)}"
               + (f", за этот прогон не больше {args.limit}" if args.limit else ""))
 
-        if args.limit:
+        if args.folder_only:
+            todo = []
+        elif args.limit:
             todo = todo[: args.limit]
 
         done, failed = 0, []
@@ -101,36 +105,25 @@ async def main() -> None:
 
         print(f"\nвступил: {done}, не удалось: {len(failed)}")
 
-        # Папка задаётся ОДНИМ вызовом с полным составом.
-        # include_chat() состав не дополняет, а перезаписывает: вызов по
-        # одному каналу оставляет в папке ровно последний и стирает всё
-        # остальное. На этом уже был потерян исходный список.
+        # Папку скрипт больше не трогает.
         #
-        # И полный состав — это объединение, а не только наши источники.
-        # Раньше здесь стоял список из sources, и всё, что человек положил в
-        # папку сам, при первом же прогоне пропадало. Папка принадлежит
-        # человеку, а не скрипту: чужое из неё не убираем.
-        ours = [
-            joined[s.username.lower()]
-            for s in sources
-            if s.username.lower() in joined
-        ]
-        peers = list(dict.fromkeys(folder_ids + ours))
-        added = len(peers) - len(folder_ids)
-
-        if folder is None:
-            print(f"папки «{args.folder}» нет — создаю")
-            await client.create_folder(args.folder, included_chats=peers)
-        elif added:
-            await folder.edit(included_chats=peers)
-            print(f"в папку «{args.folder}» добавлено {added}, "
-                  f"было {len(folder_ids)}, стало {len(peers)}")
-        else:
-            print(f"папка «{args.folder}» уже содержит все подписки "
-                  f"({len(folder_ids)} чатов)")
-
-        _, folder, in_folder, _ = await current_state(client, args.folder)
-        print(f"итог: в папке «{args.folder}» {len(in_folder)} каналов")
+        # Здесь трижды был потерян состав папки, и каждый раз по новой
+        # причине. Сначала include_chat() — он состав не дополняет, а
+        # перезаписывает, и вызов по одному каналу оставлял ровно последний.
+        # Потом полный состав собирался только из наших источников, и всё,
+        # что человек положил в папку сам, исчезало. А в третий раз
+        # выяснилось, что folder.edit(included_chats=[id, ...]) молча
+        # выбрасывает те id, для которых в кеше сессии нет хеша доступа: из
+        # сорока просимых доходило восемнадцать. Плюс сам Telegram режет
+        # состав по своему пределу — из ста заданных сохранил восемьдесят два.
+        #
+        # Разбор конвейера папкой не пользуется вовсе: ingest/poll.py ходит по
+        # именам каналов из config.py, и членство ему не нужно. Папка — это
+        # удобство человека, и раскладывать её должен человек.
+        print(f"\nпапка «{args.folder}» не изменялась: сейчас в ней "
+              f"{len(folder_ids)} чатов.")
+        print("Раскладка по папкам делается вручную — скрипт трижды терял "
+              "её состав и больше в неё не пишет.")
 
 
 if __name__ == "__main__":
