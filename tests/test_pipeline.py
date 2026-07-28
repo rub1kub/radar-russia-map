@@ -1015,3 +1015,38 @@ def test_asserted_impact_with_hedged_details_stays_impact():
         "По предварительной информации, пострадавших нет"
     )
     assert observation.signal_type == "impact"
+
+
+# --- Эхо отменённой тревоги -------------------------------------------------
+
+def test_late_alarm_after_allclear_does_not_reopen():
+    """Медленная лента присылает тревогу уже после отбоя.
+
+    Раньше такое сообщение заводило новое событие, следующая копия отбоя его
+    закрывала, и в ленте выстраивался ряд одинаковых отбоев по одной зоне —
+    до шести подряд.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a")
+    add(fuser, 5, "b", signal="allclear", severity=0)
+    add(fuser, 7, "c")
+    assert len(fuser.events) == 1
+    assert fuser.events[0].resolved_at is not None
+
+
+def test_stronger_report_after_allclear_opens_a_new_event():
+    """Взрыв после отбоя — новое событие, а не эхо отменённого."""
+    fuser = Fuser()
+    add(fuser, 0, "a")
+    add(fuser, 5, "b", signal="allclear", severity=0)
+    add(fuser, 7, "c", signal="impact", severity=9)
+    assert len(fuser.events) == 2
+
+
+def test_alarm_long_after_allclear_is_a_new_event():
+    """Через полчаса после отбоя это уже новая тревога, а не опоздание."""
+    fuser = Fuser()
+    add(fuser, 0, "a")
+    add(fuser, 5, "b", signal="allclear", severity=0)
+    add(fuser, 40, "c")
+    assert len(fuser.events) == 2

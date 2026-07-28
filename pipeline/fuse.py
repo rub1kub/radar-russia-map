@@ -22,6 +22,10 @@ TIER_WEIGHT = {"official": 0.72, "federal": 0.55, "regional": 0.4, "mixed": 0.25
 # держало и одну зону в этом окне; после его отмены остались бы пять минут,
 # и шесть лент про одну областную тревогу распались бы на три события.
 SAME_ZONE_WINDOW = timedelta(minutes=15)
+# Сколько после отбоя сообщения о той же угрозе считаются опоздавшими.
+# Медленные ленты присылают свою тревогу через несколько минут после того,
+# как быстрые уже дали отбой.
+CLEAR_ECHO = timedelta(minutes=10)
 FADE_AFTER = timedelta(minutes=45)
 CLOSE_AFTER = timedelta(hours=3)
 
@@ -130,6 +134,13 @@ class Fuser:
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._open: list[Event] = []
+        # Недавно закрытые события: (зона, угроза) -> событие. Нужны, чтобы
+        # опоздавшие сообщения об уже отменённой тревоге не заводили новое
+        # событие. Без этого получалась карусель: отбой закрывает событие,
+        # медленная лента присылает свою тревогу, та заводит новое, его
+        # закрывает следующая копия отбоя — и в ленте четыре одинаковых
+        # отбоя подряд по одной зоне, а бывало и шесть.
+        self._cleared: dict[tuple[str, str], Event] = {}
 
     def _match(self, zone_path: list[str], threat: str, moment: datetime) -> Event | None:
         """Событие для наблюдения — только по той же самой зоне.
@@ -165,6 +176,10 @@ class Fuser:
             event for event in self._open
             if not event.resolved_at and now - event.last_seen <= CLOSE_AFTER
         ]
+        self._cleared = {
+            key: event for key, event in self._cleared.items()
+            if event.resolved_at and now - event.resolved_at <= CLEAR_ECHO
+        }
 
     def add(self, *, raw_id: int, source_key: str, tier: str, moment: datetime,
             observation, zone_path: list[str], lat, lon, level: str,
@@ -192,8 +207,22 @@ class Fuser:
                 event.resolved_at = moment
                 event.last_seen = max(event.last_seen, moment)
                 event.contributions.append((raw_id, source_key, "resolve", moment))
+                self._cleared[(event.zone_id, event.threat_type)] = event
                 closed = event
             return closed
+
+        # Эхо отменённой тревоги: сообщение о том же и не сильнее того, что
+        # уже отменено. Считаем его опоздавшим и приписываем к закрытому
+        # событию, не открывая нового.
+        echo = self._cleared.get((zone_id, observation.threat_type))
+        if (
+            echo is not None
+            and echo.resolved_at is not None
+            and moment - echo.resolved_at <= CLEAR_ECHO
+            and observation.severity <= echo.severity
+        ):
+            echo.contributions.append((raw_id, source_key, "late", moment))
+            return echo
 
         existing = self._match(zone_path, observation.threat_type, moment)
         if existing:

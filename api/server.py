@@ -216,13 +216,23 @@ def build_state() -> dict:
     # лента показывает их как отбой, карту они не красят.
     fresh = event_rows(now - ACTIVE_WINDOW)
     events = []
+    # Один отбой на зону и угрозу. Отбой отменяет всё, что в этой зоне по
+    # этой угрозе открыто, и закрывает разом несколько событий — в ленте
+    # выстраивался ряд одинаковых отбоев, до шести подряд. Показываем самый
+    # свежий: отбой это одно утверждение, сколько бы событий он ни закрыл.
+    seen_clear: set[tuple[str, str]] = set()
     for row in fresh:
         if row["status"] != "resolved":
             events.append(row)
             continue
         closed = row["resolved_at"] or row["last_seen_at"]
-        if closed and now - parse_utc(closed) <= RESOLVED_WINDOW:
-            events.append(row)
+        if not closed or now - parse_utc(closed) > RESOLVED_WINDOW:
+            continue
+        key = (row["zone_id"], row["threat_type"])
+        if key in seen_clear:
+            continue
+        seen_clear.add(key)
+        events.append(row)
     # Число под заголовком считается ровно тем же правилом, что и список
     # источников под ним. Раньше их считали в разных местах, и в шапке
     # стояло 20 там, где в списке набиралось 16.

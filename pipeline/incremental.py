@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 from config import sources_from_env  # noqa: E402
 
 from .db import connect  # noqa: E402
-from .fuse import Event, Fuser  # noqa: E402
+from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
 from .geocode import Geocoder  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import parse, strip_footer  # noqa: E402
@@ -289,6 +289,45 @@ def load_open_events(
     return order
 
 
+CLEARED_SQL = """
+SELECT e.id, e.zone_id, e.zone_path, e.threat_type, e.signal_type, e.severity,
+       e.first_seen_at, e.last_seen_at, e.resolved_at, e.lat, e.lon,
+       e.accuracy_m, e.direction_deg, e.target_count
+FROM events e
+WHERE e.resolved_at IS NOT NULL AND e.resolved_at >= ?
+"""
+
+
+def load_cleared(connection, now) -> dict[tuple[str, str], Event]:
+    """Недавно закрытые события — память об отбое между проходами.
+
+    Без неё опоздавшее сообщение об уже отменённой тревоге заводило новое
+    событие, следующая копия отбоя его закрывала, и в ленте выстраивался
+    ряд одинаковых отбоев по одной зоне.
+    """
+    since = (now - CLEAR_ECHO).isoformat()
+    out: dict[tuple[str, str], Event] = {}
+    for row in connection.execute(CLEARED_SQL, (since,)):
+        zone_path = json.loads(row["zone_path"] or "[]") or [row["zone_id"]]
+        out[(row["zone_id"], row["threat_type"])] = Event(
+            id=row["id"],
+            zone_id=row["zone_id"],
+            zone_path=list(zone_path),
+            threat_type=row["threat_type"],
+            signal_type=row["signal_type"],
+            severity=row["severity"],
+            first_seen=parse_utc(row["first_seen_at"]),
+            last_seen=parse_utc(row["last_seen_at"]),
+            resolved_at=parse_utc(row["resolved_at"]),
+            lat=row["lat"],
+            lon=row["lon"],
+            accuracy_m=row["accuracy_m"] or 12_000,
+            direction_deg=row["direction_deg"],
+            target_count=row["target_count"],
+        )
+    return out
+
+
 def restore_fuser(
     connection: sqlite3.Connection,
     tiers: dict[str, str] | None = None,
@@ -302,6 +341,7 @@ def restore_fuser(
     # чем зафиксировать связь здесь. events оставляем пустым — туда попадут
     # только вновь созданные события, по ним считается статистика прохода.
     fuser._open = list(restored)
+    fuser._cleared = load_cleared(connection, now_utc())
     return fuser, restored
 
 
