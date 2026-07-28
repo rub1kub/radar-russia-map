@@ -281,9 +281,13 @@ export function FeedPanel({
                 <li
                   key={event.id}
                   className={
-                    event.status === "resolved"
+                    // В истории status рассказывает про сейчас, а не про
+                    // просматриваемый момент: события того часа все были
+                    // открыты, иначе они бы сюда не попали. Без этой оговорки
+                    // архив писал «Отбой» над каждой карточкой.
+                    !historyLabel && event.status === "resolved"
                       ? "is-resolved"
-                      : event.status === "fading"
+                      : !historyLabel && event.status === "fading"
                         ? "is-fading"
                         : undefined
                   }
@@ -308,7 +312,7 @@ export function FeedPanel({
                       className="event-dot"
                       style={{
                         background:
-                          event.status === "resolved"
+                          !historyLabel && event.status === "resolved"
                             ? "rgba(126, 190, 150, 0.95)"
                             : severityColor(event.severity, 0.95)
                       }}
@@ -326,7 +330,7 @@ export function FeedPanel({
                         ) : null}
                       </span>
                       <span className="event-meta">
-                        {event.status === "resolved"
+                        {!historyLabel && event.status === "resolved"
                           ? `Отбой · ${signalLabel(event.signal_type).toLowerCase()}`
                           : signalLabel(event.signal_type)}
                         {event.threat_type !== "unknown"
@@ -348,8 +352,11 @@ export function FeedPanel({
                         {/* В архиве «12 минут назад» — это относительно
                             просматриваемого момента, а не сегодняшнего дня.
                             Без оговорки лента читается как прямой эфир. */}
+                        {/* Время тоже ограничено срезом: показывать
+                            «28.07 06:42» на моменте 04:15 значит выдавать
+                            то, чего в тот час ещё не знали. */}
                         {historyLabel
-                          ? `${formatDayTime(event.last_seen_at)}`
+                          ? formatDayTime(clamp(event.last_seen_at))
                           : formatSince(clamp(event.last_seen_at), reference)}
                         {event.source_count > 1
                           ? ` · ${event.source_count} ${plural(

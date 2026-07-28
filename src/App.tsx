@@ -959,10 +959,11 @@ export default function App() {
   const shownEvents = useMemo(() => {
     if (inHistory && historyEvents && historyAt) {
       const atMs = new Date(historyAt).getTime();
+      // Без среза: карта обязана показать всё, что было в этот момент.
+      // Шестьдесят — это предел списка в ленте, и он режется там же.
       return historyEvents
         .filter((event) => new Date(event.first_seen_at).getTime() <= atMs)
-        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs)
-        .slice(0, 60);
+        .filter((event) => !event.resolved_at || new Date(event.resolved_at).getTime() > atMs);
     }
     return radarState?.events ?? [];
   }, [inHistory, historyEvents, historyAt, radarState]);
@@ -987,7 +988,13 @@ export default function App() {
     for (const event of shownEvents) {
       // Закрытое событие в ленте остаётся отбоем, но значок на карте
       // означает «здесь сейчас», и ему там не место.
-      if (event.status === "resolved") continue;
+      //
+      // В истории это правило не работает: status рассказывает про сейчас,
+      // а не про просматриваемый момент, и все прошлые события в нём
+      // «resolved». Из-за этого перемотка показывала заливку без единого
+      // значка. Отбор по времени уже сделан выше — сюда доходят только те
+      // события, что на тот момент были открыты.
+      if (!inHistory && event.status === "resolved") continue;
       if (!isPointEvent(event.signal_type, event.zone_level)) continue;
       if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
 

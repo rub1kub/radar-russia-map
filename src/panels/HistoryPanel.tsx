@@ -57,6 +57,66 @@ function dayLabel(day: string): string {
   return `${date}.${month}`;
 }
 
+const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн",
+                "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+/**
+ * Цвет столбика по напряжённости часа.
+ *
+ * Прежде диаграмма красилась максимальным уровнем среза, и в горячие сутки
+ * все столбики были одинаково красными: понять по ней, где было тише, а где
+ * гуще, было нельзя. Теперь цвет говорит про плотность — спокойно, средне,
+ * плотно, — а уровень опасности и так виден на самой карте.
+ */
+function loadColor(value: number, peak: number, dim: boolean): string {
+  // Доля берётся напрямую, а не через корень: корень нужен высоте, чтобы
+  // спокойные часы было видно, а цвету он всё сдвигает вверх — половина
+  // суток красная там, где на деле треть от пика.
+  const share = peak > 0 ? value / peak : 0;
+  const alpha = dim ? 0.55 : 0.95;
+  if (share >= 0.75) return `rgba(233, 62, 78, ${alpha})`;
+  if (share >= 0.5) return `rgba(247, 129, 43, ${alpha})`;
+  if (share >= 0.25) return `rgba(246, 199, 61, ${alpha})`;
+  return `rgba(124, 191, 142, ${alpha})`;
+}
+
+/** Отметки времени под диаграммой: начало, четверти, конец. */
+function timeTicks(slots: Slot[]): Array<{ at: number; label: string }> {
+  if (slots.length < 2) return [];
+  const marks = [0, 0.25, 0.5, 0.75, 1];
+  const seen = new Set<string>();
+  const out: Array<{ at: number; label: string }> = [];
+  for (const mark of marks) {
+    const index = Math.min(slots.length - 1, Math.round(mark * (slots.length - 1)));
+    const moment = new Date(slots[index].at);
+    const label = new Intl.DateTimeFormat("ru-RU", {
+      timeZone: "Europe/Moscow",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(moment);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push({ at: mark, label });
+  }
+  return out;
+}
+
+/** Отметки месяцев под полосой дней: подписываем там, где месяц сменился. */
+function monthTicks(days: HistoryDay[]): Array<{ at: number; label: string }> {
+  const out: Array<{ at: number; label: string }> = [];
+  let previous = "";
+  days.forEach((entry, index) => {
+    const month = entry.day.slice(5, 7);
+    if (month === previous) return;
+    previous = month;
+    out.push({
+      at: days.length > 1 ? index / (days.length - 1) : 0,
+      label: MONTHS[Number(month) - 1] ?? month
+    });
+  });
+  return out;
+}
+
 /**
  * Плеер истории.
  *
@@ -96,6 +156,24 @@ export function HistoryPanel({
     };
   }, [playing, index, slots.length, speed, onSeek]);
 
+  // Стрелками мотать удобнее, чем тянуть ползунок: шаг ровно в один срез.
+  // Пробел — пуск и пауза, как в любом плеере.
+  useEffect(() => {
+    if (!open || !slots.length) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
+      if (event.key === "ArrowLeft") onSeek(Math.max(0, index - 1));
+      else if (event.key === "ArrowRight") onSeek(Math.min(slots.length - 1, index + 1));
+      else if (event.key === " ") {
+        event.preventDefault();
+        onTogglePlay();
+      } else return;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, slots.length, index, onSeek, onTogglePlay]);
+
   const atLive = !selectedDay && index >= slots.length - 1;
   const current = slots[index];
   const chartPeak = Math.max(1, ...load.map((point) => point.count));
@@ -111,6 +189,7 @@ export function HistoryPanel({
       {open ? (
         <div className="history-body">
           {days.length ? (
+            <>
             <div className="day-strip" role="group" aria-label="Выбор дня">
               {days.map((entry) => (
                 <button
@@ -136,10 +215,21 @@ export function HistoryPanel({
                 </button>
               ))}
             </div>
+            {/* Полоса тянется на месяцы, и без подписи непонятно, куда
+                вообще мотаешь. Месяц подписывается там, где сменился. */}
+            <div className="strip-axis" aria-hidden="true">
+              {monthTicks(days).map((tick) => (
+                <span key={tick.label} style={{ left: `${tick.at * 100}%` }}>
+                  {tick.label}
+                </span>
+              ))}
+            </div>
+            </>
           ) : null}
 
           {slots.length > 1 && load.length === slots.length ? (
-            <div className="history-chart" aria-hidden="true">
+            <>
+            <div className="history-chart">
               {load.map((point, at) => (
                 <button
                   key={slots[at].at}
@@ -147,16 +237,33 @@ export function HistoryPanel({
                   className={`chart-bar ${at === index ? "is-on" : ""}`}
                   onClick={() => onSeek(at)}
                   tabIndex={-1}
+                  data-tip={`${formatDayTime(slots[at].at)} · ${point.count} ${plural(
+                    point.count,
+                    "событие",
+                    "события",
+                    "событий"
+                  )}`}
+                  aria-label={`${formatDayTime(slots[at].at)}, событий ${point.count}`}
                 >
                   <i
                     style={{
                       height: `${barHeight(point.count, chartPeak)}%`,
-                      background: severityColor(point.severity, at === index ? 1 : 0.62)
+                      background: loadColor(point.count, chartPeak, at !== index)
                     }}
                   />
                 </button>
               ))}
             </div>
+            {/* Ось времени: без неё ползунок мотает в пустоту, и понять,
+                какой это час, можно было только по метке внизу. */}
+            <div className="chart-axis" aria-hidden="true">
+              {timeTicks(slots).map((tick) => (
+                <span key={tick.label} style={{ left: `${tick.at * 100}%` }}>
+                  {tick.label}
+                </span>
+              ))}
+            </div>
+            </>
           ) : null}
 
           {loading ? (
@@ -179,7 +286,7 @@ export function HistoryPanel({
                   min={0}
                   max={slots.length - 1}
                   value={index}
-                  aria-label="Момент времени"
+                  aria-label="Момент времени. Стрелки — шаг, пробел — пуск"
                   onChange={(event) => onSeek(Number(event.target.value))}
                 />
 

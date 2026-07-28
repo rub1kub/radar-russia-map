@@ -1973,8 +1973,8 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 44px;
-  margin-bottom: 8px;
+  height: 52px;
+  margin-bottom: 0;
 }
 
 .chart-bar {
@@ -1997,8 +1997,34 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   display: block;
   width: 100%;
   border-radius: 2px 2px 0 0;
-  transition: height 120ms ease;
+  transition: height 120ms ease, background 120ms ease;
 }
+
+/* Оси. Подписи стоят по долям ширины, поэтому крайние сдвигаются внутрь:
+   иначе первая и последняя вылезают за края панели. */
+.chart-axis,
+.strip-axis {
+  position: relative;
+  height: 14px;
+  margin: 2px 0 8px;
+  font-size: 10px;
+  color: rgba(160, 170, 163, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-axis span,
+.strip-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.chart-axis span:first-child,
+.strip-axis span:first-child { transform: translateX(0); }
+.chart-axis span:last-child,
+.strip-axis span:last-child { transform: translateX(-100%); }
+
+.strip-axis { margin-top: -6px; }
 
 .history-stamp b {
   margin-left: 8px;
