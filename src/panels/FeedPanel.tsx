@@ -47,12 +47,6 @@ type Props = {
   totalEvents: number;
 };
 
-const LEVELS = [
-  { value: 8, tip: "Борт уже видят: фиксация, ПВО, взрыв" },
-  { value: 6, tip: "Объявлена тревога" },
-  { value: 4, tip: "Предупреждение об опасности" }
-];
-
 const THREATS = ["uav", "fpv", "rocket", "kab", "bek", "aviation"];
 
 // Сколько карточек рисуем. Больше шестидесяти человек всё равно не читает,
@@ -228,18 +222,22 @@ export function FeedPanel({
               <span>в кадре</span>
             </button>
 
-            {LEVELS.map((level) => (
-              <button
-                key={level.value}
-                type="button"
-                className={`filter-dot ${levelFilter.includes(level.value) ? "is-on" : ""}`}
-                onClick={() => onToggleLevel(level.value)}
-                data-tip={level.tip}
-                aria-label={level.tip}
-              >
-                <i style={{ background: severityColor(level.value, 0.95) }} aria-hidden="true" />
-              </button>
-            ))}
+            {/* Один переключатель вместо трёх безымянных точек: точки без
+                подписей никто не понимал, а нажатая случайно молча резала
+                ленту. «Важное» — это красный уровень: борт уже видят. */}
+            <button
+              type="button"
+              className={`filter-chip ${levelFilter.includes(8) ? "is-on" : ""}`}
+              onClick={() => onToggleLevel(8)}
+              data-tip="Только фиксации, работа ПВО и взрывы — без тревог и предупреждений"
+            >
+              <i
+                className="chip-dot"
+                style={{ background: severityColor(9, 0.95) }}
+                aria-hidden="true"
+              />
+              <span>Важное</span>
+            </button>
 
             {THREATS.map((threat) => (
               <button

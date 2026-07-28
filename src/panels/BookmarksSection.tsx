@@ -1,4 +1,4 @@
-import { BellRing, X } from "lucide-react";
+import { BellRing, Volume2, VolumeX, X } from "lucide-react";
 import type { RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { plural, severityColor } from "../lib/format";
@@ -8,6 +8,8 @@ type Props = {
   state: RadarState | null;
   onPick: (bookmark: Bookmark) => void;
   onRemove: (zoneId: string) => void;
+  soundOn: boolean;
+  onToggleSound: () => void;
 };
 
 /**
@@ -16,12 +18,30 @@ type Props = {
  * Закладки существовали только как колокольчик на выбранной зоне — увидеть
  * все свои места разом было негде, а именно ради них человек и возвращается.
  */
-export function BookmarksSection({ bookmarks, state, onPick, onRemove }: Props) {
+export function BookmarksSection({
+  bookmarks,
+  state,
+  onPick,
+  onRemove,
+  soundOn,
+  onToggleSound
+}: Props) {
   return (
     <section className="tool-section bookmarks-section">
       <div className="section-heading">
         <BellRing size={16} aria-hidden="true" />
         <h2>Мои места</h2>
+        {/* Звук выключен по умолчанию: в этой теме он должен быть осознанным
+            выбором. Кнопка и есть жест, которым браузер разрешает звук. */}
+        <button
+          type="button"
+          className={`sound-toggle ${soundOn ? "is-on" : ""}`}
+          onClick={onToggleSound}
+          title={soundOn ? "Выключить звук тревоги" : "Включить звук тревоги"}
+          aria-pressed={soundOn}
+        >
+          {soundOn ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
+        </button>
       </div>
 
       {bookmarks.length === 0 ? (

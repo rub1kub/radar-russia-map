@@ -41,6 +41,7 @@ from api.limits import (
     env_flag,
     env_int,
 )
+from api.fires import router as fires_router
 from api.geometry import router as geo_router
 from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
@@ -95,6 +96,7 @@ def source_networks() -> dict[str, str | None]:
 app = FastAPI(title="Radar API", version="1.0")
 
 app.include_router(geo_router)
+app.include_router(fires_router)
 
 ACTIVE_WINDOW = timedelta(hours=6)
 
@@ -103,6 +105,33 @@ RESOLVED_WINDOW = timedelta(minutes=30)
 
 # Сколько каналов должно было отчитаться, чтобы день считался собранным.
 MIN_DAY_SOURCES = 5
+
+# --- Крымский мост -----------------------------------------------------------
+# Официальный канал моста пишет и почасовые сводки, и перекрытия. Нам нужно
+# только одно бинарное состояние: перекрыт или нет. Показывается лишь
+# перекрытие — открытый мост не новость и места в шапке не заслуживает.
+import re as _re
+
+BRIDGE_CLOSED_RE = _re.compile(r"перекрыт|приостановлен", _re.IGNORECASE)
+BRIDGE_OPEN_RE = _re.compile(r"возобновлен|восстановлен|запущен|открыт", _re.IGNORECASE)
+BRIDGE_MAX_AGE = timedelta(hours=12)
+
+
+def bridge_status(now: datetime) -> dict | None:
+    """Последнее известное состояние моста, если оно свежее и однозначное."""
+    rows = query(
+        "SELECT posted_at, text FROM raw_messages WHERE source_key = 'most_official'"
+        " ORDER BY id DESC LIMIT 30")
+    for row in rows:
+        at = parse_utc(row["posted_at"])
+        if now - at > BRIDGE_MAX_AGE:
+            return None
+        text = row["text"] or ""
+        if BRIDGE_CLOSED_RE.search(text) and not BRIDGE_OPEN_RE.search(text):
+            return {"closed": True, "at": row["posted_at"]}
+        if BRIDGE_OPEN_RE.search(text):
+            return {"closed": False, "at": row["posted_at"]}
+    return None
 
 # Через сколько зона перестаёт гореть, если сообщений больше нет.
 #
@@ -365,6 +394,7 @@ def build_state() -> dict:
 
     return {
         "generated_at": now.isoformat(),
+        "bridge": bridge_status(now),
         "last_message_at": last_message.isoformat(),
         # Клиент обязан показать, что картинка устарела, если сбор встал.
         "data_age_sec": data_age_sec,
@@ -688,4 +718,8 @@ async def stream(socket: WebSocket):
                 last_sent = marker
             await asyncio.sleep(5)
     except WebSocketDisconnect:
+        return
+    except Exception:
+        # Обрыв на середине отправки — транспорт уже закрыт. Клиент
+        # переподключится или доберёт состояние опросом; падать незачем.
         return

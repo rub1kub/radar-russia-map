@@ -1301,6 +1301,52 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   white-space: nowrap;
 }
 
+/* Мост: показывается только перекрытым. */
+.stat-bridge {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(233, 62, 78, 0.4);
+  background: rgba(233, 62, 78, 0.14);
+  color: rgba(255, 190, 196, 0.95);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-quiet-regions {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(124, 191, 142, 0.1);
+  color: rgba(150, 200, 170, 0.75);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sound-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(200, 208, 201, 0.45);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sound-toggle.is-on { color: rgba(246, 199, 61, 0.9); }
+.sound-toggle:hover { color: rgba(240, 245, 240, 0.85); }
+
+.swatch-fire { background: rgba(255, 140, 60, 0.8); }
+
 .stat-date {
   padding: 4px 9px;
   border-radius: 8px;
@@ -1446,6 +1492,52 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   white-space: nowrap;
 }
 
+/* Мост: показывается только перекрытым. */
+.stat-bridge {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(233, 62, 78, 0.4);
+  background: rgba(233, 62, 78, 0.14);
+  color: rgba(255, 190, 196, 0.95);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-quiet-regions {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(124, 191, 142, 0.1);
+  color: rgba(150, 200, 170, 0.75);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sound-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(200, 208, 201, 0.45);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sound-toggle.is-on { color: rgba(246, 199, 61, 0.9); }
+.sound-toggle:hover { color: rgba(240, 245, 240, 0.85); }
+
+.swatch-fire { background: rgba(255, 140, 60, 0.8); }
+
 .stat-date {
   padding: 4px 9px;
   border-radius: 8px;
@@ -1473,6 +1565,52 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   font-weight: 500;
   white-space: nowrap;
 }
+
+/* Мост: показывается только перекрытым. */
+.stat-bridge {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(233, 62, 78, 0.4);
+  background: rgba(233, 62, 78, 0.14);
+  color: rgba(255, 190, 196, 0.95);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-quiet-regions {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(124, 191, 142, 0.1);
+  color: rgba(150, 200, 170, 0.75);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sound-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(200, 208, 201, 0.45);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sound-toggle.is-on { color: rgba(246, 199, 61, 0.9); }
+.sound-toggle:hover { color: rgba(240, 245, 240, 0.85); }
+
+.swatch-fire { background: rgba(255, 140, 60, 0.8); }
 
 .stat-date {
   padding: 4px 9px;
@@ -1678,6 +1816,52 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   font-weight: 500;
   white-space: nowrap;
 }
+
+/* Мост: показывается только перекрытым. */
+.stat-bridge {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(233, 62, 78, 0.4);
+  background: rgba(233, 62, 78, 0.14);
+  color: rgba(255, 190, 196, 0.95);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-quiet-regions {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(124, 191, 142, 0.1);
+  color: rgba(150, 200, 170, 0.75);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sound-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(200, 208, 201, 0.45);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sound-toggle.is-on { color: rgba(246, 199, 61, 0.9); }
+.sound-toggle:hover { color: rgba(240, 245, 240, 0.85); }
+
+.swatch-fire { background: rgba(255, 140, 60, 0.8); }
 
 .stat-date {
   padding: 4px 9px;
@@ -2156,6 +2340,52 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   font-weight: 500;
   white-space: nowrap;
 }
+
+/* Мост: показывается только перекрытым. */
+.stat-bridge {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(233, 62, 78, 0.4);
+  background: rgba(233, 62, 78, 0.14);
+  color: rgba(255, 190, 196, 0.95);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-quiet-regions {
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(124, 191, 142, 0.1);
+  color: rgba(150, 200, 170, 0.75);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sound-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: rgba(200, 208, 201, 0.45);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sound-toggle.is-on { color: rgba(246, 199, 61, 0.9); }
+.sound-toggle:hover { color: rgba(240, 245, 240, 0.85); }
+
+.swatch-fire { background: rgba(255, 140, 60, 0.8); }
 
 .stat-date {
   padding: 4px 9px;

@@ -45,6 +45,8 @@ export type ZoneCount = {
 
 export type RadarState = {
   generated_at: string;
+  /** Крымский мост: показывается только перекрытие. null — данных нет. */
+  bridge?: { closed: boolean; at: string } | null;
   last_message_at: string;
   data_age_sec: number;
   last_event_at: string | null;
@@ -145,6 +147,11 @@ export const api = {
   eventSources: (id: string, signal?: AbortSignal) =>
     get<{ sources: EventSource[]; counted: number }>(
       `/api/v1/events/${encodeURIComponent(id)}/sources`,
+      signal
+    ),
+  fires: (signal?: AbortSignal) =>
+    get<{ points: Array<[number, number, number]>; updated: string | null }>(
+      "/api/v1/fires",
       signal
     ),
   historyDays: (limit: number, signal?: AbortSignal) =>

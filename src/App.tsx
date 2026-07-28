@@ -14,6 +14,7 @@ import { containsCoordinate, createEmpty, extend, getCenter } from "ol/extent";
 import { unByKey } from "ol/Observable";
 import { fromLonLat } from "ol/proj";
 import Style from "ol/style/Style";
+import CircleStyle from "ol/style/Circle";
 import Fill from "ol/style/Fill";
 import Stroke from "ol/style/Stroke";
 import Text from "ol/style/Text";
@@ -44,6 +45,7 @@ import {
 } from "./lib/format";
 import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
+import { playAlert, setSoundEnabled, soundEnabled } from "./lib/sound";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
@@ -100,6 +102,7 @@ type LayerState = {
   railways: boolean;
   regions: boolean;
   districts: boolean;
+  fires: boolean;
 };
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
@@ -137,7 +140,10 @@ const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: strin
   { key: "urbanAreas", label: "Контуры городов", swatch: "swatch-urban" },
   { key: "waterBodies", label: "Водоемы", swatch: "swatch-water" },
   { key: "rivers", label: "Реки", swatch: "swatch-river" },
-  { key: "landCover", label: "Леса и болота", swatch: "swatch-land-cover" }
+  { key: "landCover", label: "Леса и болота", swatch: "swatch-land-cover" },
+  // Последствия прилётов видны с орбиты раньше и надёжнее, чем в лентах:
+  // НПЗ и склады ГСМ горят сутками. Фоновый слой для интересующихся.
+  { key: "fires", label: "Пожары (NASA)", swatch: "swatch-fire" }
 ];
 
 
@@ -667,6 +673,9 @@ export default function App() {
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
   const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  const fireSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  const fireLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
+  const firesLoadedRef = useRef(false);
   const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
   const selectedKeyRef = useRef<string | null>(null);
@@ -692,6 +701,7 @@ export default function App() {
     railways: false,
     regions: true,
     districts: true,
+    fires: false,
   });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -702,6 +712,7 @@ export default function App() {
   const [highlighted, setHighlighted] = useState(0);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
+  const [alertSound, setAlertSound] = useState(() => soundEnabled());
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   // На узком экране панели занимают почти весь экран, поэтому там они
   // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
@@ -1151,6 +1162,25 @@ export default function App() {
       style: createEventIconStyle
     });
 
+    // Пожары — тихий фон под событиями: мелкие тёплые точки, чуть крупнее
+    // у мощных очагов. Никаких подписей и кругов — это не сигнал, а контекст.
+    const fireLayer = new VectorLayer({
+      source: fireSourceRef.current,
+      visible: layers.fires,
+      zIndex: 35,
+      style: (feature) => {
+        const frp = asNumber(feature.get("frp"), 5);
+        const radius = Math.min(6, 2.4 + Math.log10(Math.max(1, frp)) * 1.6);
+        return new Style({
+          image: new CircleStyle({
+            radius,
+            fill: new Fill({ color: "rgba(255, 140, 60, 0.55)" }),
+            stroke: new Stroke({ color: "rgba(255, 190, 120, 0.6)", width: 0.8 })
+          })
+        });
+      }
+    });
+
     const regionLayer = new VectorLayer({
       source: regionSource,
       visible: layers.regions,
@@ -1176,6 +1206,7 @@ export default function App() {
     roadLayerRef.current = roadLayer;
     railwayLayerRef.current = railwayLayer;
     eventIconLayerRef.current = eventIconLayer;
+    fireLayerRef.current = fireLayer;
     regionLayerRef.current = regionLayer;
     districtLayerRef.current = districtLayer;
 
@@ -1198,6 +1229,7 @@ export default function App() {
         railwayLayer,
         regionLayer,
         districtLayer,
+        fireLayer,
         eventIconLayer
       ],
       view: new View({
@@ -1455,7 +1487,32 @@ export default function App() {
     railwayLayerRef.current?.setVisible(layers.railways);
     regionLayerRef.current?.setVisible(layers.regions);
     districtLayerRef.current?.setVisible(layers.districts);
+    fireLayerRef.current?.setVisible(layers.fires);
     loadLazyLayersRef.current?.();
+
+    // Точки пожаров грузятся при первом включении слоя, а не на старте:
+    // выключенный слой не должен стоить ни одного запроса.
+    if (layers.fires && !firesLoadedRef.current) {
+      firesLoadedRef.current = true;
+      void api
+        .fires()
+        .then((payload) => {
+          const source = fireSourceRef.current;
+          source.clear();
+          for (const [lat, lon, frp] of payload.points) {
+            source.addFeature(
+              new Feature({
+                geometry: new Point(fromLonLat([lon, lat])),
+                kind: "fire",
+                frp
+              })
+            );
+          }
+        })
+        .catch(() => {
+          firesLoadedRef.current = false;
+        });
+    }
   }, [layers]);
 
   // Лента показывает то, что человек видит на экране: карта и список
@@ -1498,6 +1555,18 @@ export default function App() {
 
   const selectedZoneEvents = selectedFeed.events;
   const zoneEventsFromRegion = selectedFeed.fromRegion;
+
+  // Регионы без единого события. Всего субъектов в справочнике 89; из
+  // paintedZones берём только уровень региона.
+  const quietRegions = useMemo(() => {
+    if (!radarState) return null;
+    const litRegions = Object.values(paintedZones).filter(
+      (zone) => zone.level === "region"
+    ).length;
+    const total = dataset?.regions.features.length ?? 0;
+    if (!total) return null;
+    return Math.max(0, total - litRegions);
+  }, [radarState, paintedZones, dataset]);
 
   const selectedRegionName = useMemo(() => {
     if (!selectedRegionPolygon) return null;
@@ -1628,6 +1697,8 @@ export default function App() {
     );
     if (!fresh.length) return;
     setAlerts(fresh);
+    // Звук — только по явному выбору: тема не та, где сюрпризы уместны.
+    if (alertSound) playAlert();
     markSeen(fresh.map((event) => event.id));
   }, [radarState, bookmarks, historyAt]);
 
@@ -1653,6 +1724,10 @@ export default function App() {
         <TopbarStats
           events={radarState ? shownEvents : null}
           zones={Object.keys(paintedZones).length}
+          quietRegions={quietRegions}
+          bridgeClosedAt={
+            radarState?.bridge?.closed ? radarState.bridge.at : null
+          }
           historyLabel={historyAt ? formatDayTime(historyAt) : null}
           moment={radarState?.generated_at ?? null}
         />
@@ -1774,6 +1849,15 @@ export default function App() {
             state={radarState}
             onPick={flyToBookmark}
             onRemove={removeBookmark}
+            soundOn={alertSound}
+            onToggleSound={() => {
+              const next = !alertSound;
+              setAlertSound(next);
+              setSoundEnabled(next);
+              // Пробный сигнал при включении: слышно, что именно включил,
+              // и заодно браузер получает жест для разрешения звука.
+              if (next) playAlert();
+            }}
           />
 
           <details className="extra-layers">
