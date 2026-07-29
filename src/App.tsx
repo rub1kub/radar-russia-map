@@ -43,13 +43,13 @@ import {
   signalLabel,
   threatLabel
 } from "./lib/format";
-import { iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
+import { directionArrow, iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
-import { playAlert, setSoundEnabled, soundEnabled } from "./lib/sound";
+import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/sound";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
-import type { HistoryDay } from "./lib/api";
+import type { History, HistoryDay } from "./lib/api";
 import {
   loadBookmarks,
   loadSeen,
@@ -61,6 +61,7 @@ import type { Bookmark } from "./lib/bookmarks";
 import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
+import { AboutPanel } from "./panels/AboutPanel";
 import { AlertToast } from "./panels/AlertToast";
 import { BookmarksSection } from "./panels/BookmarksSection";
 import { TopbarStats } from "./panels/TopbarStats";
@@ -235,6 +236,7 @@ function severityLevel(severity: number): number {
 // бледной зоне остаётся яркая метка и спорит с ней.
 const ICON_FADE_MS = 30 * 60 * 1000;
 const iconStyleCache = new globalThis.Map<string, Style>();
+const arrowStyleCache = new globalThis.Map<string, Style>();
 
 function createEventIconStyle(feature: FeatureLike, resolution: number) {
   // Порог ниже стартового масштаба (4.15): иначе значки не видны на загрузке.
@@ -249,18 +251,40 @@ function createEventIconStyle(feature: FeatureLike, resolution: number) {
   const bucket = Math.round(freshness * 5) / 5;
   const key = `${kind}|${severity}|${bucket}`;
 
-  const cached = iconStyleCache.get(key);
-  if (cached) return cached;
+  let style = iconStyleCache.get(key);
+  if (!style) {
+    style = new Style({
+      image: new Icon({
+        src: threatIcon(kind as never, severityColor(severity, 1), bucket),
+        scale: 0.62,
+        anchor: [0.5, 0.5]
+      })
+    });
+    iconStyleCache.set(key, style);
+  }
 
-  const style = new Style({
-    image: new Icon({
-      src: threatIcon(kind as never, severityColor(severity, 1), bucket),
-      scale: 0.62,
-      anchor: [0.5, 0.5]
-    })
-  });
-  iconStyleCache.set(key, style);
-  return style;
+  // Курс, если лента его назвала: стрелка за краем круга, повёрнутая туда,
+  // куда борт идёт. Единственная деталь на карте, отвечающая «на нас?».
+  const heading = feature.get("heading");
+  if (typeof heading !== "number") return style;
+
+  // Кеш по 15°: непрерывный угол наплодил бы стиль на каждое событие.
+  const headingBucket = Math.round(heading / 15) * 15;
+  const arrowKey = `${severity}|${bucket}|${headingBucket}`;
+  let arrow = arrowStyleCache.get(arrowKey);
+  if (!arrow) {
+    arrow = new Style({
+      image: new Icon({
+        src: directionArrow(severityColor(severity, 1), bucket),
+        scale: 0.62,
+        anchor: [0.5, 0.5],
+        rotation: (headingBucket * Math.PI) / 180,
+        rotateWithView: true
+      })
+    });
+    arrowStyleCache.set(arrowKey, arrow);
+  }
+  return [style, arrow];
 }
 
 function createRegionStyle(
@@ -682,6 +706,12 @@ export default function App() {
   const layersRef = useRef<LayerState | null>(null);
   const loadLazyLayersRef = useRef<(() => void) | null>(null);
   const featureIndexRef = useRef<globalThis.Map<string, Feature<Geometry>>>(new globalThis.Map());
+  // Выбор, отложенный до подгрузки полигонов. Поиск тихого района на свежей
+  // странице раньше просто пролетал мимо: полигоны районов ленивые, и
+  // выделять было нечего — человек искал второй раз и решал, что поиск
+  // сломан. Ключ формата "district:<source_id>" + срок годности.
+  const pendingSelectRef = useRef<{ key: string; until: number } | null>(null);
+  const forceDistrictsRef = useRef<(() => void) | null>(null);
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [selected, setSelected] = useState<SelectedObject>(emptySelected);
@@ -714,6 +744,7 @@ export default function App() {
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
   const [alertSound, setAlertSound] = useState(() => soundEnabled());
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   // На узком экране панели занимают почти весь экран, поэтому там они
   // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
   const [leftOpen, setLeftOpen] = useState(
@@ -784,10 +815,29 @@ export default function App() {
     return () => controller.abort();
   }, [historyOpen, historyDays.length]);
 
+  // Уже загруженные сутки держим под рукой: человек ходит между соседними
+  // днями туда-сюда, и каждый повторный клик стоил полного запроса.
+  const dayCacheRef = useRef<globalThis.Map<string, History>>(new globalThis.Map());
+
   // Выбранные сутки загружаются отдельно от суточного окна: человек мыслит
   // своим днём, а не «последними 24 часами».
   useEffect(() => {
     if (!historyOpen || !selectedDay) return;
+
+    const applyDay = (payload: History) => {
+      const built = buildSlots(payload.from, payload.to);
+      setHistoryEvents(payload.events);
+      setSlots(built);
+      setSlotIndex(0);
+      setHistoryLoading(false);
+    };
+
+    const cached = dayCacheRef.current.get(selectedDay);
+    if (cached) {
+      applyDay(cached);
+      return;
+    }
+
     const controller = new AbortController();
     setHistoryLoading(true);
 
@@ -795,11 +845,15 @@ export default function App() {
       .historyDay(selectedDay, controller.signal)
       .then((payload) => {
         if (controller.signal.aborted) return;
-        const built = buildSlots(payload.from, payload.to);
-        setHistoryEvents(payload.events);
-        setSlots(built);
-        setSlotIndex(0);
-        setHistoryLoading(false);
+        const cache = dayCacheRef.current;
+        cache.set(selectedDay, payload);
+        // Горячие сутки — это мегабайты; больше восьми держать незачем.
+        while (cache.size > 8) {
+          const oldest = cache.keys().next().value;
+          if (oldest === undefined) break;
+          cache.delete(oldest);
+        }
+        applyDay(payload);
       })
       .catch(() => {
         if (!controller.signal.aborted) setHistoryLoading(false);
@@ -877,6 +931,8 @@ export default function App() {
   }, []);
 
   const applySelectedFeature = useCallback((feature: FeatureLike | null) => {
+    // Любой явный выбор отменяет отложенный: человек уже передумал.
+    pendingSelectRef.current = null;
     selectedKeyRef.current = feature ? featureKey(feature) : null;
     setSelected(feature ? selectedFromFeature(feature) : emptySelected);
     // Регион выбранного района запоминается сразу: если в самом районе
@@ -933,11 +989,27 @@ export default function App() {
 
     // Push с сервера. Опрос остаётся подстраховкой: если сокет не поднялся
     // или оборвался, карта продолжает обновляться, просто реже.
+    //
+    // Сокет переподключается сам: раньше первый же обрыв (сон ноутбука,
+    // рестарт сервера) навсегда переводил карту на 25-секундный опрос.
+    // Пауза растёт вдвое на каждой неудаче и сбрасывается после успешного
+    // кадра — упавший сервер не обстреливается, живой ловится за секунды.
     let socket: WebSocket | null = null;
-    try {
-      socket = new WebSocket(`${API_BASE.replace(/^http/, "ws")}/api/v1/stream`);
+    let retryTimer: number | null = null;
+    let retryDelay = 3_000;
+
+    const connect = () => {
+      if (!active) return;
+      try {
+        socket = new WebSocket(`${API_BASE.replace(/^http/, "ws")}/api/v1/stream`);
+      } catch {
+        // Адрес не годится для сокета вовсе — остаёмся на опросе.
+        socket = null;
+        return;
+      }
       socket.onmessage = (event) => {
         if (!active) return;
+        retryDelay = 3_000;
         try {
           const payload = JSON.parse(event.data) as RadarState & { type?: string };
           if (payload.type === "state") {
@@ -948,15 +1020,20 @@ export default function App() {
           // Битый кадр пропускаем: следующий придёт через несколько секунд.
         }
       };
+      socket.onclose = () => {
+        if (!active) return;
+        retryTimer = window.setTimeout(connect, retryDelay + Math.random() * 1_000);
+        retryDelay = Math.min(retryDelay * 2, 60_000);
+      };
       socket.onerror = () => socket?.close();
-    } catch {
-      socket = null;
-    }
+    };
+    connect();
 
     const timer = window.setInterval(pull, STATE_POLL_MS);
     return () => {
       active = false;
       window.clearInterval(timer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       socket?.close();
     };
   }, []);
@@ -1031,7 +1108,14 @@ export default function App() {
           threat: event.threat_type === "unknown" ? "" : threatLabel(event.threat_type),
           sources: event.source_count,
           at: event.last_seen_at,
-          ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime())
+          ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime()),
+          // Разбор хранит, ОТКУДА пришла цель («с юго-запада» — 225).
+          // Стрелке нужен курс — куда она идёт дальше, то есть напротив.
+          // У отбоя курса не бывает: борта уже нет.
+          heading:
+            typeof event.direction_deg === "number" && event.signal_type !== "allclear"
+              ? (event.direction_deg + 180) % 360
+              : null
         })
       );
     }
@@ -1292,13 +1376,33 @@ export default function App() {
           window.clearInterval(activeDistrictsTimer);
         }
         source.addFeatures(features);
-        if (source === districtSource) districtLayerRef.current?.changed();
+        if (source === districtSource) {
+          districtLayerRef.current?.changed();
+          applyPendingSelection();
+        }
       } catch (reason: unknown) {
         loadedRef.current = false;
         if (!disposed) {
           setError(reason instanceof Error ? `Не удалось загрузить слой ${layerName}: ${reason.message}` : `Не удалось загрузить слой ${layerName}`);
         }
       }
+    };
+
+    // Выделить место, которое поиск выбрал раньше, чем приехал его полигон.
+    // Ключ снимается до применения: applySelectedFeature сама чистит
+    // отложенный выбор, и иначе она стёрла бы то, что мы как раз применяем.
+    const applyPendingSelection = () => {
+      const pending = pendingSelectRef.current;
+      if (!pending) return;
+      if (Date.now() > pending.until) {
+        pendingSelectRef.current = null;
+        return;
+      }
+      const feature = featureIndexRef.current.get(pending.key);
+      if (!feature) return;
+      pendingSelectRef.current = null;
+      applySelectedFeature(feature);
+      fitFeature(map, feature, 7.4);
     };
 
     const maybeLoadLazyLayers = () => {
@@ -1355,6 +1459,7 @@ export default function App() {
         });
         districtSource.addFeatures(fresh);
         districtLayerRef.current?.changed();
+        applyPendingSelection();
       } catch {
         // Подсветка появится, когда подгрузится полный набор районов.
       }
@@ -1364,6 +1469,9 @@ export default function App() {
     const activeDistrictsTimer = window.setInterval(loadActiveDistricts, 60_000);
 
     loadLazyLayersRef.current = maybeLoadLazyLayers;
+    // Поиску нужен способ дозаказать полигоны районов, не дожидаясь зума.
+    forceDistrictsRef.current = () =>
+      void loadVectorLayer("/data/districts.json", districtSource, districtsLoadedRef, "районов");
     const syncExtent = () => {
       const size = map.getSize();
       if (size && size[0] > 0 && size[1] > 0) {
@@ -1465,6 +1573,8 @@ export default function App() {
       railwaysLoadedRef.current = false;
       districtsLoadedRef.current = false;
       loadLazyLayersRef.current = null;
+      forceDistrictsRef.current = null;
+      pendingSelectRef.current = null;
       layersRef.current = null;
       eventIconLayerRef.current = null;
       regionLayerRef.current = null;
@@ -1611,9 +1721,22 @@ export default function App() {
         applySelectedFeature(null);
         map.getView().animate({
           center: fromLonLat([item.lon, item.lat]),
-          zoom: Math.max(map.getView().getZoom() ?? 5, 8.8),
+          zoom: Math.max(map.getView().getZoom() ?? 5, item.level === "district" ? 7 : 8.8),
           duration: 420
         });
+      }
+
+      // Полигоны районов ленивые, и на свежей странице выделять ещё нечего:
+      // поиск находил район, карта долетала до места — и ничего не
+      // подсвечивалось, пока не поищешь второй раз. Просим полный набор и
+      // откладываем выделение до его прихода. Ставится после
+      // applySelectedFeature(null): та чистит отложенный выбор.
+      if (item.source_id && item.level === "district") {
+        pendingSelectRef.current = {
+          key: `district:${item.source_id}`,
+          until: Date.now() + 20_000
+        };
+        forceDistrictsRef.current?.();
       }
       setQuery(item.name);
       setSuggestions([]);
@@ -1694,19 +1817,32 @@ export default function App() {
     );
   }, [selected, radarState]);
 
-  // Уведомление по отслеживаемым местам — один раз на событие.
+  // Уведомление по отслеживаемым местам — один раз на событие. Отбой
+  // приходит тем же путём со своим ключом «id:clear»: человеку он важнее
+  // самой тревоги, а раньше тревога просто молча гасла.
   useEffect(() => {
     if (!radarState || !bookmarks.length || historyAt) return;
     const seen = new Set(loadSeen());
-    const fresh = matchBookmarks(radarState.events, bookmarks).filter(
-      (event) => !seen.has(event.id)
+    const matched = matchBookmarks(radarState.events, bookmarks);
+    const alarms = matched.filter(
+      (event) => event.status !== "resolved" && !seen.has(event.id)
     );
-    if (!fresh.length) return;
-    setAlerts(fresh);
+    const clears = matched.filter(
+      (event) => event.status === "resolved" && !seen.has(`${event.id}:clear`)
+    );
+    if (!alarms.length && !clears.length) return;
+    setAlerts([...alarms, ...clears]);
     // Звук — только по явному выбору: тема не та, где сюрпризы уместны.
-    if (alertSound) playAlert();
-    markSeen(fresh.map((event) => event.id));
-  }, [radarState, bookmarks, historyAt]);
+    // Отбой звучит мягче и вниз; при одновременной тревоге громче она.
+    if (alertSound) {
+      if (alarms.length) playAlert();
+      else playAllClear();
+    }
+    markSeen([
+      ...alarms.map((event) => event.id),
+      ...clears.map((event) => `${event.id}:clear`)
+    ]);
+  }, [radarState, bookmarks, historyAt, alertSound]);
 
   const resetMap = useCallback(() => {
     const map = mapRef.current;
@@ -1892,6 +2028,13 @@ export default function App() {
               Не принимайте по ней решения о личной безопасности — следуйте
               указаниям экстренных служб.
             </p>
+            <button
+              className="about-link"
+              type="button"
+              onClick={() => setAboutOpen(true)}
+            >
+              Как это работает
+            </button>
           </details>
         </aside>
 
@@ -2032,6 +2175,7 @@ export default function App() {
       </main>
 
       <AnalyticsPanel open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
+      <AboutPanel open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }

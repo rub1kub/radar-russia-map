@@ -106,6 +106,22 @@ export function threatIcon(kind: IconKind, color: string, opacity = 1): string {
 }
 
 /**
+ * Стрелка курса, рисуется отдельным значком поверх круга.
+ *
+ * Холст больше круга, шеврон у верхней кромки: вращение вокруг центра
+ * (anchor 0.5) выносит его на нужную сторону, за край круглой подложки.
+ * Ленты часто пишут, откуда идёт борт («с юго-запада»), — стрелка
+ * показывает, куда он идёт дальше, и карта отвечает на вопрос «на нас?».
+ */
+export function directionArrow(color: string, opacity = 1): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">
+    <path d="M28 2.5 L34 12 L28 9 L22 12 Z" fill="${color}" opacity="${opacity.toFixed(2)}"
+          stroke="#0b0d0d" stroke-width="1" stroke-linejoin="round"/>
+  </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.replace(/\s+/g, " "))}`;
+}
+
+/**
  * Какой значок ставить.
  *
  * Сигнал важнее типа угрозы: сбитие и взрыв — это про исход, а не про то,

@@ -962,6 +962,12 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .zone-card p { margin: 5px 0 0; font-size: 12px; color: rgba(226, 222, 212, 0.8); }
 .zone-card-quiet { opacity: 0.6; }
 
+/* Вычисленный ответ на «можно уже выходить?». Зелёный сдержанный: это
+   вывод из тишины в эфире, а не объявленный отбой. */
+.zone-card .zone-card-verdict {
+  color: rgba(151, 205, 168, 0.88);
+}
+
 /* Карточка складывается в колонку: сама кнопка, под ней раскрытые
    источники. Раньше li оставался flex-строкой из объявления выше, и
    кнопка, переключатель источников и список вставали в один ряд —
@@ -1739,6 +1745,37 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   line-height: 1.5;
   color: rgba(176, 184, 178, 0.62);
 }
+
+/* Вход в «О проекте»: ссылка, а не кнопка — рядом с дисклеймером ей место
+   тихое. */
+.about-link {
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: rgba(151, 205, 168, 0.75);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.about-link:hover { color: rgba(178, 226, 192, 0.95); }
+
+/* «О проекте» — та же карточка, что аналитика, но текстовая. */
+.about-card { max-width: 520px; }
+.about-card h3 {
+  margin: 16px 0 5px;
+  font-size: 12.5px;
+  color: rgba(226, 229, 220, 0.88);
+}
+.about-card p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(203, 208, 198, 0.78);
+}
+.about-card a { color: rgba(151, 205, 168, 0.9); }
+.about-foot { padding-top: 6px; }
 
 /* --- Единый ритм отступов между плавающими элементами --------------------- */
 /*

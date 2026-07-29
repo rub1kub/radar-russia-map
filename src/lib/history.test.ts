@@ -85,7 +85,12 @@ describe("zoneCountsAt", () => {
     const counts = zoneCountsAt([event()], "2026-07-27T10:05:00Z", {
       azovskiy_rayon: {
         active: 0,
+        own: 0,
         max_severity: 0,
+        severity: 0,
+        fade: 1,
+        own_severity: 0,
+        own_fade: 1,
         last_active: "",
         level: "district",
         source_id: "POLY-42",

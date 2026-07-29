@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { EventSource, RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
+import { quietMinutes } from "../lib/feed";
 import {
   durationMinutes,
   formatAge,
@@ -115,6 +116,14 @@ export function FeedPanel({
   // показывала бы будущее относительно выбранного среза.
   const reference = referenceIso ?? state?.generated_at ?? new Date().toISOString();
 
+  // Ответ на главный вопрос под тревогой: «можно уже выходить?» Половина
+  // лент отбоев не пишет; когда окно пролёта у всех незакрытых событий
+  // места вышло, говорим это прямо. Только в живом эфире: в архиве вопрос
+  // не стоит.
+  const quiet = selectedName && zoneEvents.length && !historyLabel
+    ? quietMinutes(zoneEvents, reference)
+    : null;
+
   // Событие могло получить последнее сообщение уже после просматриваемого
   // момента. Тогда «сколько прошло» считать не от него, а от среза: иначе
   // архивная карточка писала «только что» и делалась неотличимой от эфира.
@@ -215,6 +224,13 @@ export function FeedPanel({
                         "событий здесь"
                       )}`}
               </p>
+              {quiet !== null ? (
+                <p className="zone-card-verdict">
+                  Отбоя не было, но эфир молчит {quiet}{" "}
+                  {plural(quiet, "минуту", "минуты", "минут")} — за это время
+                  борт успевает покинуть зону.
+                </p>
+              ) : null}
             </div>
           ) : null}
 

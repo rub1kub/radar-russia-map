@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { iconKindFor, isPointEvent, threatIcon } from "./icons";
+import { directionArrow, iconKindFor, isPointEvent, threatIcon } from "./icons";
 
 describe("iconKindFor", () => {
   it("исход события важнее типа угрозы", () => {
@@ -68,6 +68,21 @@ describe("threatIcon", () => {
     const kinds = ["uav", "fpv", "rocket", "kab", "bek", "aviation", "intercept", "impact", "allclear", "unknown"] as const;
     const uris = new Set(kinds.map((kind) => threatIcon(kind, "red")));
     expect(uris.size).toBe(kinds.length);
+  });
+});
+
+describe("directionArrow", () => {
+  it("возвращает валидный data URI с цветом уровня", () => {
+    const uri = directionArrow("rgba(233, 62, 78, 1)");
+    expect(uri.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
+    const svg = decodeURIComponent(uri.split(",").slice(1).join(","));
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("rgba(233, 62, 78, 1)");
+  });
+
+  it("прозрачность попадает в разметку", () => {
+    const svg = decodeURIComponent(directionArrow("red", 0.4).split(",").slice(1).join(","));
+    expect(svg).toContain('opacity="0.40"');
   });
 });
 

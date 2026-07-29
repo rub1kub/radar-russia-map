@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { zoneFeed } from "./feed";
+import { quietMinutes, zoneFeed } from "./feed";
 import type { RadarEvent } from "./api";
 
 const event = (id: string, path: string[]): RadarEvent =>
@@ -62,5 +62,39 @@ describe("zoneFeed", () => {
 
   it("без известной области ответа нет, но и чужого не показываем", () => {
     expect(zoneFeed(ALL, null, null).events).toEqual([]);
+  });
+});
+
+describe("quietMinutes", () => {
+  // Тревога по району, БПЛА: окно пролёта 35 минут.
+  const alarm = event("azov", ["azov", "rostov"]);
+
+  it("окно ещё не вышло — вердикта нет, тревога в силе", () => {
+    // 20 минут тишины при окне в 35: борт ещё может быть в зоне.
+    expect(quietMinutes([alarm], "2026-07-28T21:30:00Z")).toBeNull();
+  });
+
+  it("окно вышло — возвращает минуты тишины", () => {
+    // 50 минут после последнего сообщения: район борт пересекает за 35.
+    expect(quietMinutes([alarm], "2026-07-28T22:00:00Z")).toBe(50);
+  });
+
+  it("считает по самому живучему событию", () => {
+    // Первое молчит давно, второе свежее: пока у него окно не вышло,
+    // вердикта нет — иначе старая карточка «разрешала выходить» при
+    // действующей тревоге по соседству.
+    const fresh = { ...event("bataysk", ["bataysk", "rostov"]), last_seen_at: "2026-07-28T21:50:00Z" };
+    expect(quietMinutes([alarm, fresh], "2026-07-28T22:00:00Z")).toBeNull();
+  });
+
+  it("закрытые события вердикта не требуют: отбой уже показан", () => {
+    const resolved = { ...alarm, status: "resolved" };
+    expect(quietMinutes([resolved], "2026-07-28T23:00:00Z")).toBeNull();
+  });
+
+  it("ракета покидает зону быстрее дрона", () => {
+    // Для ракеты окно района 35 * 0.2 = 7, но не меньше пола в 8 минут.
+    const rocket = { ...alarm, threat_type: "rocket" };
+    expect(quietMinutes([rocket], "2026-07-28T21:20:00Z")).toBe(10);
   });
 });

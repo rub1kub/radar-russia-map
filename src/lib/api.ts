@@ -22,6 +22,8 @@ export type RadarEvent = {
   lat: number | null;
   lon: number | null;
   accuracy_m: number | null;
+  /** Откуда пришла цель, азимут в градусах: 0 — с севера. */
+  direction_deg?: number | null;
   target_count: number | null;
 };
 
