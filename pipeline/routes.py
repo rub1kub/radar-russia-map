@@ -28,10 +28,17 @@ ROUTE_MARKER_RE = re.compile(
 
 # Больше шести точек в одном сообщении — это уже сводка, а не маршрут.
 MAX_POINTS = 6
-# Плечо длиннее — почти наверняка ошибка геокодера (тёзка в другом краю).
-MAX_LEG_KM = 300.0
+# Плечо длиннее — почти наверняка ошибка геокодера: настоящие маршруты в
+# корпусе идут по соседним районам, плечи 14-60 км. На пороге в 300 км
+# хутор-тёзка «Большой» рисовал линию через Чёрное море в Сочи.
+MAX_LEG_KM = 120.0
 # Короче — точки слились в одно место, линия выродилась.
 MIN_TOTAL_KM = 5.0
+# Путь длиннее прямой более чем в полтора раза — это не полёт, а
+# перечисление районов-адресатов в порядке списка: «Армавир, Белоглинский,
+# Новопокровский... в направлении X» рисовало зигзаг с извилистостью до 8.
+# У настоящих маршрутов корпуса она 1.0-1.1.
+MAX_SINUOSITY = 1.6
 
 
 def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -75,6 +82,9 @@ def extract_route(text: str, observation, resolved) -> list[tuple[float, float, 
             return None
         total += leg
     if total < MIN_TOTAL_KM:
+        return None
+    direct = _km((points[0][0], points[0][1]), (points[-1][0], points[-1][1]))
+    if direct < MIN_TOTAL_KM or total > direct * MAX_SINUOSITY:
         return None
     return points
 

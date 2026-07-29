@@ -62,3 +62,25 @@ def test_geocoder_miss_does_not_draw_across_the_country():
     far = Resolved("belogorsk_amur", "district", "Белогорск", 50.9, 128.5, "белогорск")
     text = "Анапа, БПЛА курс на Белогорск"
     assert extract_route(text, parse(text), [ANAPA, far]) is None
+
+
+def test_namesake_leg_over_the_sea_is_not_a_route():
+    """Хутор «Большой» рисовал линию в Сочи через Чёрное море: 289 км одним
+    плечом. Настоящие маршруты корпуса идут по соседним районам."""
+    bolshoy = Resolved("bolshoy", "place", "Большой", 46.8, 39.9, "большой")
+    sochi = Resolved("sochi", "district", "Сочи", 43.6, 39.7, "сочи")
+    text = "БПЛА идёт на Сочи, Большой в зоне внимания"
+    assert extract_route(text, parse(text), [bolshoy, sochi]) is None
+
+
+def test_address_list_zigzag_is_not_a_route():
+    """«Армавир, Белоглинский, Новопокровский... в направлении X» — районы
+    в порядке перечисления, а не полёта: извилистость до 8 против 1.0-1.1
+    у настоящих маршрутов. Зигзаг не рисуем."""
+    armavir = Resolved("armavir", "district", "Армавир", 44.99, 41.12, "армавир")
+    beloglin = Resolved("beloglinsky", "district", "Белоглинский район", 46.07, 40.86, "белоглинский")
+    novopokr = Resolved("novopokrovsky", "district", "Новопокровский район", 45.95, 40.70, "новопокровский")
+    tbilis = Resolved("tbilissky", "district", "Тбилисский район", 45.36, 40.19, "тбилисский")
+    text = ("Армавир, Белоглинский район, Новопокровский район, Тбилисский район "
+            "опасность БПЛА в направлении Кропоткина")
+    assert extract_route(text, parse(text), [armavir, beloglin, novopokr, tbilis]) is None
