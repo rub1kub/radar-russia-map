@@ -37,7 +37,7 @@ from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
 from .geocode import Geocoder, Resolved  # noqa: E402
 from .networks import load_networks  # noqa: E402
-from .parse import parse, strip_footer  # noqa: E402
+from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_region import build_fallback  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
@@ -455,6 +455,11 @@ def run_once(
         home = fallback.get(row["source_key"])
         resolved = geocoder.drop_covered(
             geocoder.resolve(observation.place_phrases, home=home))
+        # Каталог городов, а не оповещение: реклама сети «Город 24/7»
+        # разошлась на 168 ложных тревог одним сообщением.
+        if len(resolved) > MAX_RESOLVED_ZONES:
+            stats["catalog"] = stats.get("catalog", 0) + 1
+            continue
         if not resolved:
             if home:
                 zone = geocoder.zones[home]
