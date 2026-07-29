@@ -1570,6 +1570,12 @@ export default function App() {
 
   const selectedRegionName = useMemo(() => {
     if (!selectedRegionPolygon) return null;
+    // Имя берётся из самого полигона региона: счётчики обстановки знают
+    // только шумные зоны, и у тихого региона имени в них нет — а карточка
+    // обязана называть регион всегда, не только когда в нём что-то горит.
+    const feature = featureIndexRef.current.get(`region:${selectedRegionPolygon}`);
+    const name = feature?.get("name");
+    if (name) return String(name);
     const zoneId = polygonToZoneRef.current.get(selectedRegionPolygon);
     return zoneId ? paintedZones[zoneId]?.name ?? null : null;
   }, [selectedRegionPolygon, paintedZones]);

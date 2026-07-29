@@ -952,6 +952,13 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   padding: 0 2px;
 }
 
+.zone-card-region {
+  margin-left: 7px;
+  font-size: 11.5px;
+  font-weight: 450;
+  color: rgba(214, 208, 190, 0.6);
+}
+
 .zone-card p { margin: 5px 0 0; font-size: 12px; color: rgba(226, 222, 212, 0.8); }
 .zone-card-quiet { opacity: 0.6; }
 

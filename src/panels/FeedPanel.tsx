@@ -162,7 +162,14 @@ export function FeedPanel({
             <div className="zone-card">
               <div className="zone-card-head">
                 <Building2 size={15} aria-hidden="true" />
-                <span>{selectedName}</span>
+                <span>
+                  {selectedName}
+                  {/* Издалека районы безлики: «Чистопольский район» ничего
+                      не говорит, пока рядом не написано «Татарстан». */}
+                  {regionName && regionName !== selectedName ? (
+                    <span className="zone-card-region">{regionName}</span>
+                  ) : null}
+                </span>
                 {selectedZoneId ? (
                   <button
                     type="button"
