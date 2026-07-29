@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import type { EventSource, RadarEvent, RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { isBookmarked } from "../lib/bookmarks";
-import { quietMinutes } from "../lib/feed";
+import { quietVerdict } from "../lib/feed";
 import {
   durationMinutes,
   formatAge,
@@ -121,7 +121,7 @@ export function FeedPanel({
   // места вышло, говорим это прямо. Только в живом эфире: в архиве вопрос
   // не стоит.
   const quiet = selectedName && zoneEvents.length && !historyLabel
-    ? quietMinutes(zoneEvents, reference)
+    ? quietVerdict(zoneEvents, reference)
     : null;
 
   // Событие могло получить последнее сообщение уже после просматриваемого
@@ -227,9 +227,14 @@ export function FeedPanel({
               {quiet !== null ? (
                 <p className="zone-card-verdict">
                   {/* После часа счёт идёт часами: «эфир молчит 121 минуту»
-                      читалось как сбой, а не как ответ. */}
-                  Отбоя не было, но эфир молчит {formatAge(quiet * 60)} — за
-                  это время борт успевает покинуть зону.
+                      читалось как сбой, а не как ответ. Про борт — только
+                      если его действительно видели: «опасность» без единой
+                      фиксации борта не утверждает, и говорить о нём как о
+                      бывшем здесь карта не вправе. */}
+                  Отбоя не было, но эфир молчит {formatAge(quiet.minutes * 60)} —{" "}
+                  {quiet.sighted
+                    ? "за это время борт успевает покинуть зону."
+                    : "если борт и шёл сюда, зону он бы уже покинул."}
                 </p>
               ) : null}
             </div>

@@ -36,8 +36,18 @@ export function zoneFeed(
   };
 }
 
+/** Сигналы, утверждающие, что борт действительно видели. */
+const SIGHTING_SIGNALS = new Set(["detection", "intercept", "impact"]);
+
+export type QuietVerdict = {
+  /** Сколько минут эфир молчит. */
+  minutes: number;
+  /** Борт видели (фиксация, ПВО, взрыв) — или было только предупреждение. */
+  sighted: boolean;
+};
+
 /**
- * Сколько минут эфир молчит по месту — если молчит значимо долго.
+ * Молчание эфира по месту — если оно молчит значимо долго.
  *
  * Главный вопрос человека под тревогой: «она ещё действует — мне можно
  * выходить?» Половина лент отбоев не пишет, событие просто затухает, и
@@ -45,10 +55,14 @@ export function zoneFeed(
  * незакрытых событий вышло окно пролёта (то самое, по которому гаснет
  * заливка — скорость борта на размер зоны), борт зону уже покинул бы.
  *
+ * sighted различает факт и гипотезу: «опасность» без единой фиксации не
+ * утверждает, что борт был, — и вердикт не вправе говорить о нём как о
+ * бывшем здесь. Для предупреждений формулировка сослагательная.
+ *
  * null — вердикта нет: либо всё закрыто отбоем (его карточки и так
  * показывают), либо окно ещё не вышло и тревога в силе.
  */
-export function quietMinutes(events: RadarEvent[], referenceIso: string): number | null {
+export function quietVerdict(events: RadarEvent[], referenceIso: string): QuietVerdict | null {
   const open = events.filter((event) => event.status !== "resolved");
   if (!open.length) return null;
 
@@ -61,5 +75,9 @@ export function quietMinutes(events: RadarEvent[], referenceIso: string): number
   }
 
   const minutes = Math.floor((reference - lastMs) / 60_000);
-  return minutes >= 1 ? minutes : null;
+  if (minutes < 1) return null;
+  return {
+    minutes,
+    sighted: open.some((event) => SIGHTING_SIGNALS.has(event.signal_type))
+  };
 }
