@@ -51,10 +51,10 @@ SOURCES: list[Source] = [
     Source("lpr1_krasnodar", "lpr1_Krasnodar_alarm", "Краснодарский край оповещения", "regional", 95_761, network="lpr1"),
     Source("pra_vo_zn", "PRA_VO_ZN", "ПРАВО ЗНАТЬ", "mixed", 49_602),
     Source("rschs_krd_adygea", "radar_rschs_krd_adygea", "ЧП Кубань и Адыгея", "mixed", 17_884),
-    Source("kubanoidici", "kubanoidici24838", "Кубанский Вестник", "regional", 9_909),
-    Source("krasnodarskiy_dozor", "krasnodarskiy_dozor_radar", "Краснодарский Дозор", "regional", 9_641),
+    Source("kubanoidici", "kubanoidici24838", "Кубанский Вестник", "regional", 9_909, region="krasnodar"),
+    Source("krasnodarskiy_dozor", "krasnodarskiy_dozor_radar", "Краснодарский Дозор", "regional", 9_641, region="krasnodar"),
     Source("montkub", "montkub", "Мониторинг Кубани", "regional", 5_679),
-    Source("kubtrevoga93", "kubtrevoga93", "Оповещения Кубани", "regional", 5_669),
+    Source("kubtrevoga93", "kubtrevoga93", "Оповещения Кубани", "regional", 5_669, region="krasnodar"),
     Source("krasnodar_dozor", "krasnodar_dozor_radar", "Дозор Краснодара", "regional", 756),
 
     # --- Региональные ленты, найденные ingest/discover.py 27.07.2026 --------

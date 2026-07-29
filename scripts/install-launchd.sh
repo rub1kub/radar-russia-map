@@ -23,7 +23,8 @@ AGENTS_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$ROOT/ingest/data/logs"
 DOMAIN="gui/$(id -u)"
 
-LABELS=(com.radar.poll com.radar.pipeline com.radar.api com.radar.web com.radar.retention)
+LABELS=(com.radar.poll com.radar.pipeline com.radar.api com.radar.web
+        com.radar.retention com.radar.discover)
 
 unload_all() {
   for label in "${LABELS[@]}"; do
@@ -62,6 +63,10 @@ write_agent() { # label, keepalive|daily, argv...
   if [[ "$mode" == "daily" ]]; then
     schedule="    <key>StartCalendarInterval</key>
     <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>10</integer></dict>"
+  elif [[ "$mode" == "weekly" ]]; then
+    # Понедельник, раннее утро: эфир тихий, остановка сборщика незаметна.
+    schedule="    <key>StartCalendarInterval</key>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>5</integer><key>Minute</key><integer>40</integer></dict>"
   elif [[ "$mode" == "once" ]]; then
     # Одна попытка при входе: macOS может не пустить node к Documents
     # (TCC), и KeepAlive крутил бы вечный цикл падений. Карта при этом
@@ -102,9 +107,16 @@ write_agent com.radar.pipeline  keepalive "$PY" -u -m pipeline.incremental --loo
 write_agent com.radar.api       keepalive "$PY" -m uvicorn api.server:app --host 127.0.0.1 --port 8000
 write_agent com.radar.web       once      "$ROOT/node_modules/.bin/vite" --host 127.0.0.1
 write_agent com.radar.retention daily     "$PY" -m pipeline.retention --apply
+write_agent com.radar.discover  weekly    /bin/zsh "$ROOT/scripts/discover-weekly.sh"
 
+# Bootstrap с одним повтором: сразу после выгрузки прежней версии порт или
+# сессия пару секунд ещё заняты, и первая попытка может упасть гонкой.
 for label in "${LABELS[@]}"; do
-  launchctl bootstrap "$DOMAIN" "$AGENTS_DIR/$label.plist"
+  if ! launchctl bootstrap "$DOMAIN" "$AGENTS_DIR/$label.plist" 2>/dev/null; then
+    sleep 3
+    launchctl bootstrap "$DOMAIN" "$AGENTS_DIR/$label.plist" \
+      || echo "НЕ ПОДНЯЛСЯ: $label (см. лог)"
+  fi
 done
 
 sleep 3
