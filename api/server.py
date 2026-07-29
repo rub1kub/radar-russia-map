@@ -265,9 +265,17 @@ def latest_moment() -> datetime:
     return parse_utc(stamp) if stamp else now_utc()
 
 
-def event_rows(since: datetime, limit: int = 400) -> list[dict]:
+def event_rows(since: datetime, limit: int = 400,
+               until: datetime | None = None) -> list[dict]:
+    # until режет запрос сверху. Без него сутки двухмесячной давности
+    # вытягивали ВСЕ события с того дня по сегодняшний — десятки тысяч
+    # строк ради нескольких сотен нужных, и перемотка на дальний день
+    # заметно висла.
+    bound = " AND e.first_seen_at < ?" if until else ""
+    params: tuple = (since.isoformat(), until.isoformat(), limit) if until \
+        else (since.isoformat(), limit)
     rows = query(
-        """
+        f"""
         SELECT e.id, e.first_seen_at, e.last_seen_at, e.resolved_at, e.status,
                e.signal_type, e.threat_type, e.severity, e.confidence, e.source_count,
                e.zone_id, e.zone_path, e.lat, e.lon, e.accuracy_m,
@@ -276,10 +284,10 @@ def event_rows(since: datetime, limit: int = 400) -> list[dict]:
                parent.name_ru AS parent_name
         FROM events e JOIN zones z ON z.id = e.zone_id
         LEFT JOIN zones parent ON parent.id = z.parent_id
-        WHERE e.last_seen_at >= ?
+        WHERE e.last_seen_at >= ?{bound}
         ORDER BY e.last_seen_at DESC LIMIT ?
         """,
-        (since.isoformat(), limit),
+        params,
     )
     for row in rows:
         row["zone_path"] = json.loads(row["zone_path"] or "[]")
@@ -525,10 +533,7 @@ def history(
         # Сутки считаются московские: человек мыслит своим днём, а не UTC.
         start = start_msk.replace(tzinfo=MSK).astimezone(timezone.utc)
         end = start + timedelta(days=1)
-        rows = [
-            row for row in event_rows(start, limit=20000)
-            if row["first_seen_at"] < end.isoformat()
-        ]
+        rows = event_rows(start, limit=20000, until=end)
         return {"from": start.isoformat(), "to": end.isoformat(), "day": day, "events": rows}
 
     now = latest_moment()
@@ -723,3 +728,21 @@ async def stream(socket: WebSocket):
         # Обрыв на середине отправки — транспорт уже закрыт. Клиент
         # переподключится или доберёт состояние опросом; падать незачем.
         return
+
+
+# --- Статика ------------------------------------------------------------------
+# Собранная карта (npm run build -> dist/) раздаётся самим API: после
+# перезагрузки мака macOS не пускает node к Documents из launchd, и жить на
+# одном vite значило бы жить до первой перезагрузки. Питону доступ дан,
+# поэтому карта на 127.0.0.1:8000 поднимается всегда. Vite остаётся
+# инструментом разработки, а не точкой отказа.
+#
+# Монтируется последним: до "/" запрос доходит, только если не совпал ни
+# один /api/v1-маршрут.
+from pathlib import Path as _Path
+
+_DIST = _Path(__file__).resolve().parent.parent / "dist"
+if _DIST.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=_DIST, html=True), name="map")

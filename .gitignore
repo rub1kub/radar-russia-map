@@ -22,3 +22,6 @@ ingest/data/
 # Скачивается заново: https://storage.googleapis.com/teow-data/Ecoregions2017.zip
 # (RESOLVE Ecoregions 2017, CC BY 4.0). Нужен только для land-cover.json.
 research/data_sources/Ecoregions2017.zip
+
+# Штамп пропуска prepare:data: локальное состояние, не данные
+public/data/.prepare-stamp.json
