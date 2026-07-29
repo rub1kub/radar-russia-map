@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { directionArrow, iconFreshness, iconKindFor, isPointEvent, threatIcon } from "./icons";
+import {
+  directionArrow,
+  iconFreshness,
+  iconKindFor,
+  iconVisible,
+  isPointEvent,
+  threatIcon
+} from "./icons";
 import { ZONE_FADE_FLOOR } from "./paint";
 
 describe("iconFreshness", () => {
@@ -21,6 +28,16 @@ describe("iconFreshness", () => {
 
   it("ракета гаснет быстрее дрона", () => {
     expect(iconFreshness(10 * MIN, "rocket")).toBeLessThan(iconFreshness(10 * MIN, "uav"));
+  });
+
+  it("после окна пролёта значок не ставится вовсе", () => {
+    // Борт улетел — значок «здесь» был бы враньём. Двухчасовые метки
+    // висели на карте только потому, что событие ещё не закрыто.
+    expect(iconVisible(20 * MIN, "uav")).toBe(true);
+    expect(iconVisible(40 * MIN, "uav")).toBe(false);
+    expect(iconVisible(120 * MIN, "uav")).toBe(false);
+    // Ракета покидает район быстрее: окно короче, минимум 8 минут.
+    expect(iconVisible(10 * MIN, "rocket")).toBe(false);
   });
 });
 

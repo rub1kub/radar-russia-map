@@ -43,7 +43,14 @@ import {
   signalLabel,
   threatLabel
 } from "./lib/format";
-import { directionArrow, iconFreshness, iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
+import {
+  directionArrow,
+  iconFreshness,
+  iconKindFor,
+  iconVisible,
+  isPointEvent,
+  threatIcon
+} from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
 import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/sound";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
@@ -1094,6 +1101,11 @@ export default function App() {
       if (!isPointEvent(event.signal_type, event.zone_level)) continue;
       if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
 
+      // Окно пролёта вышло — борт зону покинул, и значку «здесь» больше
+      // нечего утверждать. Память о событии несёт заливка, не метка.
+      const ageMs = Math.max(0, referenceMs - new Date(event.last_seen_at).getTime());
+      if (!iconVisible(ageMs, event.threat_type)) continue;
+
       iconSource.addFeature(
         new Feature({
           geometry: new Point(fromLonLat([event.lon, event.lat])),
@@ -1111,7 +1123,7 @@ export default function App() {
           threatType: event.threat_type,
           sources: event.source_count,
           at: event.last_seen_at,
-          ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime()),
+          ageMs,
           // Разбор хранит, ОТКУДА пришла цель («с юго-запада» — 225).
           // Стрелке нужен курс — куда она идёт дальше, то есть напротив.
           // У отбоя курса не бывает: борта уже нет.
