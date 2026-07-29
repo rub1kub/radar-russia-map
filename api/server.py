@@ -43,6 +43,7 @@ from api.limits import (
 )
 from api.fires import router as fires_router
 from api.geometry import router as geo_router
+from api.push import deliver_loop, router as push_router
 from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
 from pipeline.incremental import resolve_networks
@@ -97,6 +98,15 @@ app = FastAPI(title="Radar API", version="1.0")
 
 app.include_router(geo_router)
 app.include_router(fires_router)
+app.include_router(push_router)
+
+
+@app.on_event("startup")
+async def start_push_loop() -> None:
+    # Рассыльщик живёт внутри процесса API: у него уже есть свежий снимок
+    # обстановки и доступ к базе, отдельный демон был бы четвёртым
+    # процессом без новой пользы.
+    asyncio.create_task(deliver_loop(state_snapshot))
 
 ACTIVE_WINDOW = timedelta(hours=6)
 
@@ -231,8 +241,9 @@ async def rate_limit(request: Request, call_next):
 # получит невнятный сетевой сбой.
 app.add_middleware(
     CORSMiddleware,
+    # POST нужен push-подписке; остальное по-прежнему только читает.
     allow_origins=cors_origins(),
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -292,6 +303,33 @@ def event_rows(since: datetime, limit: int = 400,
     for row in rows:
         row["zone_path"] = json.loads(row["zone_path"] or "[]")
     return rows
+
+
+# Дольше этого маршрут в эфире не показывается: клиент гасит линию тем же
+# окном пролёта, что и значки, а самое длинное окно — у БЭК, 70 минут.
+ROUTE_WINDOW = timedelta(minutes=90)
+
+
+def route_rows(since: datetime, until: datetime | None = None,
+               limit: int = 400) -> list[dict]:
+    """Маршруты, названные самими сообщениями, за окно времени."""
+    bound = " AND posted_at < ?" if until else ""
+    params: tuple = (since.isoformat(), until.isoformat(), limit) if until \
+        else (since.isoformat(), limit)
+    rows = query(
+        f"""
+        SELECT posted_at, threat_type, severity, points FROM routes
+        WHERE posted_at >= ?{bound}
+        ORDER BY posted_at DESC LIMIT ?
+        """,
+        params,
+    )
+    return [{
+        "at": row["posted_at"],
+        "threat_type": row["threat_type"],
+        "severity": row["severity"],
+        "points": json.loads(row["points"]),
+    } for row in rows]
 
 
 def build_state() -> dict:
@@ -411,6 +449,9 @@ def build_state() -> dict:
         "pipeline_lag_sec": pipeline_lag_sec,
         "stale": data_age_sec > 900 or (pipeline_lag_sec or 0) > 900,
         "events": events,
+        # Маршруты, названные самими сообщениями: клиент рисует линию и
+        # гасит её тем же окном пролёта, что и значки.
+        "routes": route_rows(now - ROUTE_WINDOW),
         "zone_counts": zone_counts,
         "active_events": len(events),
         "active_zones": len(zone_counts),
@@ -534,12 +575,14 @@ def history(
         start = start_msk.replace(tzinfo=MSK).astimezone(timezone.utc)
         end = start + timedelta(days=1)
         rows = event_rows(start, limit=20000, until=end)
-        return {"from": start.isoformat(), "to": end.isoformat(), "day": day, "events": rows}
+        return {"from": start.isoformat(), "to": end.isoformat(), "day": day,
+                "events": rows, "routes": route_rows(start, until=end, limit=2000)}
 
     now = latest_moment()
     since = now - timedelta(hours=hours)
     return {"from": since.isoformat(), "to": now.isoformat(),
-            "events": event_rows(since, limit=5000)}
+            "events": event_rows(since, limit=5000),
+            "routes": route_rows(since, limit=2000)}
 
 
 @app.get("/api/v1/analytics/sources")

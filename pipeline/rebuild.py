@@ -21,6 +21,7 @@ from .fuse import Fuser  # noqa: E402
 from .geocode import Geocoder, Resolved  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import parse  # noqa: E402
+from .routes import extract_route, store_route  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 from .source_region import build_fallback  # noqa: E402
 
@@ -108,6 +109,12 @@ def rebuild(connection) -> dict:
             resolved = [Resolved(zone_id, "region", zone["name_ru"],
                                  zone["lat"], zone["lon"], "источник")]
             stats["by_source_region"] = stats.get("by_source_region", 0) + 1
+
+        # Маршрут, описанный самим сообщением: линию утверждает источник.
+        route = extract_route(row["text"], observation, resolved)
+        if route:
+            store_route(connection, row["id"], row["source_key"],
+                        row["posted_at"], observation, route)
 
         moment = parse_utc(row["posted_at"])
 

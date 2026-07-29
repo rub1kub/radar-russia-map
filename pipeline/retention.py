@@ -56,13 +56,14 @@ def stats(connection, cutoff_iso: str) -> dict:
 
 def purge(connection, cutoff_iso: str) -> dict:
     before = stats(connection, cutoff_iso)
-    # Провенанс снимается первым: внешний ключ не даст удалить сообщение,
-    # на которое ещё ссылаются.
+    # Провенанс и маршруты снимаются первыми: внешний ключ не даст удалить
+    # сообщение, на которое ещё ссылаются.
     connection.execute(
         "DELETE FROM event_sources WHERE raw_message_id IN"
         " (SELECT id FROM raw_messages WHERE posted_at < ?)",
         (cutoff_iso,),
     )
+    connection.execute("DELETE FROM routes WHERE posted_at < ?", (cutoff_iso,))
     connection.execute("DELETE FROM raw_messages WHERE posted_at < ?", (cutoff_iso,))
     connection.commit()
     connection.execute("VACUUM")

@@ -4,6 +4,7 @@ import OlMap from "ol/Map";
 import View from "ol/View";
 import GeoJSON from "ol/format/GeoJSON";
 import Feature from "ol/Feature";
+import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
@@ -31,7 +32,8 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { api, API_BASE } from "./lib/api";
-import type { RadarEvent, RadarState, SearchItem, ZoneCount } from "./lib/api";
+import type { RadarEvent, RadarState, RouteLine, SearchItem, ZoneCount } from "./lib/api";
+import { inferTrails, trailVisibleAt } from "./lib/trails";
 import {
   formatAge,
   formatDayTime,
@@ -53,6 +55,7 @@ import {
 } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
 import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/sound";
+import { disablePush, enablePush, pushEnabled, pushSupported, syncPushZones } from "./lib/push";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
@@ -413,6 +416,12 @@ const SELECTION_OUTLINE = new Style({
   stroke: new Stroke({ color: "rgba(255, 248, 220, 0.95)", width: 2.6 })
 });
 
+// След налёта в архиве: пунктир, потому что это восстановление по времени
+// сообщений, а не заявленный источником путь.
+const TRAIL_STYLE = new Style({
+  stroke: new Stroke({ color: "rgba(214, 208, 190, 0.42)", width: 1.3, lineDash: [5, 7] })
+});
+
 // Стиль без отрисовки: возвращать undefined нельзя — слой всё равно должен
 // оставаться кликабельным для выбора района.
 const EMPTY_STYLE = new Style({
@@ -705,6 +714,10 @@ export default function App() {
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
   const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  // Маршруты из сообщений и следы налёта в архиве: линии живут в своих
+  // источниках и пересобираются вместе со значками.
+  const routeSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
+  const trailSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
   const fireSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
   const fireLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const firesLoadedRef = useRef(false);
@@ -751,6 +764,7 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => loadBookmarks());
   const [alerts, setAlerts] = useState<RadarEvent[]>([]);
   const [alertSound, setAlertSound] = useState(() => soundEnabled());
+  const [pushOn, setPushOn] = useState(() => (pushSupported() ? pushEnabled() : null));
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   // На узком экране панели занимают почти весь экран, поэтому там они
@@ -770,6 +784,7 @@ export default function App() {
   const [rightOpen, setRightOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
+  const [historyRoutes, setHistoryRoutes] = useState<RouteLine[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [slotIndex, setSlotIndex] = useState(0);
@@ -835,6 +850,7 @@ export default function App() {
     const applyDay = (payload: History) => {
       const built = buildSlots(payload.from, payload.to);
       setHistoryEvents(payload.events);
+      setHistoryRoutes(payload.routes ?? []);
       setSlots(built);
       setSlotIndex(0);
       setHistoryLoading(false);
@@ -905,6 +921,7 @@ export default function App() {
         if (controller.signal.aborted) return;
         const built = buildSlots(payload.from, payload.to);
         setHistoryEvents(payload.events);
+        setHistoryRoutes(payload.routes ?? []);
         setSlots(built);
         setSlotIndex(Math.max(0, built.length - 1));
         setHistoryLoading(false);
@@ -1071,6 +1088,13 @@ export default function App() {
     return radarState?.events ?? [];
   }, [inHistory, historyEvents, historyAt, radarState]);
 
+  // Однозначные звенья налёта из загруженного архива. Считаются один раз
+  // на выгрузку: перемотка лишь фильтрует готовый список по моменту.
+  const historyTrails = useMemo(
+    () => (historyEvents ? inferTrails(historyEvents) : []),
+    [historyEvents]
+  );
+
   // Обстановка рисуется заливкой самих регионов и районов, а не отдельными
   // маркерами: так делают RadarMap и Детектор АЭРО, и так понятнее.
   useEffect(() => {
@@ -1135,6 +1159,67 @@ export default function App() {
       );
     }
 
+    // Маршруты, названные самими сообщениями: линия со стрелкой на конце,
+    // гаснет тем же окном пролёта, что и значки.
+    const routeSource = routeSourceRef.current;
+    routeSource.clear();
+    const routes = (inHistory ? historyRoutes : radarState?.routes) ?? [];
+    for (const route of routes) {
+      const age = referenceMs - new Date(route.at).getTime();
+      if (age < 0 || !iconVisible(age, route.threat_type)) continue;
+      const fresh = iconFreshness(age, route.threat_type);
+      const coords = route.points.map((point) => fromLonLat([point[1], point[0]]));
+
+      const line = new Feature({ geometry: new LineString(coords) });
+      line.setStyle(
+        new Style({
+          stroke: new Stroke({
+            color: severityColor(route.severity, 0.8 * fresh),
+            width: 2.2,
+            lineCap: "round"
+          })
+        })
+      );
+      routeSource.addFeature(line);
+
+      // Наконечник: та же стрелка, что у курса значков, повёрнутая по
+      // последнему плечу маршрута.
+      const [x1, y1] = coords[coords.length - 2];
+      const [x2, y2] = coords[coords.length - 1];
+      const head = new Feature({ geometry: new Point([x2, y2]) });
+      head.setStyle(
+        new Style({
+          image: new Icon({
+            src: directionArrow(severityColor(route.severity, 1), fresh),
+            scale: 0.62,
+            anchor: [0.5, 0.5],
+            rotation: Math.atan2(x2 - x1, y2 - y1),
+            rotateWithView: true
+          })
+        })
+      );
+      routeSource.addFeature(head);
+    }
+
+    // Следы налёта — только в архиве и только однозначные звенья: в прямом
+    // эфире карта утверждает лишь то, что сказали источники.
+    const trailSource = trailSourceRef.current;
+    trailSource.clear();
+    if (inHistory && historyAt) {
+      const atMs = new Date(historyAt).getTime();
+      for (const trail of historyTrails) {
+        if (!trailVisibleAt(trail, atMs)) continue;
+        const feature = new Feature({
+          geometry: new LineString([
+            fromLonLat([trail.from[1], trail.from[0]]),
+            fromLonLat([trail.to[1], trail.to[0]])
+          ])
+        });
+        feature.setStyle(TRAIL_STYLE);
+        trailSource.addFeature(feature);
+      }
+    }
+
     const byPolygon = new globalThis.Map<string, string>();
     for (const [zoneId, zone] of Object.entries(radarState?.zone_counts ?? {})) {
       if (zone.source_id) byPolygon.set(zone.source_id, zoneId);
@@ -1142,7 +1227,7 @@ export default function App() {
     polygonToZoneRef.current = byPolygon;
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
-  }, [paintedZones, radarState, shownEvents, historyAt]);
+  }, [paintedZones, radarState, shownEvents, historyAt, inHistory, historyRoutes, historyTrails]);
 
   useEffect(() => {
     if (!dataset || !mapNodeRef.current || mapRef.current) return;
@@ -1261,6 +1346,11 @@ export default function App() {
       style: createEventIconStyle
     });
 
+    // Линии под значками: маршрут из сообщения и архивный след. Стили у
+    // фич собственные, слоям хватает порядка отрисовки.
+    const routeLayer = new VectorLayer({ source: routeSourceRef.current, zIndex: 38 });
+    const trailLayer = new VectorLayer({ source: trailSourceRef.current, zIndex: 36 });
+
     // Пожары — тихий фон под событиями: мелкие тёплые точки, чуть крупнее
     // у мощных очагов. Никаких подписей и кругов — это не сигнал, а контекст.
     const fireLayer = new VectorLayer({
@@ -1329,6 +1419,8 @@ export default function App() {
         regionLayer,
         districtLayer,
         fireLayer,
+        trailLayer,
+        routeLayer,
         eventIconLayer
       ],
       view: new View({
@@ -1867,6 +1959,25 @@ export default function App() {
     setQuery("");
   }, [applySelectedFeature]);
 
+  // Пуш включается явным жестом (браузер спросит разрешение), а дальше
+  // список зон уезжает на сервер при каждом изменении закладок.
+  const togglePush = useCallback(() => {
+    if (pushOn === null) return;
+    if (pushOn) {
+      setPushOn(false);
+      void disablePush();
+      return;
+    }
+    enablePush(bookmarks.map((item) => item.zone_id))
+      .then(() => setPushOn(true))
+      .catch(() => setPushOn(false));
+  }, [pushOn, bookmarks]);
+
+  useEffect(() => {
+    if (!pushOn) return;
+    void syncPushZones(bookmarks.map((item) => item.zone_id));
+  }, [pushOn, bookmarks]);
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -2003,6 +2114,8 @@ export default function App() {
             state={radarState}
             onPick={flyToBookmark}
             onRemove={removeBookmark}
+            pushOn={pushOn}
+            onTogglePush={togglePush}
             soundOn={alertSound}
             onToggleSound={() => {
               const next = !alertSound;
@@ -2111,6 +2224,7 @@ export default function App() {
                 // Возврат к суточному окну: сбрасываем выгрузку, чтобы
                 // эффект перезагрузил последние 24 часа.
                 setHistoryEvents(null);
+                setHistoryRoutes(null);
                 setSlots([]);
               }
             }}
@@ -2120,6 +2234,7 @@ export default function App() {
             onLive={() => {
               setSelectedDay(null);
               setHistoryEvents(null);
+              setHistoryRoutes(null);
               setSlots([]);
               setSlotIndex(0);
               setPlaying(false);

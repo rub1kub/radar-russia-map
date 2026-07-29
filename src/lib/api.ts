@@ -45,6 +45,15 @@ export type ZoneCount = {
   name?: string;
 };
 
+/** Маршрут, названный самим сообщением: точки в порядке текста. */
+export type RouteLine = {
+  at: string;
+  threat_type: string;
+  severity: number;
+  /** [lat, lon, имя места] */
+  points: Array<[number, number, string]>;
+};
+
 export type RadarState = {
   generated_at: string;
   /** Крымский мост: показывается только перекрытие. null — данных нет. */
@@ -56,6 +65,7 @@ export type RadarState = {
   pipeline_lag_sec: number | null;
   stale: boolean;
   events: RadarEvent[];
+  routes?: RouteLine[];
   zone_counts: Record<string, ZoneCount>;
   active_events: number;
   active_zones: number;
@@ -121,6 +131,7 @@ export type History = {
   to: string;
   day?: string;
   events: RadarEvent[];
+  routes?: RouteLine[];
 };
 
 export type HistoryDay = {

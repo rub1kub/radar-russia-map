@@ -38,6 +38,7 @@ from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
 from .geocode import Geocoder, Resolved  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import parse, strip_footer  # noqa: E402
+from .routes import extract_route, store_route  # noqa: E402
 from .source_region import build_fallback  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
@@ -463,6 +464,13 @@ def run_once(
             else:
                 stats["ungeocoded"] += 1
                 continue
+
+        # Маршрут, описанный самим сообщением, — отдельная строка рядом с
+        # событиями: линию утверждает источник, и она живёт своей жизнью.
+        route = extract_route(row["text"], observation, resolved)
+        if route:
+            store_route(connection, row["id"], row["source_key"],
+                        row["posted_at"], observation, route)
 
         moment = parse_utc(row["posted_at"])
 

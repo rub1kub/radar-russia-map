@@ -1,0 +1,64 @@
+"""Маршрут, названный самим сообщением.
+
+    ingest/.venv/bin/python -m pytest tests/test_routes.py -q
+
+Линия рисуется только тогда, когда источник сам описал путь: «от Анапы
+через Раевскую на Новороссийск». Склейка маршрутов из разных сообщений —
+догадка, и в таблицу фактов она не попадает.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from pipeline.geocode import Resolved
+from pipeline.parse import parse
+from pipeline.routes import extract_route
+
+# Реальная геометрия Кубани: Анапа -> Раевская -> Новороссийск, ~30 км пути.
+ANAPA = Resolved("anapa", "district", "Анапа", 44.89, 37.32, "анапа")
+RAEVSKAYA = Resolved("raevskaya", "place", "Раевская", 44.83, 37.56, "раевская")
+NOVOROSSIYSK = Resolved("novorossiysk", "district", "Новороссийск", 44.72, 37.77, "новороссийск")
+KRAI = Resolved("krasnodarskiy_kray", "region", "Краснодарский край", 45.6, 39.0, "край")
+
+
+def test_declared_route_is_extracted():
+    text = "Анапа, через Раевскую в сторону Новороссийска — фиксация БПЛА"
+    route = extract_route(text, parse(text), [ANAPA, RAEVSKAYA, NOVOROSSIYSK])
+    assert route is not None
+    # Порядок точек — порядок текста: откуда и куда.
+    assert [p[2] for p in route] == ["Анапа", "Раевская", "Новороссийск"]
+
+
+def test_list_of_places_is_not_a_route():
+    """Перечисление адресатов предупреждения — не траектория."""
+    text = "Анапа, Раевская, Новороссийск — опасность БПЛА"
+    assert extract_route(text, parse(text), [ANAPA, RAEVSKAYA, NOVOROSSIYSK]) is None
+
+
+def test_single_point_is_not_a_route():
+    text = "Фиксация БПЛА, курс на Новороссийск"
+    assert extract_route(text, parse(text), [NOVOROSSIYSK]) is None
+
+
+def test_region_is_a_direction_not_a_waypoint():
+    """«В сторону Белгородской области» — направление, а не точка на линии."""
+    text = "Анапа: БПЛА идёт на Новороссийск, далее в сторону края"
+    route = extract_route(text, parse(text), [ANAPA, KRAI, NOVOROSSIYSK])
+    assert route is not None
+    assert [p[2] for p in route] == ["Анапа", "Новороссийск"]
+
+
+def test_allclear_has_nothing_to_draw():
+    text = "Отбой опасности БПЛА, через час вернёмся"
+    assert extract_route(text, parse(text), [ANAPA, NOVOROSSIYSK]) is None
+
+
+def test_geocoder_miss_does_not_draw_across_the_country():
+    """Плечо в тысячу километров — тёзка из другого края, а не маршрут."""
+    far = Resolved("belogorsk_amur", "district", "Белогорск", 50.9, 128.5, "белогорск")
+    text = "Анапа, БПЛА курс на Белогорск"
+    assert extract_route(text, parse(text), [ANAPA, far]) is None

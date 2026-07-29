@@ -89,10 +89,23 @@ CREATE TABLE IF NOT EXISTS event_sources (
     PRIMARY KEY (event_id, raw_message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_evsrc_source ON event_sources (source_key);
+
+-- Маршрут, названный самим сообщением: «от Анапы через Раевскую на
+-- Новороссийск». Точки в порядке текста; линию утверждает источник, а не
+-- наша догадка — склейка маршрутов из разных сообщений сюда не пишется.
+CREATE TABLE IF NOT EXISTS routes (
+    raw_message_id INTEGER PRIMARY KEY REFERENCES raw_messages (id),
+    source_key     TEXT NOT NULL,
+    posted_at      TEXT NOT NULL,
+    threat_type    TEXT NOT NULL,
+    severity       INTEGER NOT NULL,
+    points         TEXT NOT NULL        -- JSON [[lat, lon, name], ...]
+);
+CREATE INDEX IF NOT EXISTS idx_routes_posted ON routes (posted_at);
 """
 
 # Производные таблицы, которые пересобираются целиком при переразборе.
-DERIVED_TABLES = ("event_sources", "events")
+DERIVED_TABLES = ("event_sources", "events", "routes")
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
