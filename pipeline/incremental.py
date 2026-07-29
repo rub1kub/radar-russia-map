@@ -35,9 +35,10 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
-from .geocode import Geocoder  # noqa: E402
+from .geocode import Geocoder, Resolved  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import parse, strip_footer  # noqa: E402
+from .source_region import build_fallback  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
@@ -429,6 +430,11 @@ def run_once(
     rows, watermark = ready_batch(pending, now, grace)
 
     fuser, restored = restore_fuser(connection, tiers)
+    # Регион источника: разводит тёзок при разборе и подхватывает сообщения
+    # без единого топонима. rebuild оба правила знает давно, а живой разбор
+    # молча терял «РАКЕТНАЯ ОПАСНОСТЬ!» от лент, у которых регион зашит в
+    # название канала.
+    fallback = build_fallback(connection, sources_from_env())
 
     stats = {
         "scanned": len(rows),
@@ -445,10 +451,18 @@ def run_once(
             stats["irrelevant"] += 1
             continue
 
-        resolved = geocoder.drop_covered(geocoder.resolve(observation.place_phrases))
+        home = fallback.get(row["source_key"])
+        resolved = geocoder.drop_covered(
+            geocoder.resolve(observation.place_phrases, home=home))
         if not resolved:
-            stats["ungeocoded"] += 1
-            continue
+            if home:
+                zone = geocoder.zones[home]
+                resolved = [Resolved(home, "region", zone["name_ru"],
+                                     zone["lat"], zone["lon"], "источник")]
+                stats["by_source_region"] = stats.get("by_source_region", 0) + 1
+            else:
+                stats["ungeocoded"] += 1
+                continue
 
         moment = parse_utc(row["posted_at"])
 

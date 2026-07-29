@@ -181,6 +181,41 @@ def test_lone_match_is_its_own_witness(geocoder):
         == ["Шебекинский район"]
 
 
+# --- Регион источника разводит тёзок ----------------------------------------
+
+def region_zone(geocoder: Geocoder, name: str) -> str:
+    return next(zone_id for zone_id, zone in geocoder.zones.items()
+                if zone["level"] == "region" and zone["name_ru"] == name)
+
+
+def test_source_region_resolves_homonyms(geocoder):
+    """Крымская лента, написавшая «Белогорск», имеет в виду свой Белогорск,
+    а не амурский, куда разбор уезжал по населению."""
+    crimea = region_zone(geocoder, "Республика Крым")
+    hits = geocoder.resolve(["Белогорск"], home=crimea)
+    assert hits
+    assert region_of(geocoder, hits[0].zone_id) == "Республика Крым"
+
+
+def test_named_region_beats_source_region(geocoder):
+    """Явно названный регион главнее прописки канала: та же лента вправе
+    пересказать чужую сводку."""
+    crimea = region_zone(geocoder, "Республика Крым")
+    hits = [item for item in
+            geocoder.resolve(["Белогорск", "Амурская область"], home=crimea)
+            if item.level != "region"]
+    assert hits
+    assert region_of(geocoder, hits[0].zone_id) == "Амурская область"
+
+
+def test_source_region_does_not_rescue_weak_matches(geocoder):
+    """Дом — только для ранжирования выживших кандидатов. Обиходное слово
+    без контекста по-прежнему отбрасывается, а не садится на местную
+    деревню."""
+    crimea = region_zone(geocoder, "Республика Крым")
+    assert geocoder.resolve(["победа будет за нами"], home=crimea) == []
+
+
 # --- Уточнение против отдельного места --------------------------------------
 
 def test_named_region_after_district_is_only_a_qualifier(geocoder):

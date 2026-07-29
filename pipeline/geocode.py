@@ -490,21 +490,31 @@ class Geocoder:
             index += size
         return found
 
-    def resolve(self, phrases: list[str]) -> list[Resolved]:
-        """Разрешить фразы сообщения в зоны, снимая омонимию контекстом."""
+    def resolve(self, phrases: list[str],
+                home: str | None = None) -> list[Resolved]:
+        """Разрешить фразы сообщения в зоны, снимая омонимию контекстом.
+
+        home — зона региона источника. Региональная лента почти всегда пишет
+        про себя, и когда текст сам региона не назвал, тёзку надо брать из
+        дома: крымский канал, написавший «Белогорск», имеет в виду свой
+        Белогорск, а не амурский, и его «Советский» — не калининградский.
+        Довесок слабее контекста из текста: явно названный регион главнее
+        прописки канала — та же лента вправе пересказать чужую сводку.
+        """
         candidates: list[Match] = []
         for phrase in phrases:
             candidates.extend(self._scan(phrase))
 
         contexts = self._contexts(candidates)
+        home_chain = set(self.chain(home)) if home in self.zones else set()
 
         resolved: list[Resolved] = []
         used: set[str] = set()
         for match, context in zip(candidates, contexts):
-            best = self._pick(match, context)
+            best = self._pick(match, context, home_chain)
             if best is None and match.alternative is not None:
                 match = match.alternative
-                best = self._pick(match, context)
+                best = self._pick(match, context, home_chain)
             if best is None or best in used:
                 continue
             used.add(best)
@@ -641,7 +651,8 @@ class Geocoder:
         """
         return key in self.by_name
 
-    def _pick(self, match: Match, context: set[str]) -> str | None:
+    def _pick(self, match: Match, context: set[str],
+              home: frozenset[str] | set[str] = frozenset()) -> str | None:
         key = match.key
         single = " " not in key
         # Стеммированное одиночное слово — самый рискованный класс: «Мирное»,
@@ -715,6 +726,13 @@ class Geocoder:
             score = 0.0
             if in_context:
                 score += 1_000_000
+            # Регион источника разводит тёзок, когда сам текст региона не
+            # назвал. Бонус на порядок меньше контекстного: названный в
+            # сообщении регион всегда перевешивает прописку канала. Фильтры
+            # выше он намеренно не смягчает — спасать слабые матчи домом
+            # значило бы сажать каждое обиходное слово на местную деревню.
+            if home and set(self.chain(zone_id)) & home:
+                score += 100_000
             # Административные единицы надежнее одноименных деревень. Но
             # крупный город — не деревня: если одноимённая админ-единица его
             # не содержит, она из другого региона и проигрывает. Так «Донецк»

@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -6,6 +14,61 @@ import { readShapefileFromZip } from "./shapefile.mjs";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const outData = join(root, "public", "data");
+
+// --- Пропуск пересборки ------------------------------------------------------
+//
+// Скрипт висит на каждом `npm run dev` и жевал исходники по минуте, хотя
+// они не менялись месяцами. Хуже того: пересборка затирала в districts.json
+// имена и родителей, дописанные pipeline.gazetteer, — до следующего запуска
+// справочника карта жила с ободранными полигонами.
+//
+// Штамп считается ТОЛЬКО по входам (исходные данные и сами скрипты), а не по
+// выходам: выходные файлы правит gazetteer, и его правки не повод для
+// пересборки. Принудительно: npm run prepare:data -- --force
+const stampPath = join(outData, ".prepare-stamp.json");
+const expectedOutputs = [
+  "regions.json", "districts.json", "places.json", "summary.json",
+  "water-bodies.json", "rivers.json", "river-network-major.json",
+  "river-network-detail.json", "urban-areas.json", "roads.json",
+  "railways.json", "terrain-regions.json", "glaciers.json", "land-cover.json"
+];
+
+const latestInputMtime = () => {
+  let latest = 0;
+  const visit = (path) => {
+    let info;
+    try {
+      info = statSync(path);
+    } catch {
+      return;
+    }
+    if (info.isDirectory()) {
+      for (const entry of readdirSync(path)) visit(join(path, entry));
+      return;
+    }
+    latest = Math.max(latest, info.mtimeMs);
+  };
+  visit(join(root, "research", "data_sources"));
+  visit(join(root, "research", "radarmap_reference", "data"));
+  visit(join(root, "scripts", "prepare-data.mjs"));
+  visit(join(root, "scripts", "shapefile.mjs"));
+  return Math.round(latest);
+};
+
+const inputsStamp = latestInputMtime();
+const forced = process.argv.includes("--force");
+if (!forced && existsSync(stampPath)) {
+  try {
+    const stored = JSON.parse(readFileSync(stampPath, "utf8"));
+    const complete = expectedOutputs.every((name) => existsSync(join(outData, name)));
+    if (stored.inputs === inputsStamp && complete) {
+      console.log("Исходные данные не менялись — пересборка пропущена (--force для принудительной).");
+      process.exit(0);
+    }
+  } catch {
+    // Битый штамп — просто пересобираем.
+  }
+}
 
 mkdirSync(outData, { recursive: true });
 rmSync(join(outData, "cities.json"), { force: true });
@@ -367,7 +430,19 @@ const districtNameOverrides = new Map([
   ["Верхнй Уфалей", "Верхний Уфалей"],
   ["городской округ Верхняя Пы", "городской округ Верхняя Пышма"],
   ["городской округ Верхняя Ту", "городской округ Верхняя Тура"],
-  ["Нижнетуринский городской о", "Нижнетуринский городской округ"]
+  ["Нижнетуринский городской о", "Нижнетуринский городской округ"],
+  // Районы UKR ADM2 в Запорожской и Херсонской, которых не оказалось в
+  // ОКТМО: без явного имени они оставались транслитерационным мусором —
+  // «Орихив», «Хулиаиполе», «Запорижиа». Русские имена дореформенных
+  // районов, как их и пишут сводки.
+  ["Bilmak", "Бильмакский район"],
+  ["Vilniansk", "Вольнянский район"],
+  ["Zaporizhia", "Запорожский район"],
+  ["Kamianka Dniprovska", "Каменско-Днепровский район"],
+  ["Novomykolaivka", "Новониколаевский район"],
+  ["Orikhiv", "Ореховский район"],
+  ["Huliaipole", "Гуляйпольский район"],
+  ["Hornostaivka", "Горностаевский район"]
 ]);
 
 const applyDistrictNameOverride = (value) => districtNameOverrides.get(value) ?? value;
@@ -1193,3 +1268,12 @@ writeJson("summary.json", summary);
 console.log(
   `Prepared map data: ${summary.regions} regions, ${summary.districts} districts, ${summary.places} places, ${summary.rivers} named rivers, ${summary.riverNetworkMajor + summary.riverNetworkDetail} river-network groups, ${summary.waterBodies} water bodies, ${summary.landCover} land-cover areas, ${summary.terrainRegions} terrain regions, ${summary.glaciers} glaciers, ${summary.urbanAreas} urban areas, ${summary.roads} roads, ${summary.railways} railways`
 );
+
+// Штамп пишется последним: упавшая на середине пересборка не должна
+// прикидываться выполненной.
+writeFileSync(stampPath, JSON.stringify({ inputs: inputsStamp }));
+
+// После пересборки полигоны стоят без имён и родителей из справочника —
+// их дописывает pipeline.gazetteer. Напоминание, а не автоматика: скрипту
+// данных нечего лезть в чужую базу.
+console.log("Не забудьте: ingest/.venv/bin/python -m pipeline.gazetteer — вернуть полигонам имена справочника.");

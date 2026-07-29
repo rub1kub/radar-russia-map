@@ -91,12 +91,16 @@ def rebuild(connection) -> dict:
             stats["irrelevant"] += 1
             continue
 
-        resolved = geocoder.drop_covered(geocoder.resolve(observation.place_phrases))
+        # Регион источника передаётся и в сам разбор: он разводит тёзок,
+        # когда сообщение своего региона не назвало.
+        home = fallback.get(row["source_key"])
+        resolved = geocoder.drop_covered(
+            geocoder.resolve(observation.place_phrases, home=home))
         if not resolved:
             # Часть каналов не называет место: регион зашит в имя канала.
             # Такое событие кладём на регион источника — грубее, чем район
             # из текста, но лучше, чем потерять оповещение целиком.
-            zone_id = fallback.get(row["source_key"])
+            zone_id = home
             if not zone_id:
                 stats["ungeocoded"] += 1
                 continue
