@@ -645,6 +645,14 @@ def parse(text: str) -> Observation:
     if signal == "unknown":
         observation.relevant = False
         return observation
+    # «Меры безопасности», «внимание по БПЛА», «не подходите к обломкам» —
+    # призыв к бдительности, а не событие: решением владельца проекта класс
+    # на карту не идёт вовсе. Сам паттерн из SIGNALS при этом не удалён
+    # намеренно: без него «не подходите к обломкам БПЛА» переползало бы
+    # через WEAK_SIGNALS в impact и красило район взрывом.
+    if signal == "caution":
+        observation.relevant = False
+        return observation
 
     observation.signal_type = signal
     observation.severity = severity

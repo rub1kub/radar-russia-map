@@ -74,7 +74,6 @@ describe("isPointEvent", () => {
   it("площадные сигналы рисуются заливкой, а не значком", () => {
     expect(isPointEvent("danger")).toBe(false);
     expect(isPointEvent("alarm")).toBe(false);
-    expect(isPointEvent("caution")).toBe(false);
   });
 });
 
