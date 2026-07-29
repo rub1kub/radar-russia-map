@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { directionArrow, iconKindFor, isPointEvent, threatIcon } from "./icons";
+import { directionArrow, iconFreshness, iconKindFor, isPointEvent, threatIcon } from "./icons";
+import { ZONE_FADE_FLOOR } from "./paint";
+
+describe("iconFreshness", () => {
+  const MIN = 60 * 1000;
+
+  it("свежий значок в полную силу", () => {
+    expect(iconFreshness(0)).toBe(1);
+  });
+
+  it("двадцать минут заметно ярче двух часов", () => {
+    // Ровно та жалоба, с которой правило переписано: прежний срок в 30
+    // минут с полом 0.2 упирался в пол уже к двадцати минутам, и разница
+    // возрастов не читалась.
+    const twenty = iconFreshness(20 * MIN);
+    const twoHours = iconFreshness(120 * MIN);
+    expect(twenty).toBeGreaterThan(twoHours * 1.8);
+    expect(twoHours).toBe(ZONE_FADE_FLOOR);
+  });
+
+  it("ракета гаснет быстрее дрона", () => {
+    expect(iconFreshness(10 * MIN, "rocket")).toBeLessThan(iconFreshness(10 * MIN, "uav"));
+  });
+});
 
 describe("iconKindFor", () => {
   it("исход события важнее типа угрозы", () => {

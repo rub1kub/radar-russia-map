@@ -43,7 +43,7 @@ import {
   signalLabel,
   threatLabel
 } from "./lib/format";
-import { directionArrow, iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
+import { directionArrow, iconFreshness, iconKindFor, isPointEvent, threatIcon } from "./lib/icons";
 import { zoneFeed } from "./lib/feed";
 import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/sound";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
@@ -232,9 +232,6 @@ function severityLevel(severity: number): number {
   return 4;
 }
 
-// Значки выцветают за то же время, за какое борт пересекает район: иначе на
-// бледной зоне остаётся яркая метка и спорит с ней.
-const ICON_FADE_MS = 30 * 60 * 1000;
 const iconStyleCache = new globalThis.Map<string, Style>();
 const arrowStyleCache = new globalThis.Map<string, Style>();
 
@@ -245,10 +242,14 @@ function createEventIconStyle(feature: FeatureLike, resolution: number) {
   const kind = String(feature.get("iconKind"));
   const severity = asNumber(feature.get("severity"), 5);
   const ageMs = asNumber(feature.get("ageMs"), 0);
+  const threatType = feature.get("threatType");
 
-  // Свежая фиксация видна отчётливо, трёхчасовая почти растворяется.
-  const freshness = Math.max(0.2, 1 - Math.min(1, ageMs / ICON_FADE_MS) ** 0.5);
-  const bucket = Math.round(freshness * 5) / 5;
+  // Значок гаснет той же физикой, что и заливка под ним: иначе на бледной
+  // зоне стоит яркая метка и спорит с ней. Ступени по десятой, а не по
+  // пятой: с крупным шагом двадцать минут и два часа снова слипались бы
+  // в одну ступень.
+  const freshness = iconFreshness(ageMs, typeof threatType === "string" ? threatType : undefined);
+  const bucket = Math.round(freshness * 10) / 10;
   const key = `${kind}|${severity}|${bucket}`;
 
   let style = iconStyleCache.get(key);
@@ -1106,6 +1107,8 @@ export default function App() {
           title: event.place_name,
           signal: signalLabel(event.signal_type),
           threat: event.threat_type === "unknown" ? "" : threatLabel(event.threat_type),
+          // Сырой тип угрозы — для скорости выцветания значка.
+          threatType: event.threat_type,
           sources: event.source_count,
           at: event.last_seen_at,
           ageMs: Math.max(0, referenceMs - new Date(event.last_seen_at).getTime()),

@@ -105,6 +105,25 @@ export function threatIcon(kind: IconKind, color: string, opacity = 1): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.replace(/\s+/g, " "))}`;
 }
 
+import { fadeWindow, ZONE_FADE_FLOOR } from "./paint";
+
+/**
+ * Насколько выцвел значок к моменту просмотра.
+ *
+ * Та же физика, что у заливки: окно пролёта района, поправка на скорость
+ * угрозы, тот же пол. Раньше у значка был свой срок в 30 минут с полом 0.2,
+ * и кривая упиралась в пол уже к двадцати минутам — двадцатиминутная
+ * фиксация горела так же, как двухчасовая, и разница возрастов на карте
+ * не читалась вовсе.
+ *
+ * Окно всегда районное, даже если зона события — посёлок или субъект:
+ * значок точечный, его масштаб — окрестность точки.
+ */
+export function iconFreshness(ageMs: number, threat?: string): number {
+  const share = Math.min(1, Math.max(0, ageMs) / fadeWindow("district", threat));
+  return Math.max(ZONE_FADE_FLOOR, 1 - share ** 0.5);
+}
+
 /**
  * Стрелка курса, рисуется отдельным значком поверх круга.
  *
