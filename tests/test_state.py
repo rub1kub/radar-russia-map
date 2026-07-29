@@ -26,6 +26,27 @@ def ago(**kwargs) -> str:
     return (NOW - timedelta(**kwargs)).isoformat()
 
 
+def test_history_payload_carries_zone_meta():
+    """Каждая зона выгрузки истории обязана приехать с метаданными.
+
+    Карта в архиве красится соответствием «зона -> полигон»; раньше клиент
+    брал его из живых счётчиков, и зона, тихая сейчас, в истории не
+    красилась вовсе — значки стояли, а заливки под ними не было.
+    """
+    from pipeline.db import DB_PATH
+    if not DB_PATH.exists():
+        pytest.skip("базы нет")
+    from api.server import history
+
+    # day=None явно: при прямом вызове дефолт параметра — объект Query.
+    payload = history(hours=6, day=None)
+    zones = payload["zones"]
+    for event in payload["events"][:100]:
+        for zone_id in event["zone_path"]:
+            assert zone_id in zones, zone_id
+            assert zones[zone_id].get("level")
+
+
 def test_fresh_event_burns_at_full():
     assert zone_fade(ago(seconds=0), NOW) == 1.0
 

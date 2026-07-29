@@ -6,7 +6,7 @@
  * Сервер отдаёт окно целиком один раз, дальше перемотка мгновенная.
  */
 
-import type { RadarEvent, ZoneCount } from "./api";
+import type { RadarEvent, ZoneCount, ZoneMeta } from "./api";
 import { freshness } from "./paint";
 
 export const SLOT_MS = 15 * 60 * 1000;
@@ -56,7 +56,8 @@ export function eventsAt(events: RadarEvent[], atIso: string): RadarEvent[] {
 export function zoneCountsAt(
   events: RadarEvent[],
   atIso: string,
-  meta: Record<string, ZoneCount>
+  // Достаточно уровня и полигона; живые ZoneCount подходят структурно.
+  meta: Record<string, ZoneMeta>
 ): Record<string, ZoneCount> {
   const counts: Record<string, ZoneCount> = {};
   const atMs = new Date(atIso).getTime();

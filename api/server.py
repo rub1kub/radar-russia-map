@@ -560,6 +560,26 @@ def history_days(limit: int = Query(60, ge=1, le=400)):
     return {"days": list(reversed(rows)), "peak": peak}
 
 
+def zone_meta(rows: list[dict]) -> dict[str, dict]:
+    """Уровень и полигон каждой зоны, встречающейся в выгрузке.
+
+    Карта в архиве красится соответствием «зона -> полигон». Раньше клиент
+    брал его из живых счётчиков — и зона, тихая сейчас, в истории не
+    красилась вовсе: значки стояли, а заливки под ними не было.
+    """
+    ids = {zone_id for row in rows for zone_id in row["zone_path"]}
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    return {
+        row["id"]: {"level": row["level"], "source_id": row["source_id"],
+                    "name": row["name_ru"]}
+        for row in query(
+            f"SELECT id, level, source_id, name_ru FROM zones WHERE id IN ({marks})",
+            tuple(ids))
+    }
+
+
 @app.get("/api/v1/history")
 def history(
     hours: int = Query(24, ge=1, le=24 * 30),
@@ -576,12 +596,14 @@ def history(
         end = start + timedelta(days=1)
         rows = event_rows(start, limit=20000, until=end)
         return {"from": start.isoformat(), "to": end.isoformat(), "day": day,
-                "events": rows, "routes": route_rows(start, until=end, limit=2000)}
+                "events": rows, "zones": zone_meta(rows),
+                "routes": route_rows(start, until=end, limit=2000)}
 
     now = latest_moment()
     since = now - timedelta(hours=hours)
+    rows = event_rows(since, limit=5000)
     return {"from": since.isoformat(), "to": now.isoformat(),
-            "events": event_rows(since, limit=5000),
+            "events": rows, "zones": zone_meta(rows),
             "routes": route_rows(since, limit=2000)}
 
 

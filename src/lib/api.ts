@@ -126,12 +126,21 @@ export type Analytics = {
   by_threat: Array<{ threat_type: string; n: number }>;
 };
 
+/** Метаданные зоны для покраски архива: уровень и полигон. */
+export type ZoneMeta = {
+  level?: "region" | "district" | "place";
+  source_id?: string;
+  name?: string;
+};
+
 export type History = {
   from: string;
   to: string;
   day?: string;
   events: RadarEvent[];
   routes?: RouteLine[];
+  /** Зоны выгрузки: без них тихая сейчас зона не красилась в истории. */
+  zones?: Record<string, ZoneMeta>;
 };
 
 export type HistoryDay = {

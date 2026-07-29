@@ -32,7 +32,7 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { api, API_BASE } from "./lib/api";
-import type { RadarEvent, RadarState, RouteLine, SearchItem, ZoneCount } from "./lib/api";
+import type { RadarEvent, RadarState, RouteLine, SearchItem, ZoneCount, ZoneMeta } from "./lib/api";
 import { inferTrails, trailVisibleAt } from "./lib/trails";
 import {
   formatAge,
@@ -785,6 +785,7 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
   const [historyRoutes, setHistoryRoutes] = useState<RouteLine[] | null>(null);
+  const [historyZones, setHistoryZones] = useState<Record<string, ZoneMeta> | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [slotIndex, setSlotIndex] = useState(0);
@@ -851,6 +852,7 @@ export default function App() {
       const built = buildSlots(payload.from, payload.to);
       setHistoryEvents(payload.events);
       setHistoryRoutes(payload.routes ?? []);
+      setHistoryZones(payload.zones ?? {});
       setSlots(built);
       setSlotIndex(0);
       setHistoryLoading(false);
@@ -922,6 +924,7 @@ export default function App() {
         const built = buildSlots(payload.from, payload.to);
         setHistoryEvents(payload.events);
         setHistoryRoutes(payload.routes ?? []);
+        setHistoryZones(payload.zones ?? {});
         setSlots(built);
         setSlotIndex(Math.max(0, built.length - 1));
         setHistoryLoading(false);
@@ -1070,10 +1073,16 @@ export default function App() {
   // Карта красится одной и той же формой счётчиков — живой или исторической.
   const paintedZones = useMemo(() => {
     if (inHistory && historyEvents && historyAt) {
-      return zoneCountsAt(historyEvents, historyAt, radarState?.zone_counts ?? {});
+      // Метаданные зон приезжают с выгрузкой истории: живые счётчики знают
+      // только шумные сейчас зоны, и тихая сегодня зона не красилась в
+      // архиве вовсе — значки стояли, а заливки под ними не было.
+      return zoneCountsAt(historyEvents, historyAt, {
+        ...(radarState?.zone_counts ?? {}),
+        ...(historyZones ?? {})
+      });
     }
     return radarState?.zone_counts ?? {};
-  }, [inHistory, historyEvents, historyAt, radarState]);
+  }, [inHistory, historyEvents, historyAt, historyZones, radarState]);
 
   const shownEvents = useMemo(() => {
     if (inHistory && historyEvents && historyAt) {
@@ -2225,6 +2234,7 @@ export default function App() {
                 // эффект перезагрузил последние 24 часа.
                 setHistoryEvents(null);
                 setHistoryRoutes(null);
+                setHistoryZones(null);
                 setSlots([]);
               }
             }}
@@ -2235,6 +2245,7 @@ export default function App() {
               setSelectedDay(null);
               setHistoryEvents(null);
               setHistoryRoutes(null);
+              setHistoryZones(null);
               setSlots([]);
               setSlotIndex(0);
               setPlaying(false);

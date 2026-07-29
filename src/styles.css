@@ -2114,6 +2114,22 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   overflow-x: auto;
 }
 
+/* Подсказка дня привязана к телу панели, а не к столбику: столбик живёт
+   внутри .day-strip с overflow-x, и подсказку с датой обрезало — человек
+   не видел, на какой день наводится. Тот же приём, что у .feed-filters. */
+.history-body { position: relative; }
+.day-strip [data-tip] { position: static; }
+.day-strip [data-tip]::after {
+  top: 58px;
+  left: 12px;
+  right: auto;
+  transform: translateX(0) translateY(-3px);
+}
+.day-strip [data-tip]:hover::after,
+.day-strip [data-tip]:focus-visible::after {
+  transform: translateX(0) translateY(0);
+}
+
 .day-bar {
   display: flex;
   align-items: flex-end;
