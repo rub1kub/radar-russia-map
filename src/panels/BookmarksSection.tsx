@@ -1,4 +1,4 @@
-import { BellRing, Volume2, VolumeX, X } from "lucide-react";
+import { BellRing, Send, Volume2, VolumeX, X } from "lucide-react";
 import type { RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { plural, severityColor } from "../lib/format";
@@ -10,6 +10,9 @@ type Props = {
   onRemove: (zoneId: string) => void;
   soundOn: boolean;
   onToggleSound: () => void;
+  /** null — браузер пушей не умеет, кнопка не рисуется. */
+  pushOn: boolean | null;
+  onTogglePush: () => void;
 };
 
 /**
@@ -24,13 +27,32 @@ export function BookmarksSection({
   onPick,
   onRemove,
   soundOn,
-  onToggleSound
+  onToggleSound,
+  pushOn,
+  onTogglePush
 }: Props) {
   return (
     <section className="tool-section bookmarks-section">
       <div className="section-heading">
         <BellRing size={16} aria-hidden="true" />
         <h2>Мои места</h2>
+        {/* Пуш догоняет закрытую вкладку: тревога и отбой приходят
+            системным уведомлением. Только по явному выбору. */}
+        {pushOn !== null ? (
+          <button
+            type="button"
+            className={`sound-toggle ${pushOn ? "is-on" : ""}`}
+            onClick={onTogglePush}
+            title={
+              pushOn
+                ? "Выключить уведомления при закрытой вкладке"
+                : "Уведомлять даже при закрытой вкладке"
+            }
+            aria-pressed={pushOn}
+          >
+            <Send size={14} aria-hidden="true" />
+          </button>
+        ) : null}
         {/* Звук выключен по умолчанию: в этой теме он должен быть осознанным
             выбором. Кнопка и есть жест, которым браузер разрешает звук. */}
         <button

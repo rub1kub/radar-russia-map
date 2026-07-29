@@ -18,6 +18,10 @@ import {
   threatLabel
 } from "../lib/format";
 
+// Мост важен ровно тем, кто смотрит на Крым: в шапке для всей страны он
+// был шумом (и оттуда его убрали), в карточке крымской зоны он — ответ.
+const BRIDGE_REGIONS = new Set(["Республика Крым", "Севастополь"]);
+
 type Props = {
   events: RadarEvent[];
   state: RadarState | null;
@@ -124,6 +128,16 @@ export function FeedPanel({
     ? quietVerdict(zoneEvents, reference)
     : null;
 
+  // Перекрытый мост — только при выбранном Крыме и только в эфире: в
+  // архиве статус относится к «сейчас», а не к просматриваемому моменту.
+  const bridge = state?.bridge;
+  const showBridge = Boolean(
+    !historyLabel &&
+      bridge?.closed &&
+      selectedName &&
+      (BRIDGE_REGIONS.has(selectedName) || (regionName && BRIDGE_REGIONS.has(regionName)))
+  );
+
   // Событие могло получить последнее сообщение уже после просматриваемого
   // момента. Тогда «сколько прошло» считать не от него, а от среза: иначе
   // архивная карточка писала «только что» и делалась неотличимой от эфира.
@@ -224,6 +238,11 @@ export function FeedPanel({
                         "событий здесь"
                       )}`}
               </p>
+              {showBridge && bridge ? (
+                <p className="zone-card-bridge">
+                  Крымский мост перекрыт · {formatMoment(bridge.at, reference)}
+                </p>
+              ) : null}
               {quiet !== null ? (
                 <p className="zone-card-verdict">
                   {/* После часа счёт идёт часами: «эфир молчит 121 минуту»
