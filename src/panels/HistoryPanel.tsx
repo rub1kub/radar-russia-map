@@ -57,6 +57,26 @@ function dayLabel(day: string): string {
   return `${date}.${month}`;
 }
 
+/**
+ * Куда прижимать подсказку дня.
+ *
+ * По центру столбика — только в середине полосы. У крайних дней половина
+ * плашки уезжала за панель прямо на карту, а обрезать её нельзя: там дата.
+ */
+function tipAlign(index: number, total: number): "left" | "center" | "right" {
+  const share = total > 1 ? index / (total - 1) : 0.5;
+  if (share < 0.25) return "left";
+  if (share > 0.75) return "right";
+  return "center";
+}
+
+function tipOffset(index: number, total: number): React.CSSProperties {
+  const align = tipAlign(index, total);
+  if (align === "left") return { left: 0 };
+  if (align === "right") return { right: 0 };
+  return { left: `${(index / Math.max(1, total - 1)) * 100}%` };
+}
+
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн",
                 "июл", "авг", "сен", "окт", "ноя", "дек"];
 
@@ -246,19 +266,13 @@ export function HistoryPanel({
                   </button>
                 ))}
               </div>
-              {/* Подсказка стоит под своим столбиком и едет вместе с ним. */}
+              {/* Подсказка стоит под своим столбиком и едет вместе с ним.
+                  У крайних дней центрировать её нельзя — половина уезжает
+                  за панель; там она прижимается к краю. */}
               {hoverDay !== null && days[hoverDay] ? (
                 <div
-                  className="day-tip"
-                  style={{
-                    left: `${Math.min(
-                      86,
-                      Math.max(
-                        14,
-                        days.length > 1 ? (hoverDay / (days.length - 1)) * 100 : 50
-                      )
-                    )}%`
-                  }}
+                  className={`day-tip is-${tipAlign(hoverDay, days.length)}`}
+                  style={tipOffset(hoverDay, days.length)}
                   role="tooltip"
                 >
                   <b>{dayLabel(days[hoverDay].day)}</b> ·{" "}

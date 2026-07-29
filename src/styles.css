@@ -2124,7 +2124,6 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .day-tip {
   position: absolute;
   top: calc(100% - 2px);
-  transform: translateX(-50%);
   z-index: 30;
   width: max-content;
   max-width: 260px;
@@ -2140,6 +2139,11 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   pointer-events: none;
 }
 .day-tip b { font-weight: 600; }
+/* Середина полосы — по центру столбика; края — прижата к краю панели,
+   иначе половина плашки с датой уезжает на карту. */
+.day-tip.is-center { transform: translateX(-50%); }
+.day-tip.is-left,
+.day-tip.is-right { transform: none; }
 
 .day-bar {
   display: flex;
