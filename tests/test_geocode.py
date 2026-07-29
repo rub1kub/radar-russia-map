@@ -47,6 +47,17 @@ def names(resolved) -> list[str]:
     return [item.name for item in resolved]
 
 
+def names_of(geocoder: Geocoder, text: str, home: str | None = None) -> list[str]:
+    """Имена зон сообщения так, как их видит конвейер: с разбором и drop_covered."""
+    from pipeline.parse import parse
+
+    observation = parse(text)
+    if not observation.relevant:
+        return []
+    return names(geocoder.drop_covered(
+        geocoder.resolve(observation.place_phrases, home=home)))
+
+
 # --- Чужой город не садится на российского тёзку ----------------------------
 
 @pytest.mark.parametrize("phrase", [
@@ -179,6 +190,52 @@ def test_lone_match_is_its_own_witness(geocoder):
     assert names(geocoder.resolve(["Тихорецк"])) == ["Тихорецкий район"]
     assert names(geocoder.resolve(["ОТБОЙ РАКЕТНОЙ ОПАСНОСТИ в Шебекинском МО"])) \
         == ["Шебекинский район"]
+
+
+# --- Обиходные названия групп районов ---------------------------------------
+
+def test_priazovye_of_kuban_expands_to_its_districts(geocoder):
+    """«Приазовское побережье» Кубани — это шесть азовских районов.
+
+    Такого имени в справочнике нет: это физическая география. Раньше
+    сообщение ложилось на весь край целиком.
+    """
+    names = names_of(geocoder, "🔴Краснодарский край Опасность БПЛА "
+                               "Все приазовское побережье")
+    assert "Ейский район" in names
+    assert "Темрюкский район" in names
+    assert "Сочи" not in names          # это Причерноморье, а не Приазовье
+
+
+def test_priazovye_means_a_different_thing_in_each_region(geocoder):
+    """Своё Приазовье у Кубани, Дона и Запорожья — путать их нельзя."""
+    rostov = names_of(geocoder, "Ростовская область, Приазовье — опасность по БПЛА")
+    assert "Азовский район" in rostov and "Неклиновский район" in rostov
+    assert not any(name.startswith("Ейск") for name in rostov)
+
+    zaporozhye = names_of(geocoder, "Запорожская область Приазовье опасность БПЛА")
+    assert "Приазовский округ" in zaporozhye
+
+
+def test_group_without_a_region_is_not_guessed(geocoder):
+    """Без названного региона группа не разворачивается: чьё Приазовье
+    имелось в виду, из текста не следует."""
+    assert names_of(geocoder, "Приазовье опасность по БПЛА") == []
+
+
+def test_source_region_decides_the_group(geocoder):
+    """Регион канала годится, когда текст региона не назвал."""
+    krasnodar = region_zone(geocoder, "Краснодарский край")
+    names = names_of(geocoder, "Приазовье опасность по БПЛА", home=krasnodar)
+    assert "Приморско-Ахтарский район" in names
+
+
+def test_prichernomorye_is_the_black_sea_coast(geocoder):
+    """Причерноморье Кубани — черноморские курорты, а не азовские районы."""
+    krasnodar = region_zone(geocoder, "Краснодарский край")
+    names = names_of(geocoder, "Все причерноморье тревога по БПЛА", home=krasnodar)
+    assert "Сочи" in names and "Новороссийск" in names
+    assert "Ейский район" not in names
 
 
 # --- Города новых регионов, которых нет под своим именем ---------------------
