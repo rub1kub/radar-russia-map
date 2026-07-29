@@ -499,6 +499,30 @@ def test_target_count_extracted():
     assert parse("Ещё 2 БПЛА от Новобелая в сторону Воронежа").target_count == 2
 
 
+def test_anticipated_fixation_is_a_warning_not_a_sighting():
+    """«Повышенное внимание по фиксациям с моря этой ночью» — прогноз.
+
+    Борта ещё никто не видел, а слово «фиксациям» делало из предупреждения
+    красную «Фиксацию» со значком «здесь видят борт» — по Ейску,
+    Приморско-Ахтарску и Темрюку стояли значки при пустом небе.
+    """
+    o = parse("Ейск Приморско Ахтарск Темрюк Повышенное внимание "
+              "по фиксациям БПЛА с моря этой ночью!")
+    assert o.relevant
+    assert o.signal_type == "danger"
+
+    # Возможная фиксация — тоже ожидание.
+    assert parse("Возможны фиксации БПЛА над Ростовской областью").signal_type == "danger"
+
+
+def test_real_fixation_next_to_an_anticipation_stays_red():
+    """Настоящая фиксация рядом с оборотом ожидания не понижается."""
+    o = parse("Фиксация БПЛА над Ейском, повышенное внимание по фиксациям "
+              "соседним районам")
+    assert o.signal_type == "detection"
+    assert o.severity >= 8
+
+
 def test_group_raid_is_not_invented_as_ten_targets():
     """«Массированный пуск» — не «10 целей».
 
