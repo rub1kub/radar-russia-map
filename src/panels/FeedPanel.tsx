@@ -382,7 +382,20 @@ export function FeedPanel({
                         {event.threat_type !== "unknown"
                           ? ` · ${threatLabel(event.threat_type)}`
                           : ""}
-                        {event.target_count ? ` · ${event.target_count} целей` : ""}
+                        {/* Число целей — только когда его назвал источник.
+                            «Массированный налёт» раньше превращался в ровно
+                            10 целей: цифру выдумывал разбор, а карточка
+                            выдавала её за факт ленты. */}
+                        {event.target_count
+                          ? ` · ${event.target_count} ${plural(
+                              event.target_count,
+                              "цель",
+                              "цели",
+                              "целей"
+                            )}`
+                          : event.massive
+                            ? " · групповой налёт"
+                            : ""}
                       </span>
                       <span className="event-since">
                         {/* До последнего подтверждения, а не до «сейчас»:

@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS events (
     lon           REAL,
     accuracy_m    INTEGER,
     direction_deg INTEGER,
-    target_count  INTEGER
+    target_count  INTEGER,
+    -- Групповой налёт, названный словом, а не числом: «массированный пуск»,
+    -- «группа БПЛА». Раньше такой текст превращался в ровно 10 целей —
+    -- цифру выдумывал разбор, а карточка выдавала её за факт источника.
+    massive       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_events_seen   ON events (last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_events_zone   ON events (zone_id);
@@ -108,12 +112,28 @@ CREATE INDEX IF NOT EXISTS idx_routes_posted ON routes (posted_at);
 DERIVED_TABLES = ("event_sources", "events", "routes")
 
 
+# Колонки, добавленные после первой сборки базы. CREATE TABLE IF NOT EXISTS
+# существующую таблицу не трогает, поэтому новые поля доливаются вручную.
+MIGRATIONS = (
+    ("events", "massive", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def migrate(connection: sqlite3.Connection) -> None:
+    for table, column, definition in MIGRATIONS:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    connection.commit()
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
     target = path or DB_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(target)
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
+    migrate(connection)
     return connection
 
 

@@ -86,7 +86,8 @@ LATE_GRACE = timedelta(seconds=30)
 # Открытым считается событие, которое еще может принять подтверждение.
 OPEN_EVENTS_SQL = """
 SELECT id, first_seen_at, last_seen_at, signal_type, threat_type, severity,
-       zone_id, zone_path, lat, lon, accuracy_m, direction_deg, target_count
+       zone_id, zone_path, lat, lon, accuracy_m, direction_deg, target_count,
+       massive
 FROM events
 WHERE status IN ('active', 'fading') AND resolved_at IS NULL
 -- Порядок повторяет Fuser._open: события лежат в порядке появления. Внутри
@@ -112,8 +113,8 @@ UPSERT_EVENT_SQL = """
 INSERT INTO events (id, first_seen_at, last_seen_at, resolved_at, status,
                     signal_type, threat_type, severity, confidence, source_count,
                     zone_id, zone_path, lat, lon, accuracy_m, direction_deg,
-                    target_count)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    target_count, massive)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
     -- Монотонные поля берутся с запасом: событие может только расширяться во
     -- времени и по числу подтверждений, сужаться ему нечем.
@@ -137,7 +138,9 @@ ON CONFLICT(id) DO UPDATE SET
     lon           = excluded.lon,
     accuracy_m    = excluded.accuracy_m,
     direction_deg = excluded.direction_deg,
-    target_count  = excluded.target_count
+    target_count  = excluded.target_count,
+    -- Групповой налёт, однажды названный, таким и остаётся.
+    massive       = max(events.massive, excluded.massive)
 """
 
 
@@ -256,6 +259,7 @@ def load_open_events(
             accuracy_m=row["accuracy_m"] or 12_000,
             direction_deg=row["direction_deg"],
             target_count=row["target_count"],
+            massive=bool(row["massive"]),
         )
         events[event.id] = event
         order.append(event)
@@ -294,7 +298,7 @@ def load_open_events(
 CLEARED_SQL = """
 SELECT e.id, e.zone_id, e.zone_path, e.threat_type, e.signal_type, e.severity,
        e.first_seen_at, e.last_seen_at, e.resolved_at, e.lat, e.lon,
-       e.accuracy_m, e.direction_deg, e.target_count
+       e.accuracy_m, e.direction_deg, e.target_count, e.massive
 FROM events e
 WHERE e.resolved_at IS NOT NULL AND e.resolved_at >= ?
 """
@@ -326,6 +330,7 @@ def load_cleared(connection, now) -> dict[tuple[str, str], Event]:
             accuracy_m=row["accuracy_m"] or 12_000,
             direction_deg=row["direction_deg"],
             target_count=row["target_count"],
+            massive=bool(row["massive"]),
         )
     return out
 
@@ -370,6 +375,7 @@ def merge_for_write(restored: list[Event], created: list[Event]) -> list[Event]:
         target.resolved_at = target.resolved_at or event.resolved_at
         if event.target_count:
             target.target_count = max(target.target_count or 0, event.target_count)
+        target.massive = target.massive or event.massive
         for key, tier in event.sources.items():
             target.sources.setdefault(key, tier)
         target.contributions.extend(event.contributions)
@@ -387,7 +393,8 @@ def store_event(connection: sqlite3.Connection, event: Event, now: datetime) -> 
          event.status(now), event.signal_type, event.threat_type, event.severity,
          event.confidence, event.independent_sources, event.zone_id,
          json.dumps(event.zone_path, ensure_ascii=False), event.lat, event.lon,
-         event.accuracy_m, event.direction_deg, event.target_count),
+         event.accuracy_m, event.direction_deg, event.target_count,
+         int(event.massive)),
     )
     for raw_id, source_key, role, contributed in event.contributions:
         connection.execute(

@@ -482,6 +482,8 @@ class Observation:
     place_phrases: list[str] = field(default_factory=list)
     direction_deg: int | None = None
     target_count: int | None = None
+    # Источник назвал налёт групповым, не назвав числа бортов.
+    massive: bool = False
     official: bool = False
     relevant: bool = True
     body: str = ""
@@ -545,10 +547,20 @@ def extract_direction(text: str) -> int | None:
 
 
 def extract_count(text: str) -> int | None:
+    """Число целей — только если оно названо в тексте.
+
+    Раньше «массированный налёт» превращался в ровно 10 целей, и карточка
+    писала «10 целей» там, где источник не называл ни одной: цифра была
+    нашей выдумкой, выданной за факт. Массированность теперь живёт
+    отдельным признаком — см. is_massive().
+    """
     numbers = [int(value) for value in COUNT_RE.findall(text) if 0 < int(value) <= 200]
-    if numbers:
-        return max(numbers)
-    return 10 if MANY_RE.search(text) else None
+    return max(numbers) if numbers else None
+
+
+def is_massive(text: str) -> bool:
+    """Источник говорит о группе бортов, не называя их числа."""
+    return bool(MANY_RE.search(text))
 
 
 def candidate_phrases(body: str) -> list[str]:
@@ -700,6 +712,7 @@ def parse(text: str) -> Observation:
     observation.threat_type = threat
     observation.direction_deg = extract_direction(clean)
     observation.target_count = extract_count(clean)
+    observation.massive = is_massive(clean)
     observation.place_phrases = candidate_phrases(body)
 
     # Официальные врезки и групповые налеты весомее — но в пределах своей
@@ -709,7 +722,9 @@ def parse(text: str) -> Observation:
     ceiling = band_ceiling(severity)
     if observation.official:
         observation.severity = min(ceiling, observation.severity + 1)
-    if observation.target_count and observation.target_count >= 5:
+    # Групповой налёт весомее одиночного борта — что названный числом, что
+    # словом. Вес тот же, но число целей больше не выдумывается ради него.
+    if (observation.target_count and observation.target_count >= 5) or observation.massive:
         observation.severity = min(ceiling, observation.severity + 1)
 
     return observation

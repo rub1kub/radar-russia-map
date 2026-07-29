@@ -57,6 +57,8 @@ class Event:
     accuracy_m: int = 12_000
     direction_deg: int | None = None
     target_count: int | None = None
+    # Хотя бы один источник назвал налёт групповым, не назвав числа бортов.
+    massive: bool = False
     sources: dict[str, str] = field(default_factory=dict)   # source_key -> tier
     # network_id -> tier. Клоны одной сети дают один голос: десяток лент вида
     # "Радар.ру | X область" ведёт один оператор, и считать их независимыми
@@ -252,6 +254,8 @@ class Fuser:
                 existing.direction_deg = observation.direction_deg
             if observation.target_count:
                 existing.target_count = max(existing.target_count or 0, observation.target_count)
+            if getattr(observation, "massive", False):
+                existing.massive = True
             role = "confirm" if source_key not in existing.sources else "repeat"
             existing.sources.setdefault(source_key, tier)
             existing.networks.setdefault(network or source_key, tier)
@@ -272,6 +276,7 @@ class Fuser:
             accuracy_m=ACCURACY_M.get(level, 12_000),
             direction_deg=observation.direction_deg,
             target_count=observation.target_count,
+            massive=getattr(observation, "massive", False),
             sources={source_key: tier},
             networks={(network or source_key): tier},
             contributions=[(raw_id, source_key, "first", moment)],

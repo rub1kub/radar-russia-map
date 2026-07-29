@@ -144,14 +144,15 @@ def rebuild(connection) -> dict:
         connection.execute(
             "INSERT INTO events (id, first_seen_at, last_seen_at, resolved_at, status,"
             " signal_type, threat_type, severity, confidence, source_count, zone_id,"
-            " zone_path, lat, lon, accuracy_m, direction_deg, target_count)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " zone_path, lat, lon, accuracy_m, direction_deg, target_count, massive)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (event.id, event.first_seen.isoformat(), event.last_seen.isoformat(),
              event.resolved_at.isoformat() if event.resolved_at else None,
              event.status(now), event.signal_type, event.threat_type, event.severity,
              event.confidence, event.independent_sources, event.zone_id,
              json.dumps(event.zone_path, ensure_ascii=False), event.lat, event.lon,
-             event.accuracy_m, event.direction_deg, event.target_count),
+             event.accuracy_m, event.direction_deg, event.target_count,
+             int(event.massive)),
         )
         for raw_id, source_key, role, contributed in event.contributions:
             connection.execute(

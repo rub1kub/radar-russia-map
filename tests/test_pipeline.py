@@ -497,7 +497,27 @@ def test_allclear_has_zero_severity():
 
 def test_target_count_extracted():
     assert parse("Ещё 2 БПЛА от Новобелая в сторону Воронежа").target_count == 2
-    assert parse("Много фиксаций БПЛА").target_count == 10
+
+
+def test_group_raid_is_not_invented_as_ten_targets():
+    """«Массированный пуск» — не «10 целей».
+
+    Разбор подставлял ровно десятку там, где источник не называл ни одной,
+    и карточка писала «10 целей» как факт ленты. Групповой налёт теперь
+    отдельный признак: вес события тот же, выдуманного числа нет.
+    """
+    many = parse("Много фиксаций БПЛА")
+    assert many.target_count is None
+    assert many.massive is True
+
+    # Названное число остаётся числом, а массированности в нём нет.
+    counted = parse("Ещё 2 БПЛА от Новобелая в сторону Воронежа")
+    assert counted.target_count == 2
+    assert counted.massive is False
+
+    # Вес групповому налёту по-прежнему добавляется.
+    plain = parse("Опасность по БПЛА в Ростовской области")
+    assert parse("Массированный пуск БПЛА по Ростовской области").severity > plain.severity
 
 
 # --- Геокодер (на реальном справочнике) -------------------------------------

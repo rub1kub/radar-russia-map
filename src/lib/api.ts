@@ -25,6 +25,8 @@ export type RadarEvent = {
   /** Откуда пришла цель, азимут в градусах: 0 — с севера. */
   direction_deg?: number | null;
   target_count: number | null;
+  /** Источник назвал налёт групповым, не назвав числа бортов. */
+  massive?: number | boolean | null;
 };
 
 export type ZoneCount = {
