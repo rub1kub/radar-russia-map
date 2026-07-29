@@ -181,6 +181,29 @@ def test_lone_match_is_its_own_witness(geocoder):
         == ["Шебекинский район"]
 
 
+# --- Города новых регионов, которых нет под своим именем ---------------------
+
+def test_city_of_a_new_region_is_not_a_namesake_in_siberia(geocoder):
+    """«ДНР: Часов Яр, Артёмовск, Соледар» уезжало в Красноярский край.
+
+    Набор UKR ADM2 даёт только округа, и в точном индексе под «Артемовск»
+    стоял единственный тёзка — посёлок Курагинского района на 2179 жителей.
+    """
+    hits = geocoder.resolve(["Артёмовск ДНР УАБ тревога"])
+    assert hits
+    assert region_of(geocoder, hits[0].zone_id) == "Донецкая Народная Республика"
+
+
+def test_named_region_still_wins_for_the_siberian_namesake(geocoder):
+    """Псевдоним добавляет кандидата, а не подменяет: названный регион
+    по-прежнему главнее."""
+    hits = [item for item in
+            geocoder.resolve(["Артемовск, Красноярский край — опасность БПЛА"])
+            if item.level == "place"]
+    assert hits
+    assert region_of(geocoder, hits[0].zone_id) == "Красноярский край"
+
+
 # --- Регион источника разводит тёзок ----------------------------------------
 
 def region_zone(geocoder: Geocoder, name: str) -> str:
