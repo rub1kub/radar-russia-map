@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Clock, Pause, Play, Radio, X } from "lucide-react";
 import type { HistoryDay } from "../lib/api";
 import { formatDayTime, plural, severityColor } from "../lib/format";
@@ -156,6 +156,10 @@ export function HistoryPanel({
   const timer = useRef<number | null>(null);
   // Пик по дням, чтобы полоски считались той же шкалой, что и диаграмма.
   const daysPeak = Math.max(1, ...days.map((entry) => entry.events));
+  // Подсказка дня ведётся отсюда, а не через data-tip: внутри полосы с
+  // overflow-x CSS-подсказку обрезало, а вынесенная в фиксированный угол
+  // отрывалась от столбика и ложилась поверх диаграммы.
+  const [hoverDay, setHoverDay] = useState<number | null>(null);
 
   useEffect(() => {
     if (!playing || !slots.length) return;
@@ -214,34 +218,55 @@ export function HistoryPanel({
         <div className="history-body">
           {days.length ? (
             <>
-            <div className="day-strip" role="group" aria-label="Выбор дня">
-              {days.map((entry) => (
-                <button
-                  key={entry.day}
-                  type="button"
-                  className={`day-bar ${selectedDay === entry.day ? "is-on" : ""}`}
-                  onClick={() => onPickDay(selectedDay === entry.day ? null : entry.day)}
-                  data-tip={`${dayLabel(entry.day)}: ${entry.events} ${plural(
-                    entry.events,
-                    "событие",
-                    "события",
-                    "событий"
-                  )}, подтверждено ${entry.confirmed}${
-                    entry.sources ? `, отчитывалось ${entry.sources} ${plural(
-                      entry.sources, "канал", "канала", "каналов"
-                    )}` : ""
-                  }`}
-                  aria-label={`${entry.day}, событий ${entry.events}`}
+            <div className="day-strip-wrap">
+              <div
+                className="day-strip"
+                role="group"
+                aria-label="Выбор дня"
+                onMouseLeave={() => setHoverDay(null)}
+              >
+                {days.map((entry, index) => (
+                  <button
+                    key={entry.day}
+                    type="button"
+                    className={`day-bar ${selectedDay === entry.day ? "is-on" : ""}`}
+                    onClick={() => onPickDay(selectedDay === entry.day ? null : entry.day)}
+                    onMouseEnter={() => setHoverDay(index)}
+                    onFocus={() => setHoverDay(index)}
+                    onBlur={() => setHoverDay(null)}
+                    aria-label={`${entry.day}, событий ${entry.events}`}
+                  >
+                    <i
+                      style={{
+                        height: `${dayHeight(entry.events, daysPeak)}%`,
+                        background: severityColor(entry.max_severity, 0.75)
+                      }}
+                      aria-hidden="true"
+                    />
+                  </button>
+                ))}
+              </div>
+              {/* Подсказка стоит под своим столбиком и едет вместе с ним. */}
+              {hoverDay !== null && days[hoverDay] ? (
+                <div
+                  className="day-tip"
+                  style={{
+                    left: `${Math.min(
+                      86,
+                      Math.max(
+                        14,
+                        days.length > 1 ? (hoverDay / (days.length - 1)) * 100 : 50
+                      )
+                    )}%`
+                  }}
+                  role="tooltip"
                 >
-                  <i
-                    style={{
-                      height: `${dayHeight(entry.events, daysPeak)}%`,
-                      background: severityColor(entry.max_severity, 0.75)
-                    }}
-                    aria-hidden="true"
-                  />
-                </button>
-              ))}
+                  <b>{dayLabel(days[hoverDay].day)}</b> ·{" "}
+                  {days[hoverDay].events}{" "}
+                  {plural(days[hoverDay].events, "событие", "события", "событий")},
+                  подтверждено {days[hoverDay].confirmed}
+                </div>
+              ) : null}
             </div>
             {/* Полоса тянется на месяцы, и без подписи непонятно, куда
                 вообще мотаешь. Месяц подписывается там, где сменился. */}

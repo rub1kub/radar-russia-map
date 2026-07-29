@@ -2114,21 +2114,32 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   overflow-x: auto;
 }
 
-/* Подсказка дня привязана к телу панели, а не к столбику: столбик живёт
-   внутри .day-strip с overflow-x, и подсказку с датой обрезало — человек
-   не видел, на какой день наводится. Тот же приём, что у .feed-filters. */
+/* Подсказку дня ведёт React, а не data-tip: внутри полосы с overflow-x
+   CSS-подсказку обрезало, а вынесенная в фиксированный угол — отрывалась
+   от столбика и ложилась поверх диаграммы. Обёртка задаёт систему
+   координат, подсказка встаёт под своим столбиком. */
 .history-body { position: relative; }
-.day-strip [data-tip] { position: static; }
-.day-strip [data-tip]::after {
-  top: 58px;
-  left: 12px;
-  right: auto;
-  transform: translateX(0) translateY(-3px);
+.day-strip-wrap { position: relative; }
+
+.day-tip {
+  position: absolute;
+  top: calc(100% - 2px);
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: 260px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(24, 29, 27, 0.98);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  color: rgba(236, 241, 236, 0.95);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
 }
-.day-strip [data-tip]:hover::after,
-.day-strip [data-tip]:focus-visible::after {
-  transform: translateX(0) translateY(0);
-}
+.day-tip b { font-weight: 600; }
 
 .day-bar {
   display: flex;

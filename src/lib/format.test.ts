@@ -1,4 +1,23 @@
 import { describe, expect, it } from "vitest";
+import { formatAgo } from "./format";
+
+describe("formatAgo", () => {
+  const now = "2026-07-29T19:30:00Z";
+
+  it("свежая метка отвечает «когда», а не «во сколько»", () => {
+    expect(formatAgo("2026-07-29T19:27:00Z", now)).toBe("3 минуты назад");
+    expect(formatAgo("2026-07-29T18:30:00Z", now)).toBe("1 час назад");
+  });
+
+  it("давнее событие показывает время: по нему его и вспоминают", () => {
+    // Два часа назад — «2 часа назад» уже хуже времени на часах.
+    expect(formatAgo("2026-07-29T17:00:00Z", now)).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("метка из будущего не превращается в «минуту назад»", () => {
+    expect(formatAgo("2026-07-29T19:35:00Z", now)).toMatch(/^\d{2}:\d{2}$/);
+  });
+});
 import {
   durationMinutes,
   formatAge,

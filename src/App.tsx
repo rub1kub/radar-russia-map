@@ -36,9 +36,9 @@ import type { RadarEvent, RadarState, RouteLine, SearchItem, ZoneCount, ZoneMeta
 import { inferTrails, trailVisibleAt } from "./lib/trails";
 import {
   formatAge,
+  formatAgo,
   formatDayTime,
   formatDuration,
-  formatMoment,
   numberFormat,
   plural,
   severityColor,
@@ -2193,7 +2193,10 @@ export default function App() {
                 {iconHint.feature.get("threat") ? ` · ${asText(iconHint.feature.get("threat"))}` : ""}
               </span>
               <span className="icon-hint-foot">
-                {formatMoment(
+                {/* Свежая метка отвечает «когда», а не «во сколько»:
+                    «3 минуты назад» читается сразу, «19:13» приходится
+                    вычитать из текущего времени в уме. */}
+                {formatAgo(
                   asText(iconHint.feature.get("at")),
                   historyAt ?? radarState?.generated_at ?? new Date().toISOString()
                 )}

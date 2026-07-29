@@ -77,6 +77,22 @@ export function formatDuration(fromIso: string, toIso: string): string {
   return rest ? `${head} ${rest} мин` : head;
 }
 
+/**
+ * Свежее — «3 минуты назад», давнее — время на часах.
+ *
+ * У метки на карте вопрос всегда «насколько это сейчас», и «19:13» на него
+ * не отвечает: приходится считать в уме от текущего времени. А вот для
+ * события шестичасовой давности «6 часов назад» уже хуже времени — по нему
+ * не сопоставить событие с тем, что человек помнит про свой вечер.
+ */
+export const RELATIVE_LIMIT_MIN = 90;
+
+export function formatAgo(iso: string, nowIso: string): string {
+  const minutes = Math.round((new Date(nowIso).getTime() - new Date(iso).getTime()) / 60000);
+  if (minutes < 0 || minutes > RELATIVE_LIMIT_MIN) return formatMoment(iso, nowIso);
+  return formatSince(iso, nowIso);
+}
+
 /** «12 минут назад» — сколько прошло с последнего подтверждения. */
 export function formatSince(iso: string, nowIso: string): string {
   const minutes = Math.max(
