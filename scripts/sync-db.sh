@@ -50,5 +50,5 @@ echo "--- атомарная замена"
 ssh "$SERVER" "mv $REMOTE_DIR/ingest/data/radar.db.incoming $REMOTE_DIR/ingest/data/radar.db"
 
 echo "--- проверка"
-curl -s --max-time 20 https://tihoenebo.com/api/v1/summary || echo "(API не ответил)"
+"${CURL:-curl}" -s --max-time 20 https://tihoenebo.com/api/v1/summary || echo "(API не ответил)"
 echo

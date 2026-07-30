@@ -26,6 +26,10 @@ SITE="${RADAR_SITE:-https://tihoenebo.com}"
 
 MODE="${1:-all}"
 
+# Полный путь к curl запоминается до сборки: npm перестраивает окружение
+# под собой, и после него простое «curl» в этом скрипте не находилось.
+CURL="$(command -v curl)"
+
 if [[ "$MODE" == "--db" ]]; then
   exec "$ROOT/scripts/sync-db.sh"
 fi
@@ -59,8 +63,10 @@ fi
 
 echo "=== 5/5 проверка боевого"
 sleep 4
-for path in / /api/v1/state; do
-  printf "  %-16s " "$path"
-  curl -s -o /dev/null -w "%{http_code}\n" --max-time 20 "$SITE$path"
+# Пути в кавычках и с noglob: zsh иначе раскрывает «/» как шаблон и
+# подставляет вместо него содержимое корня.
+for path in "" "/api/v1/state" "/robots.txt"; do
+  printf "  %-16s " "${path:-/}"
+  "$CURL" -s -o /dev/null -w "%{http_code}\n" --max-time 20 "$SITE$path"
 done
 echo "готово: $SITE"
