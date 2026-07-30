@@ -1252,6 +1252,19 @@ export default function App() {
       featureIndexRef.current.set(featureKey(feature), feature);
     });
 
+    // С посадочной страницы региона («/region/kurskaya-oblast/») человек
+    // приходит с ?region= в адресе и должен сразу увидеть свой субъект
+    // выбранным, а не общий вид страны.
+    const wantedRegion = new URLSearchParams(window.location.search).get("region");
+    const openWantedRegion = () => {
+      if (!wantedRegion) return;
+      const zone = wantedRegion.replace(/-/g, "_");
+      const target = regionFeatures.find((feature) => feature.get("zone") === zone);
+      if (!target) return;
+      applySelectedFeature(target);
+      fitFeature(map, target, 5.2);
+    };
+
     const districtFeatures = geoJson.readFeatures(dataset.districts, {
       dataProjection: "EPSG:4326",
       featureProjection: "EPSG:3857"
@@ -1603,6 +1616,7 @@ export default function App() {
       districtLayerRef.current?.changed();
     });
     maybeLoadLazyLayers();
+    openWantedRegion();
 
     map.on("pointermove", (event) => {
       const hit = map.hasFeatureAtPixel(event.pixel, {
