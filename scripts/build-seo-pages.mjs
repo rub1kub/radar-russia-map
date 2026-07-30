@@ -134,7 +134,10 @@ const page = ({ name, slug, districtNames }) => {
       <h1>${escape(title)}</h1>
       <p>${escape(description)}</p>
 
-      <a class="map" href="/?region=${encodeURIComponent(slug)}">Открыть карту ${escape(name)}</a>
+      <!-- Название на кнопке в именительном и через тире: родительный
+           («карту Краснодарского края») требовал бы третьего набора
+           правил ради одной строки, а предложный тут звучит неграмотно. -->
+      <a class="map" href="/?region=${encodeURIComponent(slug)}">Открыть карту — ${escape(name)}</a>
 
       <h2>Что показывает карта</h2>
       <p>
