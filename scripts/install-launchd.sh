@@ -24,7 +24,7 @@ LOG_DIR="$ROOT/ingest/data/logs"
 DOMAIN="gui/$(id -u)"
 
 LABELS=(com.radar.poll com.radar.pipeline com.radar.api com.radar.web
-        com.radar.retention com.radar.discover)
+        com.radar.retention com.radar.discover com.radar.sync)
 
 unload_all() {
   for label in "${LABELS[@]}"; do
@@ -67,6 +67,10 @@ write_agent() { # label, keepalive|daily, argv...
     # Понедельник, раннее утро: эфир тихий, остановка сборщика незаметна.
     schedule="    <key>StartCalendarInterval</key>
     <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>5</integer><key>Minute</key><integer>40</integer></dict>"
+  elif [[ "$mode" == "every2min" ]]; then
+    # Свежая база уезжает на боевой сервер. Две минуты — компромисс:
+    # тревога на сайте отстаёт ненадолго, а дельта-rsync стоит копейки.
+    schedule="    <key>StartInterval</key><integer>120</integer>"
   elif [[ "$mode" == "once" ]]; then
     # Одна попытка при входе: macOS может не пустить node к Documents
     # (TCC), и KeepAlive крутил бы вечный цикл падений. Карта при этом
@@ -108,6 +112,7 @@ write_agent com.radar.api       keepalive "$PY" -m uvicorn api.server:app --host
 write_agent com.radar.web       once      "$ROOT/node_modules/.bin/vite" --host 127.0.0.1
 write_agent com.radar.retention daily     "$PY" -m pipeline.retention --apply
 write_agent com.radar.discover  weekly    /bin/zsh "$ROOT/scripts/discover-weekly.sh"
+write_agent com.radar.sync      every2min /bin/zsh "$ROOT/scripts/sync-db.sh"
 
 # Bootstrap с одним повтором: сразу после выгрузки прежней версии порт или
 # сессия пару секунд ещё заняты, и первая попытка может упасть гонкой.
