@@ -112,7 +112,7 @@ write_agent com.radar.api       keepalive "$PY" -m uvicorn api.server:app --host
 write_agent com.radar.web       once      "$ROOT/node_modules/.bin/vite" --host 127.0.0.1
 write_agent com.radar.retention daily     "$PY" -m pipeline.retention --apply
 write_agent com.radar.discover  weekly    /bin/zsh "$ROOT/scripts/discover-weekly.sh"
-write_agent com.radar.sync      every2min /bin/zsh "$ROOT/scripts/sync-db.sh"
+write_agent com.radar.sync      every2min "$PY" "$ROOT/scripts/sync_db.py"
 
 # Bootstrap с одним повтором: сразу после выгрузки прежней версии порт или
 # сессия пару секунд ещё заняты, и первая попытка может упасть гонкой.

@@ -1256,13 +1256,15 @@ export default function App() {
     // приходит с ?region= в адресе и должен сразу увидеть свой субъект
     // выбранным, а не общий вид страны.
     const wantedRegion = new URLSearchParams(window.location.search).get("region");
-    const openWantedRegion = () => {
-      if (!wantedRegion) return;
+    /** true, если регион из адреса найден и карта на него наведена. */
+    const openWantedRegion = (): boolean => {
+      if (!wantedRegion) return false;
       const zone = wantedRegion.replace(/-/g, "_");
       const target = regionFeatures.find((feature) => feature.get("zone") === zone);
-      if (!target) return;
+      if (!target) return false;
       applySelectedFeature(target);
       fitFeature(map, target, 5.2);
+      return true;
     };
 
     const districtFeatures = geoJson.readFeatures(dataset.districts, {
@@ -1458,13 +1460,20 @@ export default function App() {
     // нарисует. Стартовый вид тоже нельзя задавать раньше: выбор десктопного
     // или мобильного масштаба зависит от фактической ширины.
     let viewApplied = false;
+    // Стартовый вид: обзор страны или регион из адреса, если человек
+    // пришёл с посадочной страницы. Обе ветки идут здесь, а не раньше:
+    // до появления размера карта не умеет ни центрироваться, ни
+    // подлетать к границам, и вид молча оставался бы обзорным.
+    const applyStartView = () => {
+      if (!openWantedRegion()) setOverviewView(map, 0);
+    };
     const resizeObserver = new ResizeObserver(() => {
       map.updateSize();
       const [width, height] = map.getSize() ?? [0, 0];
       if (width > 0 && height > 0) {
         if (!viewApplied) {
           viewApplied = true;
-          setOverviewView(map, 0);
+          applyStartView();
         }
         setViewExtent(map.getView().calculateExtent([width, height]));
       }
@@ -1474,7 +1483,7 @@ export default function App() {
 
     if ((map.getSize()?.[0] ?? 0) > 0) {
       viewApplied = true;
-      setOverviewView(map, 0);
+      applyStartView();
     }
     let disposed = false;
 
@@ -1616,7 +1625,6 @@ export default function App() {
       districtLayerRef.current?.changed();
     });
     maybeLoadLazyLayers();
-    openWantedRegion();
 
     map.on("pointermove", (event) => {
       const hit = map.hasFeatureAtPixel(event.pixel, {

@@ -31,7 +31,7 @@ MODE="${1:-all}"
 CURL="$(command -v curl)"
 
 if [[ "$MODE" == "--db" ]]; then
-  exec "$ROOT/scripts/sync-db.sh"
+  exec "$ROOT/ingest/.venv/bin/python" "$ROOT/scripts/sync_db.py"
 fi
 
 echo "=== 1/5 проверка"
@@ -58,7 +58,7 @@ ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api
 
 if [[ "$MODE" != "--code" ]]; then
   echo "=== база"
-  "$ROOT/scripts/sync-db.sh"
+  "$ROOT/ingest/.venv/bin/python" "$ROOT/scripts/sync_db.py"
 fi
 
 echo "=== 5/5 проверка боевого"
