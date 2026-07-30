@@ -277,7 +277,7 @@ export function FeedPanel({
               type="button"
               className={`filter-chip ${levelFilter.includes(8) ? "is-on" : ""}`}
               onClick={() => onToggleLevel(8)}
-              data-tip="Только фиксации, работа ПВО и взрывы — без тревог и предупреждений"
+              data-tip="Только фиксации, взрывы и громкие звуки — без тревог и предупреждений"
             >
               <i
                 className="chip-dot"
