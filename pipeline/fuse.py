@@ -40,6 +40,14 @@ RESOLVING = {"allclear", "retracted"}
 # Сто двадцать символов — уже фраза с деталями, случайно она не повторяется.
 REPOST_MIN_LEN = 120
 
+# Насколько исход конкретнее наблюдения — при одинаковом уровне опасности.
+# «Сбитие» и «фиксация» весят одинаково (8), а слияние меняло подпись только
+# при строго большем уровне: событие открывалось фиксацией, и пришедшее следом
+# сбитие в неё молча вливалось. За неделю так пропало 90 перехватов — на карте
+# они значились как «борт видят». Взрыв и без того весит больше, но стоит
+# здесь же, чтобы порядок читался целиком.
+SIGNAL_RANK = {"impact": 3, "intercept": 2, "detection": 1}
+
 
 @dataclass
 class Event:
@@ -245,7 +253,15 @@ class Fuser:
             # severity, но оставляло тип сигнала от первого сообщения: событие
             # показывалось как «Опасность» и красилось красным, потому что
             # внутрь попала фиксация. Растёт уровень — растёт и подпись.
-            if observation.severity > existing.severity:
+            harder = observation.severity > existing.severity
+            # При равном уровне побеждает более определённый исход: сбитие
+            # говорит о борте больше, чем «видим», и подпись должна об этом
+            # сказать.
+            same_but_sharper = (
+                observation.severity == existing.severity
+                and SIGNAL_RANK.get(observation.signal_type, 0)
+                > SIGNAL_RANK.get(existing.signal_type, 0))
+            if harder or same_but_sharper:
                 existing.severity = observation.severity
                 existing.signal_type = observation.signal_type
             if observation.threat_type != "unknown":

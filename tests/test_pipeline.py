@@ -792,6 +792,28 @@ def test_same_zone_within_window_merges():
     assert len(fuser.events[0].sources) == 2
 
 
+def test_intercept_outranks_detection_at_equal_severity():
+    """Сбитие поверх фиксации меняет подпись, хотя весят они одинаково.
+
+    Событие открывалось фиксацией, и пришедшее следом сбитие в неё молча
+    вливалось: слияние поднимало подпись только при строго большем уровне.
+    За неделю так пропало 90 перехватов.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="detection", severity=8)
+    add(fuser, 3, "b", signal="intercept", severity=8)
+    assert len(fuser.events) == 1
+    assert fuser.events[0].signal_type == "intercept"
+
+
+def test_detection_does_not_overwrite_intercept():
+    """Обратно подпись не откатывается: «видим» после «сбили» — не новость."""
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="intercept", severity=8)
+    add(fuser, 3, "b", signal="detection", severity=8)
+    assert fuser.events[0].signal_type == "intercept"
+
+
 def test_far_apart_in_time_does_not_merge():
     fuser = Fuser()
     add(fuser, 0, "a")
