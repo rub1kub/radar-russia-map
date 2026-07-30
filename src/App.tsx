@@ -155,6 +155,9 @@ const STATE_POLL_MS = 25_000;
 // Насколько должен сдвинуться курсор, чтобы двигать подсказку. Меньше — это
 // дрожание руки, ради которого не стоит перерисовывать приложение.
 const HINT_MOVE_PX = 6;
+// С какого поворота карта считается косой и показывается компас — градус.
+// Ниже человек отклонения не видит, а кнопка бы уже мозолила глаз.
+const ROTATION_EPSILON = 0.02;
 
 
 const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: string }> = [
@@ -769,6 +772,9 @@ export default function App() {
   const [regionHint, setRegionHint] = useState<
     { name: string; zoneId: string | null; pixel: number[] } | null
   >(null);
+  // Поворот карты в радианах. Двумя пальцами его легко задеть, не заметив,
+  // и вернуть север было нечем: карта так и оставалась косой.
+  const [rotation, setRotation] = useState(0);
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<LayerState>({
@@ -1668,6 +1674,12 @@ export default function App() {
     });
     maybeLoadLazyLayers();
 
+    // Кнопка возврата на север появляется только при повороте, поэтому его
+    // и слушаем. Событие редкое: жест поворота — не панорама.
+    map.getView().on("change:rotation", () => {
+      setRotation(map.getView().getRotation());
+    });
+
     // Запрос создаётся один раз: на каждое движение указателя он и сам
     // обошёлся бы дороже, чем стоит ответ.
     const narrowScreen = window.matchMedia(MOBILE_QUERY);
@@ -2445,6 +2457,29 @@ export default function App() {
             }}
           />
         </section>
+
+        {/* Компас показывается, только когда карта повёрнута: на ровной карте
+            кнопка «вернуть север» ничего не значит и место занимает зря.
+            Стрелка отклоняется вместе с картой и всегда смотрит на север —
+            по ней и видно, насколько вид развёрнут. */}
+        {Math.abs(rotation) > ROTATION_EPSILON ? (
+          <button
+            className="compass-button"
+            type="button"
+            onClick={() => {
+              mapRef.current?.getView().animate({ rotation: 0, duration: 250 });
+            }}
+            title="Повернуть карту на север"
+            aria-label="Повернуть карту на север"
+          >
+            {/* Знак тот же, что у вида: положительный поворот в OpenLayers
+                уводит север вправо, туда же должна смотреть и стрелка. */}
+            <svg viewBox="0 0 24 24" aria-hidden="true"
+                 style={{ transform: `rotate(${rotation}rad)` }}>
+              <path d="M12 3 L16 20 L12 16.4 L8 20 Z" fill="currentColor" />
+            </svg>
+          </button>
+        ) : null}
 
         <button className="map-action" type="button" onClick={() => setAnalyticsOpen(true)}>
           <BarChart3 size={17} aria-hidden="true" />

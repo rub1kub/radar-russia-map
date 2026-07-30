@@ -1984,6 +1984,39 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
 .map-action:hover { background: rgba(255, 255, 255, 0.1); }
 
+/* Компас. Стоит рядом с кнопкой аналитики и появляется только тогда, когда
+   карту повернули: жест двумя пальцами задевают, не заметив, а вернуть север
+   было нечем. */
+.compass-button {
+  position: absolute;
+  /* Слева: справа во всю высоту стоит лента, и компас у того края просто
+     скрывался под ней. Здесь свободно — рядом только кнопка истории. */
+  left: calc(var(--edge) + 116px);
+  bottom: var(--edge);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  background: rgba(14, 18, 17, 0.92);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  color: rgba(233, 62, 78, 0.92);
+  cursor: pointer;
+}
+
+.compass-button:hover { background: rgba(255, 255, 255, 0.1); }
+
+.compass-button svg {
+  width: 19px;
+  height: 19px;
+  /* Поворот задаёт React: стрелка держится за север, а не за экран. */
+  transition: transform 120ms linear;
+}
+
 /* Лента укорачивается на высоту кнопки, чтобы они не перекрывались. */
 .details-panel {
   max-height: calc(100vh - var(--panel-top) - var(--edge) - 56px);
@@ -2607,6 +2640,19 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   /* Карте на телефоне и так тесно — подсказка при наведении там лишняя:
      пальцем «наводить» нельзя, а место она занимает. */
   .icon-hint, .region-hint { display: none; }
+
+  /* Кнопки аналитики и истории на телефоне заменил таб-бар, и компас
+     переезжает на их место — над ним, у правого края. */
+  /* На телефоне компас стоит у правого края над таб-баром — под большой
+     палец. Слой ниже панелей намеренно: когда открыт лист, карты не видно
+     и поворачивать нечего. */
+  .compass-button {
+    position: fixed;
+    left: auto;
+    right: 12px;
+    bottom: calc(var(--tabbar-height) + 14px);
+    z-index: 19;
+  }
 
   /* Размытие фона на телефоне не даётся даром: панель-лист занимает весь
      экран, и пока под ней движется карта, видеоядро пересчитывает размытие
