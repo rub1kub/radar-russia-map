@@ -2502,3 +2502,225 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 }
 .source-text { font-size: 11px; line-height: 1.4; color: rgba(190, 199, 192, 0.72); }
 .source-empty { color: rgba(170, 180, 172, 0.55); font-size: 11px; }
+
+/* --- Телефон: одна навигация вместо ярлыков по углам --------------------- */
+/*
+ * На узком экране плавающие кнопки («Поиск», «История», «Аналитика», счётчик
+ * ленты) наезжали друг на друга и на края, а лента открывалась поверх карты
+ * сразу и занимала две трети экрана. Здесь всё это заменяется нижней
+ * навигацией: карта на весь экран, панель открыта ровно одна и приходит
+ * листом снизу.
+ *
+ * Блок стоит в конце файла намеренно: выше есть более ранние медиазапросы
+ * с той же шириной, и правила должны перекрывать их по каскаду.
+ */
+@media (max-width: 760px) {
+  /* Страница не должна прокручиваться: скроллится содержимое панелей, а
+     карта остаётся на месте. Иначе тянущийся вниз экран уводит карту. */
+  body { overflow: hidden; }
+  .app-shell {
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto 1fr;
+  }
+
+  /* Ярлыки-заменители не нужны: их работу делает таб-бар. Стрелка внутри
+     панели — тоже: вернуться к карте есть чем. */
+  .panel-handle,
+  .panel-collapse,
+  .map-action,
+  .history-toggle { display: none; }
+
+  /* Шапка компактнее: на телефоне важен сам счётчик, а не подпись. */
+  .brand p { display: none; }
+  /* Без nowrap заголовок ломался на две строки и шапка снова становилась
+     двухэтажной — ровно то, от чего уходим. */
+  .brand h1 { font-size: 12px; white-space: nowrap; letter-spacing: 0; }
+  .brand svg { width: 17px; height: 17px; flex: none; }
+  .topbar { padding: 8px 10px; gap: 8px; flex-wrap: nowrap; }
+  .stat-strip { gap: 6px; }
+
+  /* Шапка строго в одну строку: во вторую строку счётчики уезжали под
+     панель-лист, и над открытой лентой висел один заголовок. Дата ради
+     этого уходит — она есть в плеере истории и в самих событиях. */
+  .topbar-stats {
+    width: auto;
+    margin: 0 0 0 auto;
+    order: 0;
+    flex-wrap: nowrap;
+    padding: 5px 8px;
+    gap: 5px;
+    flex: none;
+  }
+  .stat-date { display: none; }
+  .brand { padding: 6px 9px; gap: 6px; flex: none; }
+  .stat-chip { padding: 3px 7px; gap: 5px; font-size: 13px; }
+
+  /* Панели — листы поверх карты, во всю ширину, до таб-бара. */
+  .sidebar,
+  .details-panel {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: calc(var(--tabbar-height) + 8px);
+    top: 62px;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    overflow-y: auto;
+    z-index: 20;
+    border-radius: 14px;
+  }
+  .sidebar.is-collapsed,
+  .details-panel.is-collapsed { display: none; }
+
+  /* Плеер истории тоже лист, а не полоска у нижнего края. */
+  .history-panel {
+    left: 8px;
+    right: 8px;
+    bottom: calc(var(--tabbar-height) + 8px);
+    width: auto;
+    max-width: none;
+  }
+  .history-panel.is-open .history-body { max-height: 52dvh; overflow-y: auto; }
+
+  /* Всплывающие уведомления не должны прятаться за навигацией. */
+  .alert-toast { bottom: calc(var(--tabbar-height) + 12px); }
+
+  /* Аналитика — такой же лист: без этого её низ уходил под таб-бар, а
+     крестик наезжал на шапку. Крестик и не нужен — есть вкладка «Карта». */
+  .analytics-overlay { padding: 0; align-items: stretch; }
+  .analytics-card {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: 62px;
+    bottom: calc(var(--tabbar-height) + 8px);
+    width: auto;
+    max-width: none;
+    max-height: none;
+    overflow-y: auto;
+    border-radius: 14px;
+  }
+  .analytics-close { display: none; }
+
+  /* Карте на телефоне и так тесно — подсказка при наведении там лишняя:
+     пальцем «наводить» нельзя, а место она занимает. */
+  .icon-hint, .region-hint { display: none; }
+}
+
+:root { --tabbar-height: 58px; }
+
+.mobile-tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: none;
+  align-items: stretch;
+  height: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(14, 18, 17, 0.96);
+  backdrop-filter: blur(12px);
+}
+
+@media (max-width: 760px) {
+  .mobile-tabs { display: flex; }
+}
+
+.mobile-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: none;
+  color: rgba(176, 186, 179, 0.7);
+  cursor: pointer;
+  padding: 6px 2px;
+  /* Полоса активной вкладки рисуется сверху, а не подчёркиванием снизу:
+     внизу у неё системная зона жеста, туда лучше не заходить. */
+  border-top: 2px solid transparent;
+  margin-top: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.mobile-tab.is-active {
+  color: rgba(246, 199, 61, 0.95);
+  border-top-color: rgba(246, 199, 61, 0.9);
+}
+
+.mobile-tab:active { background: rgba(255, 255, 255, 0.05); }
+
+.mobile-tab-icon { position: relative; display: flex; }
+
+.mobile-tab-label {
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: 0.1px;
+}
+
+/* Счётчик событий на вкладке эфира: сколько всего в стране прямо сейчас. */
+.mobile-tab-badge {
+  position: absolute;
+  top: -6px;
+  left: 11px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent, #e93e4e);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* --- Телефон боком: низкий экран, но широкий ----------------------------- */
+/*
+ * Повёрнутый телефон шире 760 px, поэтому под правило выше не попадал: там
+ * возвращались десктопные ярлыки, а плеер истории занимал экран целиком —
+ * от карты оставалась полоска. Ловим такие экраны по высоте.
+ */
+@media (max-height: 500px) and (orientation: landscape) {
+  .mobile-tabs { display: flex; height: 46px; }
+  .mobile-tab-label { display: none; }
+  .panel-handle,
+  .panel-collapse,
+  .map-action,
+  .history-toggle { display: none; }
+
+  .brand p { display: none; }
+  .topbar { padding: 6px 10px; }
+
+  /* Панели занимают половину ширины, чтобы карта осталась видна. */
+  .sidebar,
+  .details-panel {
+    position: fixed;
+    top: 54px;
+    bottom: 52px;
+    left: 8px;
+    right: auto;
+    width: min(360px, 48vw);
+    max-height: none;
+    overflow-y: auto;
+    z-index: 20;
+  }
+  .details-panel { left: auto; right: 8px; }
+
+  .analytics-card {
+    max-height: calc(100dvh - 54px - 52px);
+    margin: 54px 8px 52px;
+    padding: 12px;
+  }
+  .analytics-close { display: none; }
+
+  .history-panel { left: 8px; right: 8px; bottom: 52px; width: auto; max-width: none; }
+  .history-panel.is-open .history-body { max-height: 40dvh; overflow-y: auto; }
+  .day-strip { height: 30px; }
+}

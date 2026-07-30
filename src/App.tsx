@@ -73,6 +73,8 @@ import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
 import { AboutPanel } from "./panels/AboutPanel";
+import { MobileTabs } from "./panels/MobileTabs";
+import type { MobileTab } from "./panels/MobileTabs";
 import { AlertToast } from "./panels/AlertToast";
 import { BookmarksSection } from "./panels/BookmarksSection";
 import { TopbarStats } from "./panels/TopbarStats";
@@ -139,7 +141,12 @@ const OVERVIEW_CENTER = fromLonLat([41, 53.5]);
 const DESKTOP_OVERVIEW_ZOOM = 4.15;
 const MOBILE_OVERVIEW_ZOOM = 3.3;
 const MAX_SUGGESTIONS = 10;
-const MOBILE_QUERY = "(max-width: 760px)";
+// Узкий экран — не только про ширину: повёрнутый телефон шире 760 px, но
+// высотой в 375, и панели там ведут себя так же, как на вертикальном.
+// Тот же список условий продублирован в стилях — держать их врозь нельзя,
+// иначе разметка и вёрстка разойдутся, как уже случилось с таб-баром.
+const MOBILE_QUERY =
+  "(max-width: 760px), (max-height: 500px) and (orientation: landscape)";
 const STATE_POLL_MS = 25_000;
 
 
@@ -781,6 +788,16 @@ export default function App() {
   const [pushOn, setPushOn] = useState(() => (pushSupported() ? pushEnabled() : null));
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Узкий экран отслеживается, а не читается один раз: телефон поворачивают,
+  // и в альбомной ориентации панели должны вести себя как на десктопе.
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches);
+
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY);
+    const sync = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   // На узком экране панели занимают почти весь экран, поэтому там они
   // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
   const [leftOpen, setLeftOpen] = useState(
@@ -792,10 +809,13 @@ export default function App() {
   const [onlyVisible, setOnlyVisible] = useState(true);
   const [levelFilter, setLevelFilter] = useState<number[]>([]);
   const [threatFilter, setThreatFilter] = useState<string[]>([]);
-  // Лента открыта всегда: ради неё сюда и приходят. Свернуть её можно
-  // стрелкой, а вот открывать закрытую панель, чтобы узнать обстановку, —
-  // лишний шаг на каждом заходе.
-  const [rightOpen, setRightOpen] = useState(true);
+  // На широком экране лента открыта сразу: ради неё сюда и приходят, а
+  // открывать её на каждом заходе — лишний шаг. На телефоне наоборот:
+  // там она занимает почти весь экран и закрывает карту, ради которой
+  // человек и пришёл, — поэтому стартуем с карты, лента в один тап.
+  const [rightOpen, setRightOpen] = useState(
+    () => !window.matchMedia(MOBILE_QUERY).matches
+  );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEvents, setHistoryEvents] = useState<RadarEvent[] | null>(null);
   const [historyRoutes, setHistoryRoutes] = useState<RouteLine[] | null>(null);
@@ -2029,6 +2049,33 @@ export default function App() {
     setQuery("");
   }, [applySelectedFeature]);
 
+  // Какая вкладка подсвечена внизу на телефоне. Панель открыта ровно одна,
+  // поэтому вкладка выводится из состояния панелей, а не хранится отдельно:
+  // иначе они разошлись бы при закрытии панели крестиком.
+  const mobileTab: MobileTab = analyticsOpen
+    ? "analytics"
+    : historyOpen
+      ? "history"
+      : leftOpen
+        ? "search"
+        : rightOpen
+          ? "feed"
+          : "map";
+
+  const pickMobileTab = useCallback((tab: MobileTab) => {
+    // Любой выбор сначала закрывает всё: на узком экране две панели разом
+    // не помещаются, а «Карта» — это просто пустой набор.
+    setLeftOpen(false);
+    setRightOpen(false);
+    setHistoryOpen(false);
+    setAnalyticsOpen(false);
+    if (tab === "search") setLeftOpen(true);
+    if (tab === "feed") setRightOpen(true);
+    if (tab === "history") setHistoryOpen(true);
+    if (tab === "analytics") setAnalyticsOpen(true);
+    if (tab === "map") setPlaying(false);
+  }, []);
+
   // Пуш включается явным жестом (браузер спросит разрешение), а дальше
   // список зон уезжает на сервер при каждом изменении закладок.
   const togglePush = useCallback(() => {
@@ -2415,6 +2462,16 @@ export default function App() {
           onToggleBookmark={handleToggleBookmark}
         />
       </main>
+
+      {/* На телефоне вместо плавающих ярлыков по углам — одна нижняя
+          навигация: они там наезжали друг на друга и на края экрана. */}
+      {isMobile ? (
+        <MobileTabs
+          active={mobileTab}
+          count={radarState?.active_events ?? 0}
+          onPick={pickMobileTab}
+        />
+      ) : null}
 
       <AnalyticsPanel open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
       <AboutPanel open={aboutOpen} onClose={() => setAboutOpen(false)} />
