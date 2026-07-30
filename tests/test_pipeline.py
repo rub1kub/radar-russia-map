@@ -636,6 +636,26 @@ def test_lowercase_common_word_is_not_a_village(geocoder):
         == [item for item in geocoder.resolve(["В Сочи привезли шоу"])]
 
 
+def test_named_feature_is_not_a_village(geocoder):
+    """«Арабатская Стрелка» — коса, а не посёлок Стрелка.
+
+    Тревога по Херсонской области уезжала в Красноярский край: в
+    справочнике есть посёлок Стрелка под Лесосибирском, и разбор садился
+    на второе слово названия косы.
+    """
+    names = {item.name for item in geocoder.resolve([
+        "тревога по БПЛА Херсонская область и далее в направлении "
+        "Геническ, Чонгар, Арабатская Стрелка"])}
+    assert "Стрелка" not in names
+    assert "Геническ" in names
+
+
+def test_village_named_like_a_feature_survives(geocoder):
+    """Сам посёлок при этом находится — прилагательного перед ним нет."""
+    names = {item.name for item in geocoder.resolve(["Стрелка, Темрюкский район"])}
+    assert "Стрелка" in names
+
+
 def test_capitalised_village_survives(geocoder):
     """Сам посёлок при этом находится — он написан как имя."""
     names = {item.name for item in geocoder.resolve(["Видим — Нижнеилимский район"])}

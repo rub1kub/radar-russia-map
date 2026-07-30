@@ -74,6 +74,9 @@ AMBIGUOUS_STEMS = {stem_word(word) for word in AMBIGUOUS}
 FEATURE_HEADS = {
     "море", "залив", "полуостров", "мост", "побережье", "коса", "лиман",
     "водохранилище", "часть", "направление", "тэс", "аэс", "гэс", "нпз",
+    # Арабатская Стрелка — коса от Геническа до Крыма, и в сводках она
+    # упоминается чаще, чем оба одноимённых посёлка вместе взятые.
+    "стрелка",
 }
 FEATURE_HEAD_STEMS = {stem_word(word) for word in FEATURE_HEADS}
 
@@ -452,6 +455,27 @@ class Geocoder:
             return False
         return words[after - 1].endswith(ADJECTIVE_ENDINGS)
 
+    @staticmethod
+    def _is_named_feature(words: list[str], index: int, size: int) -> bool:
+        """Само совпадение — физико-географический объект с именем-прилагательным?
+
+        Зеркало правила выше. Там определение стоит перед объектом и в
+        справочник попадало определение («Таманский полуостров» — посёлок
+        Таманский); здесь в справочнике оказывается сам объект. «Арабатская
+        Стрелка» — коса от Геническа до Крыма, а разбор уводил тревогу по
+        Херсонской области в посёлок Стрелка под Лесосибирском: восемь
+        событий уехали в Красноярский край.
+
+        Маркер места правило отменяет: «посёлок Стрелка» — именно посёлок.
+        """
+        if size != 1 or index == 0:
+            return False
+        if stem_word(words[index]) not in FEATURE_HEAD_STEMS:
+            return False
+        if stem_word(words[index - 1]) in PLACE_MARKER_STEMS:
+            return False
+        return words[index - 1].endswith(ADJECTIVE_ENDINGS)
+
     def _names_region(self, phrase: str) -> bool:
         """Стоит ли за фразой зона уровня региона — в любом из двух индексов."""
         zone_ids = list(self.by_name.get(phrase, ()))
@@ -491,6 +515,8 @@ class Geocoder:
             if self._is_event_word(key, size, stemmed=not exact):
                 continue
             if self._heads_feature(words, index, size):
+                continue
+            if self._is_named_feature(words, index, size):
                 continue
             if self._heads_foreign_region(words, index, size):
                 continue
