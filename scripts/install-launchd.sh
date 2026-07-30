@@ -1,18 +1,22 @@
 #!/bin/zsh
-# Живучесть стека: launchd-агенты вместо nohup.
+# Локальная разработка: API и веб-сервер на домашней машине.
 #
 #     ./scripts/install-launchd.sh            # установить и запустить
 #     ./scripts/install-launchd.sh uninstall  # выгрузить и удалить
 #
-# Зачем. Сбор, разбор, API и веб жили на nohup: перезагрузка мака молча
-# убивала всё, и карта стояла мёртвой до ручного запуска. launchd поднимает
-# процессы при входе в систему и перезапускает упавшие (KeepAlive).
+# ВАЖНО, ЧТО ЭТОТ СКРИПТ БОЛЬШЕ НЕ ДЕЛАЕТ.
 #
-# Пятый агент — ретеншн: раз в сутки чистит сырые сообщения старше 90 дней
-# (pipeline.retention --apply). Он не KeepAlive, а по расписанию.
+# Сбор сообщений, разбор, чистка корпуса и поиск новых каналов переехали на
+# боевой сервер (systemd-юниты tihoenebo-*). Дома их запускать нельзя:
+# сессия Telegram одна на аккаунт, и второй клиент ломает первый — сбор на
+# сервере встанет. По той же причине убрана и синхронизация базы: теперь
+# данные рождаются на сервере, и заливка домашней базы поверх серверной
+# затёрла бы всё, что тот успел собрать.
 #
-# Двух копий сборщика быть не должно (сессия Telegram одна), поэтому перед
-# установкой скрипт гасит и старые nohup-процессы, и прежние версии агентов.
+# Дома остаётся ровно то, что нужно для разработки: API на 8000 и vite.
+# Оба читают локальную копию базы и на боевые данные не влияют.
+#
+# Свежую базу с сервера для отладки: ./scripts/pull-db.sh
 
 set -euo pipefail
 
@@ -23,6 +27,9 @@ AGENTS_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$ROOT/ingest/data/logs"
 DOMAIN="gui/$(id -u)"
 
+# Список полный намеренно: прежние агенты должны выгружаться при каждом
+# запуске, даже когда мы их больше не создаём, — иначе установленный
+# когда-то сборщик так и остался бы работать и мешал серверному.
 LABELS=(com.radar.poll com.radar.pipeline com.radar.api com.radar.web
         com.radar.retention com.radar.discover com.radar.sync)
 
@@ -106,13 +113,12 @@ PLIST
 unload_all >/dev/null 2>&1 || true
 kill_legacy
 
-write_agent com.radar.poll      keepalive "$PY" -u ingest/poll.py --loop 45
-write_agent com.radar.pipeline  keepalive "$PY" -u -m pipeline.incremental --loop 20
-write_agent com.radar.api       keepalive "$PY" -m uvicorn api.server:app --host 127.0.0.1 --port 8000
-write_agent com.radar.web       once      "$ROOT/node_modules/.bin/vite" --host 127.0.0.1
-write_agent com.radar.retention daily     "$PY" -m pipeline.retention --apply
-write_agent com.radar.discover  weekly    /bin/zsh "$ROOT/scripts/discover-weekly.sh"
-write_agent com.radar.sync      every2min "$PY" "$ROOT/scripts/sync_db.py"
+# Только разработка. Сбор, разбор, ретеншн и discover живут на сервере —
+# см. оговорку в шапке файла.
+write_agent com.radar.api  keepalive "$PY" -m uvicorn api.server:app --host 127.0.0.1 --port 8000
+write_agent com.radar.web  once      "$ROOT/node_modules/.bin/vite" --host 127.0.0.1
+
+LABELS=(com.radar.api com.radar.web)
 
 # Bootstrap с одним повтором: сразу после выгрузки прежней версии порт или
 # сессия пару секунд ещё заняты, и первая попытка может упасть гонкой.

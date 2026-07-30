@@ -1,9 +1,9 @@
 #!/bin/zsh
 # Выкатить проект на боевой сервер tihoenebo.com.
 #
-#     ./scripts/deploy.sh          # код + фронт + база
-#     ./scripts/deploy.sh --code   # только код и фронт, база не трогается
-#     ./scripts/deploy.sh --db     # только база (то же, что sync-db.sh)
+#     ./scripts/deploy.sh          # проверки, сборка, код и фронт
+#
+# База не трогается: сбор идёт на сервере, там она и живёт.
 #
 # Что происходит:
 #   1. Проверка (pytest + vitest + tsc) — на прод не уезжает сломанное.
@@ -14,8 +14,9 @@
 #   4. API перезапускается systemd-юнитом tihoenebo-api.
 #
 # Чего скрипт НЕ делает намеренно: не трогает Apache и чужие сайты
-# (ton4.pro, tonsuite.org живут на той же машине) и не запускает на
-# сервере сбор сообщений — сессия Telegram одна, она дома.
+# (ton4.pro, tonsuite.org живут на той же машине) и не перезапускает сбор —
+# tihoenebo-poll работает сам по себе, а лишний рестарт рвал бы соединение
+# с Telegram на ровном месте.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,7 +32,10 @@ MODE="${1:-all}"
 CURL="$(command -v curl)"
 
 if [[ "$MODE" == "--db" ]]; then
-  exec "$ROOT/ingest/.venv/bin/python" "$ROOT/scripts/sync_db.py"
+  echo "База больше не заливается: сбор идёт на сервере, и домашняя копия"
+  echo "затёрла бы собранное. Забрать боевую базу для отладки:"
+  echo "  ./scripts/pull-db.sh"
+  exit 1
 fi
 
 echo "=== 1/5 проверка"
@@ -55,11 +59,6 @@ echo "=== 4/5 выкатка"
 ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only 2>&1 | tail -2"
 rsync -az --delete -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
 ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"
-
-if [[ "$MODE" != "--code" ]]; then
-  echo "=== база"
-  "$ROOT/ingest/.venv/bin/python" "$ROOT/scripts/sync_db.py"
-fi
 
 echo "=== 5/5 проверка боевого"
 sleep 4
