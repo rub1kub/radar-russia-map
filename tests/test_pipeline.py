@@ -624,11 +624,35 @@ def test_geocoder_resolves_oblique_case(geocoder, phrase, expected):
     assert expected in {item.name for item in geocoder.resolve([phrase])}
 
 
+def test_lowercase_common_word_is_not_a_village(geocoder):
+    """Посёлки Свет и Видим не должны собирать обычную русскую речь.
+
+    «Мы видим ваши сообщения» уезжало в Нижнеилимский район Иркутской
+    области, «Кони Света» — в Крымский район Кубани. Заглавная буква и
+    отличает топоним от нарицательного.
+    """
+    assert geocoder.resolve(["Дорогие подписчики! Мы видим ваши сообщения"]) == []
+    assert geocoder.resolve(["В Сочи привезли шоу «Кони Света. Симфония детства»"]) \
+        == [item for item in geocoder.resolve(["В Сочи привезли шоу"])]
+
+
+def test_capitalised_village_survives(geocoder):
+    """Сам посёлок при этом находится — он написан как имя."""
+    names = {item.name for item in geocoder.resolve(["Видим — Нижнеилимский район"])}
+    assert "Видим" in names
+
+
+def test_all_lowercase_message_still_geocodes(geocoder):
+    """Где регистра нет вовсе, судить по нему нельзя: сводки пишут и так."""
+    names = {item.name for item in geocoder.resolve(["тревога в шебекино"])}
+    assert "Шебекино" in names
+
+
 def test_exact_form_wins_over_stemmed(geocoder):
     """Именительный падеж идёт точным индексом, косвенный — стеммированным,
     но обе формы приводят к одной зоне."""
-    assert all(match.exact for match in geocoder._scan("Ростовская область"))
-    assert not any(match.exact for match in geocoder._scan("Ростовской области"))
+    assert all(match.exact for match in geocoder._scan("Ростовская область", None))
+    assert not any(match.exact for match in geocoder._scan("Ростовской области", None))
     assert ([item.zone_id for item in geocoder.resolve(["Ростовская область"])]
             == [item.zone_id for item in geocoder.resolve(["Ростовской области"])])
 
@@ -1126,6 +1150,39 @@ def test_channel_advertisement_is_not_an_alert(text):
     метка над областью, под которой не выделено ни одного района.
     """
     assert parse(text).relevant is False
+
+
+@pytest.mark.parametrize("text", [
+    # Объявление о порядке работы канала пересказывает лексику обстановки
+    # целыми абзацами, и разбор ставил по краю «Работу ПВО».
+    "🚨Дорогие подписчики! О громких звуках, пролётах БПЛА и т.п. сообщать в "
+    "личные сообщения канала! ⚡️Уважаемые подписчики нашего канала! Мы "
+    "внимательно отслеживаем все поступающие сообщения о пролётах и сбитиях БПЛА",
+    "Дорогие наши близкие! Собрано для оплаты оборудования на МОГи 6.157.000 "
+    "рублей. Приняли участие в сборе 17.016 из почти 2 млн наших подписчиков",
+])
+def test_channel_notice_is_not_an_alert(text):
+    """Канал говорит о самом канале — обстановки в этом нет."""
+    assert parse(text).relevant is False
+
+
+def test_currency_rate_is_not_a_sighting():
+    """«По курсу на сегодня» — не «курсом на Ейск».
+
+    Оборот ловился как признак фиксации, и новость про платные сообщения в
+    Telegram вставала красной меткой над Краснодарским краем.
+    """
+    observation = parse(
+        "Теперь за личное сообщение Павлу Дурову в Telegram может грозить до 15 "
+        "лет колонии. Одно сообщение стоит 11250 звёзд, что по курсу на сегодня "
+        "составляет порядка 19 тысяч рублей")
+    assert observation.relevant is False
+
+
+def test_aircraft_course_still_reads_as_a_sighting():
+    """Сам авиационный оборот при этом остаётся признаком фиксации."""
+    assert parse("БПЛА курсом на Ейск").signal_type == "detection"
+    assert parse("Фиксация БПЛА, курс на Новороссийск").signal_type == "detection"
 
 
 def test_subscription_footer_does_not_kill_a_real_alert():

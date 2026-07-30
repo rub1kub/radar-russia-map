@@ -552,7 +552,7 @@ class Geocoder:
             match.alternative = self._build(words, index, stem_hit, False)
         return match, hit[2]
 
-    def _scan(self, phrase: str) -> list[Match]:
+    def _scan(self, phrase: str, capitalized: set[str] | None) -> list[Match]:
         """Скользящее сопоставление n-грамм, длинные совпадения приоритетнее.
 
         В реальных сообщениях топоним окружен мусором: «🔴Краснодар и ближайшие»,
@@ -571,9 +571,43 @@ class Geocoder:
                 index += 1
                 continue
             match, size = hit
+            if size == 1 and self._lowercase_common_word(match, words[index], capitalized):
+                index += 1
+                continue
             found.append(match)
             index += size
         return found
+
+    @staticmethod
+    def _capitalized(phrase: str) -> set[str] | None:
+        """Нормализованные слова фразы, написанные с заглавной.
+
+        None означает, что регистру этой фразы верить нельзя: капслок и текст
+        целиком строчными встречаются в сводках постоянно, и там заглавная
+        буква ничего не различает.
+        """
+        raw = expand_units(phrase).split()
+        upper = {norm_key(word) for word in raw if word[:1].isupper()}
+        lower = {norm_key(word) for word in raw if word[:1].islower()}
+        return upper if upper and lower else None
+
+    def _lowercase_common_word(self, match: Match, word: str,
+                               capitalized: set[str] | None) -> bool:
+        """Обычное слово со строчной буквы, совпавшее с именем посёлка.
+
+        В справочнике есть посёлки Свет, Видим, Мир, Заря. Слова эти в живой
+        речи встречаются несравнимо чаще, чем сами посёлки, и «мы видим дрон
+        в небе» уезжало в Нижнеилимский район Иркутской области, а «Кони
+        Света» — в Крымский район. Заглавная буква и есть то, чем русский
+        отличает топоним от нарицательного, — там, где автор её различает.
+
+        Крупные места (город, район, регион) правилу не подчиняются: их пишут
+        и строчными, и такое сообщение терять нельзя.
+        """
+        if capitalized is None or match.marked or norm_key(word) in capitalized:
+            return False
+        return all(self.zones[zone_id]["level"] == "place"
+                   for zone_id in match.zone_ids)
 
     def resolve(self, phrases: list[str],
                 home: str | None = None) -> list[Resolved]:
@@ -587,8 +621,12 @@ class Geocoder:
         прописки канала — та же лента вправе пересказать чужую сводку.
         """
         candidates: list[Match] = []
+        # Регистр считается по всему сообщению, а не по обрывку: разбор
+        # режет текст на фразы, и отдельная фраза сплошь строчная —
+        # обычное дело даже там, где автор регистр различает.
+        capitalized = self._capitalized(" ".join(phrases))
         for phrase in phrases:
-            candidates.extend(self._scan(phrase))
+            candidates.extend(self._scan(phrase, capitalized))
 
         contexts = self._contexts(candidates)
         home_chain = set(self.chain(home)) if home in self.zones else set()
