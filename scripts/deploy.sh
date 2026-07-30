@@ -9,6 +9,8 @@
 #   1. Проверка (pytest + vitest + tsc) — на прод не уезжает сломанное.
 #   2. Фронт собирается ЗДЕСЬ: на сервере node 18, а нашему Vite нужен 20+.
 #      Готовый dist уезжает rsync-ом.
+#   2а. Посадочные страницы регионов собираются НА СЕРВЕРЕ: в них сводка из
+#      базы, а база живёт там. Заодно уходит пинг IndexNow.
 #   3. Код на сервере обновляется git pull из публичного репозитория —
 #      значит перед выкаткой изменения должны быть запушены.
 #   4. API перезапускается systemd-юнитом tihoenebo-api.
@@ -57,7 +59,14 @@ VITE_API_BASE="$SITE" npm run build 2>&1 | tail -3
 
 echo "=== 4/5 выкатка"
 ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only 2>&1 | tail -2"
-rsync -az --delete -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
+# Страницы регионов и sitemap собираются на сервере: в них идёт сводка из
+# базы, а база живёт только там. Из синхронизации они исключены, иначе
+# --delete снёс бы их до того, как соберётся новая версия, и всё это время
+# посадочные отдавали бы 404.
+rsync -az --delete --exclude "region/" --exclude "sitemap.xml" \
+  -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
+ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
+  ./.venv/bin/python -m scripts.seo_pages --ping 2>&1 | tail -2"
 ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"
 
 echo "=== 5/5 проверка боевого"
