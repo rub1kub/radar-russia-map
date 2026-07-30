@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -42,6 +43,23 @@ EVENT_LIMIT = 400
 # границы региона этого хватает; районы разглядывают ближе, им нужно 3.
 REGION_PRECISION = 2
 DISTRICT_PRECISION = 3
+
+# Допуск упрощения контура в градусах и порог площади кольца в квадратных
+# градусах.
+#
+# Округление до сетки само по себе вершин почти не убирает: изрезанный берег
+# и после него петляет с шагом сетки. Клиент получал 200 тысяч вершин на 89
+# регионов и перерисовывал их все на каждое движение карты — телефоны от
+# этого ощутимо грелись, а на обзорном масштабе, где 1 пиксель это 6 км, из
+# этой подробности не видно ничего.
+#
+# Регионы разглядывают издали, и километровый допуск там незаметен. Районы
+# смотрят вблизи, им оставлено 200 метров. Порог площади убирает острова
+# мельче пикселя: каждый такой — отдельное кольцо со своим проходом отрисовки.
+REGION_TOLERANCE = 0.01
+DISTRICT_TOLERANCE = 0.002
+REGION_MIN_RING_AREA = 0.002
+DISTRICT_MIN_RING_AREA = 0.0
 
 # Набор активных зон меняется не чаще, чем приходят события, а /geo/active
 # дёргается на каждое обновление состояния.
@@ -134,6 +152,76 @@ def _drop_redundant(points: list[list]) -> None:
             index += 1
 
 
+def _douglas_peucker(points: list[list], tolerance: float) -> list[list]:
+    """Прореживание разомкнутой цепочки: вершина остаётся, если без неё линия
+    ушла бы дальше допуска.
+
+    Итеративно, а не рекурсией: у береговых колец глубина деления доходит до
+    тысяч, и рекурсия упиралась бы в предел интерпретатора.
+    """
+    count = len(points)
+    if count < 3:
+        return points
+    keep = [False] * count
+    keep[0] = keep[-1] = True
+    stack = [(0, count - 1)]
+    while stack:
+        start, end = stack.pop()
+        if end - start < 2:
+            continue
+        ax, ay = points[start]
+        bx, by = points[end]
+        dx, dy = bx - ax, by - ay
+        span = math.hypot(dx, dy) or 1e-12
+        worst, index = 0.0, None
+        for position in range(start + 1, end):
+            px, py = points[position]
+            distance = abs(dx * (ay - py) - (ax - px) * dy) / span
+            if distance > worst:
+                worst, index = distance, position
+        if index is not None and worst > tolerance:
+            keep[index] = True
+            stack.append((start, index))
+            stack.append((index, end))
+    return [point for point, kept in zip(points, keep) if kept]
+
+
+def _simplify_ring(ring: list, tolerance: float) -> list | None:
+    """Кольцо, прорежённое по допуску, или None, если от него ничего не осталось.
+
+    Кольцо разрезается в самой дальней от начала вершине и прореживается двумя
+    дугами: у замкнутой линии хорда «начало-конец» нулевая, и обычный проход
+    Дугласа-Пекера считал бы все вершины лежащими на ней — контур схлопывался
+    бы в отрезок.
+    """
+    if tolerance <= 0:
+        return ring
+    points = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else list(ring)
+    if len(points) < 4:
+        return ring
+
+    start_x, start_y = points[0]
+    far = max(range(len(points)),
+              key=lambda i: (points[i][0] - start_x) ** 2 + (points[i][1] - start_y) ** 2)
+    head = _douglas_peucker(points[:far + 1], tolerance)
+    tail = _douglas_peucker(points[far:] + [points[0]], tolerance)
+    out = head[:-1] + tail[:-1]
+    if len(out) < 3:
+        return None
+    out.append(list(out[0]))
+    return out
+
+
+def _ring_area(ring: list) -> float:
+    """Площадь кольца в квадратных градусах — по формуле шнурков, без знака."""
+    total = 0.0
+    for index in range(len(ring) - 1):
+        x1, y1 = ring[index]
+        x2, y2 = ring[index + 1]
+        total += x1 * y2 - x2 * y1
+    return abs(total) / 2.0
+
+
 def _round_ring(ring: list, precision: int) -> list | None:
     """Кольцо полигона с выброшенными точками, слипшимися после округления.
 
@@ -161,10 +249,12 @@ def _round_ring(ring: list, precision: int) -> list | None:
     return out
 
 
-def _round_polygon(rings: list, precision: int) -> list:
+def _round_polygon(rings: list, precision: int, tolerance: float = 0.0) -> list:
     out = []
     for index, ring in enumerate(rings):
         cleaned = _round_ring(ring, precision)
+        if cleaned is not None and tolerance > 0:
+            cleaned = _simplify_ring(cleaned, tolerance)
         if cleaned is None:
             # Без внешнего кольца полигона нет; выродившаяся дырка просто
             # исчезает — на обзорном масштабе она всё равно неразличима.
@@ -182,7 +272,21 @@ def _round_coordinates(node: Any, precision: int) -> Any:
     return [_round_coordinates(item, precision) for item in node]
 
 
-def round_geometry(geometry: dict, precision: int) -> dict | None:
+def _drop_specks(parts: list[list], min_area: float) -> list[list]:
+    """Выбросить куски мельче порога, но никогда — все.
+
+    Остров площадью меньше пикселя рисовать незачем, а вот регион, целиком
+    сложенный из мелких кусков, обязан остаться на карте хоть чем-то:
+    исчезнувший регион читается как «здесь ничего нет», а это неправда.
+    """
+    if min_area <= 0 or len(parts) < 2:
+        return parts
+    kept = [part for part in parts if _ring_area(part[0]) >= min_area]
+    return kept or [max(parts, key=lambda part: _ring_area(part[0]))]
+
+
+def round_geometry(geometry: dict, precision: int,
+                   tolerance: float = 0.0, min_area: float = 0.0) -> dict | None:
     """Геометрия с прорежёнными координатами или None, если она выродилась.
 
     Отдать сломанный полигон хуже, чем не отдать никакого: клиент на нём
@@ -194,20 +298,24 @@ def round_geometry(geometry: dict, precision: int) -> dict | None:
         return None
 
     if kind == "Polygon":
-        rings = _round_polygon(coordinates, precision)
+        rings = _round_polygon(coordinates, precision, tolerance)
         return {"type": "Polygon", "coordinates": rings} if rings else None
 
     if kind == "MultiPolygon":
         parts = [part for part in
-                 (_round_polygon(polygon, precision) for polygon in coordinates) if part]
+                 (_round_polygon(polygon, precision, tolerance)
+                  for polygon in coordinates) if part]
+        parts = _drop_specks(parts, min_area)
         return {"type": "MultiPolygon", "coordinates": parts} if parts else None
 
     return {"type": kind, "coordinates": _round_coordinates(coordinates, precision)}
 
 
-def _slim_feature(feature: dict, precision: int, level: str | None) -> dict | None:
+def _slim_feature(feature: dict, precision: int, level: str | None,
+                  tolerance: float = 0.0, min_area: float = 0.0) -> dict | None:
     """Только то, чем клиент красит и подписывает полигон."""
-    geometry = round_geometry(feature.get("geometry") or {}, precision)
+    geometry = round_geometry(feature.get("geometry") or {}, precision,
+                              tolerance, min_area)
     if geometry is None:
         return None
 
@@ -299,7 +407,10 @@ def _build_active(levels: tuple[str, ...]) -> bytes:
             # процесса. В тихие часы активных районов нет вовсе, и платить
             # за пустой ответ нечем: слой поднимаем, только когда есть что искать.
             continue
-        precision = REGION_PRECISION if level == "region" else DISTRICT_PRECISION
+        region = level == "region"
+        precision = REGION_PRECISION if region else DISTRICT_PRECISION
+        tolerance = REGION_TOLERANCE if region else DISTRICT_TOLERANCE
+        min_area = REGION_MIN_RING_AREA if region else DISTRICT_MIN_RING_AREA
         index = _layer(level)
         for source_id in source_ids:
             feature = index.get(source_id)
@@ -307,7 +418,7 @@ def _build_active(levels: tuple[str, ...]) -> bytes:
                 # Зона есть в базе, полигона под неё в справочнике нет.
                 # Пропускаем молча: подписи и точки события клиент уже получил.
                 continue
-            slim = _slim_feature(feature, precision, level)
+            slim = _slim_feature(feature, precision, level, tolerance, min_area)
             if slim is not None:
                 features.append(slim)
     return _collection(features)
@@ -354,7 +465,8 @@ def regions_geojson() -> Response:
             if _regions_payload is None:
                 features = [
                     slim for slim in
-                    (_slim_feature(feature, REGION_PRECISION, None)
+                    (_slim_feature(feature, REGION_PRECISION, None,
+                                   REGION_TOLERANCE, REGION_MIN_RING_AREA)
                      for feature in _layer("region").values())
                     if slim is not None
                 ]

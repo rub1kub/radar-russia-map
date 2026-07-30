@@ -152,6 +152,9 @@ const MAX_SUGGESTIONS = 10;
 const MOBILE_QUERY =
   "(max-width: 760px), (max-height: 500px) and (orientation: landscape)";
 const STATE_POLL_MS = 25_000;
+// Насколько должен сдвинуться курсор, чтобы двигать подсказку. Меньше — это
+// дрожание руки, ради которого не стоит перерисовывать приложение.
+const HINT_MOVE_PX = 6;
 
 
 const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: string }> = [
@@ -649,8 +652,9 @@ async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
   // Версия формата ответа. Границы кешируются браузером на час, и когда в
   // ответ добавляется новое поле — как случилось с идентификатором зоны, —
   // старый кеш ещё час отдавал бы данные без него, а карта молча не
-  // находила бы регион из адреса. Меняется вместе с набором полей.
-  const GEO_FORMAT = 2;
+  // находила бы регион из адреса. Меняется вместе с набором полей — и вместе
+  // с геометрией: версия 3 отдаёт прорежённые контуры.
+  const GEO_FORMAT = 3;
   const regions = await read(
     `${API_BASE}/api/v1/geo/regions.geojson?v=${GEO_FORMAT}`
   ).catch(() =>
@@ -1664,7 +1668,21 @@ export default function App() {
     });
     maybeLoadLazyLayers();
 
+    // Запрос создаётся один раз: на каждое движение указателя он и сам
+    // обошёлся бы дороже, чем стоит ответ.
+    const narrowScreen = window.matchMedia(MOBILE_QUERY);
+
     map.on("pointermove", (event) => {
+      // Три прохода поиска фичи под курсором — это три скрытых отрисовки
+      // карты с чтением пикселей, и каждая подсказка вдобавок перерисовывает
+      // всё приложение. Пока карту тащат, ответ на вопрос «что под курсором»
+      // никому не нужен, а событий движения там больше всего: телефоны от
+      // этого грелись, ничего не показывая.
+      if (event.dragging) return;
+      // На узком экране наводить нечем: обе подсказки скрыты стилями, но
+      // считались всё равно — палец, ведущий карту, платил за них полностью.
+      if (narrowScreen.matches) return;
+
       const hit = map.hasFeatureAtPixel(event.pixel, {
         hitTolerance: 5,
         layerFilter: (layer) => layer === regionLayer || layer === districtLayer
@@ -1681,7 +1699,14 @@ export default function App() {
         (feature) => { icon = feature; return true; },
         { hitTolerance: 6, layerFilter: (layer) => layer === eventIconLayer }
       );
-      setIconHint(icon ? { feature: icon, pixel: event.pixel } : null);
+      setIconHint((previous) => {
+        if (!icon) return previous === null ? previous : null;
+        return previous && previous.feature === icon
+          && Math.abs(previous.pixel[0] - event.pixel[0]) < HINT_MOVE_PX
+          && Math.abs(previous.pixel[1] - event.pixel[1]) < HINT_MOVE_PX
+          ? previous
+          : { feature: icon, pixel: event.pixel };
+      });
       if (icon && target) target.style.cursor = "pointer";
 
       // Издалека карта красит регионы целиком, и понять, что за пятно под
@@ -1703,11 +1728,18 @@ export default function App() {
       }
       const found = region as FeatureLike;
       const sourceId = String(found.get("id") ?? "");
-      setRegionHint({
-        name: asText(found.get("name")),
-        zoneId: polygonToZoneRef.current.get(sourceId) ?? null,
-        pixel: event.pixel
-      });
+      const name = asText(found.get("name"));
+      const zoneId = polygonToZoneRef.current.get(sourceId) ?? null;
+      // Пока курсор ходит по тому же региону, менять нечего: новый объект
+      // состояния перерисовывал бы всё приложение — вместе с лентой из
+      // шестидесяти событий — на каждый пиксель движения мыши.
+      setRegionHint((previous) =>
+        previous && previous.zoneId === zoneId && previous.name === name
+          && Math.abs(previous.pixel[0] - event.pixel[0]) < HINT_MOVE_PX
+          && Math.abs(previous.pixel[1] - event.pixel[1]) < HINT_MOVE_PX
+          ? previous
+          : { name, zoneId, pixel: event.pixel }
+      );
     });
 
     map.on("singleclick", (event) => {

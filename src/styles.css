@@ -2607,6 +2607,31 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   /* Карте на телефоне и так тесно — подсказка при наведении там лишняя:
      пальцем «наводить» нельзя, а место она занимает. */
   .icon-hint, .region-hint { display: none; }
+
+  /* Размытие фона на телефоне не даётся даром: панель-лист занимает весь
+     экран, и пока под ней движется карта, видеоядро пересчитывает размытие
+     этой площади каждый кадр. Телефоны от этого заметно грелись. Фон вместо
+     него делаем почти непрозрачным — читается так же, стоит нисколько. */
+  .sidebar,
+  .details-panel,
+  .history-panel,
+  .analytics-card,
+  .analytics-overlay,
+  .brand,
+  .topbar-stats,
+  .topbar-action,
+  .mobile-tabs,
+  .alert-toast,
+  .search-suggestions,
+  .map-action,
+  .history-toggle { backdrop-filter: none; }
+
+  .sidebar,
+  .details-panel,
+  .history-panel,
+  .analytics-card { background: rgba(12, 16, 15, 0.97); }
+  .brand,
+  .topbar-stats { background: rgba(14, 18, 17, 0.96); }
 }
 
 :root { --tabbar-height: 58px; }
@@ -2622,8 +2647,10 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   height: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   border-top: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(14, 18, 17, 0.96);
-  backdrop-filter: blur(12px);
+  /* Без размытия намеренно: таб-бар висит над картой всегда, и пока она
+     движется, видеоядро телефона пересчитывало бы размытие этой полосы
+     каждый кадр. При такой непрозрачности разницы всё равно не видно. */
+  background: rgba(14, 18, 17, 0.985);
 }
 
 @media (max-width: 760px) {
@@ -2697,6 +2724,22 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
   .brand p { display: none; }
   .topbar { padding: 6px 10px; }
+
+  /* Размытие фона стоит видеоядру телефона кадр за кадром — см. блок выше. */
+  .sidebar,
+  .details-panel,
+  .history-panel,
+  .analytics-card,
+  .analytics-overlay,
+  .brand,
+  .topbar-stats,
+  .mobile-tabs,
+  .alert-toast { backdrop-filter: none; }
+
+  .sidebar,
+  .details-panel,
+  .history-panel,
+  .analytics-card { background: rgba(12, 16, 15, 0.97); }
 
   /* Панели занимают половину ширины, чтобы карта осталась видна. */
   .sidebar,
