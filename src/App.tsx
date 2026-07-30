@@ -43,6 +43,7 @@ import {
   plural,
   severityColor,
   signalLabel,
+  signalWord,
   threatLabel
 } from "./lib/format";
 import {
@@ -747,6 +748,12 @@ export default function App() {
   const [selectedRegionPolygon, setSelectedRegionPolygon] = useState<string | null>(null);
   // Значок под курсором и его место на экране — для всплывающей подсказки.
   const [iconHint, setIconHint] = useState<{ feature: FeatureLike; pixel: number[] } | null>(null);
+  // Регион под курсором в обзорном масштабе. Издалека районов не видно, и
+  // человек водит мышью по цветным пятнам, не понимая, что под ними: цвет
+  // говорит «тревожно», но не говорит где и что именно.
+  const [regionHint, setRegionHint] = useState<
+    { name: string; zoneId: string | null; pixel: number[] } | null
+  >(null);
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<LayerState>({
@@ -1652,6 +1659,31 @@ export default function App() {
       );
       setIconHint(icon ? { feature: icon, pixel: event.pixel } : null);
       if (icon && target) target.style.cursor = "pointer";
+
+      // Издалека карта красит регионы целиком, и понять, что за пятно под
+      // курсором, было нельзя. Подсказка называет субъект и говорит, что в
+      // нём сейчас. Подсказке значка она не мешает: та подробнее и главнее.
+      if (icon || resolutionToZoom(map.getView().getResolution() ?? 1) >= DISTRICT_FILL_ZOOM) {
+        setRegionHint(null);
+        return;
+      }
+      let region: FeatureLike | null = null;
+      map.forEachFeatureAtPixel(
+        event.pixel,
+        (feature) => { region = feature; return true; },
+        { hitTolerance: 0, layerFilter: (layer) => layer === regionLayer }
+      );
+      if (!region) {
+        setRegionHint(null);
+        return;
+      }
+      const found = region as FeatureLike;
+      const sourceId = String(found.get("id") ?? "");
+      setRegionHint({
+        name: asText(found.get("name")),
+        zoneId: polygonToZoneRef.current.get(sourceId) ?? null,
+        pixel: event.pixel
+      });
     });
 
     map.on("singleclick", (event) => {
@@ -2238,6 +2270,43 @@ export default function App() {
                     )}`
                   : ""}
               </span>
+            </div>
+          ) : null}
+
+          {/* Подсказка региона в обзорном масштабе: цвет пятна говорит
+              «тревожно», но не говорит, чей это регион и что там. */}
+          {regionHint ? (
+            <div
+              className="icon-hint region-hint"
+              style={{ left: regionHint.pixel[0], top: regionHint.pixel[1] }}
+              role="tooltip"
+            >
+              <b>{regionHint.name}</b>
+              {(() => {
+                const zone = regionHint.zoneId ? paintedZones[regionHint.zoneId] : undefined;
+                if (!zone || !zone.active) {
+                  return <span className="region-hint-quiet">сообщений нет</span>;
+                }
+                return (
+                  <>
+                    <span>
+                      <i
+                        className="chip-dot"
+                        style={{ background: severityColor(zone.severity, 0.95) }}
+                        aria-hidden="true"
+                      />
+                      {signalWord(zone.severity)} · {zone.active}{" "}
+                      {plural(zone.active, "сообщение", "сообщения", "сообщений")}
+                    </span>
+                    <span className="icon-hint-foot">
+                      {formatAgo(
+                        zone.last_active,
+                        historyAt ?? radarState?.generated_at ?? new Date().toISOString()
+                      )}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
           ) : null}
 

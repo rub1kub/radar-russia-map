@@ -153,6 +153,20 @@ export function signalLabel(signal: string): string {
   return SIGNAL_LABELS[signal] ?? signal;
 }
 
+/**
+ * Как назвать уровень зоны одним словом.
+ *
+ * В счётчиках зоны хранится только вес, без типа сигнала: цвет карты
+ * выбирается по нему же. Для подсказки этого хватает — человеку нужно
+ * понять, насколько всё серьёзно, а подробности он посмотрит в ленте.
+ */
+export function signalWord(severity: number): string {
+  if (severity >= 8) return "Борт видят";
+  if (severity >= 6) return "Тревога";
+  if (severity >= 4) return "Опасность";
+  return "Сообщения";
+}
+
 export function threatLabel(threat: string): string {
   return THREAT_LABELS[threat] ?? threat;
 }

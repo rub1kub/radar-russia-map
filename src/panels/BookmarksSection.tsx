@@ -36,34 +36,44 @@ export function BookmarksSection({
       <div className="section-heading">
         <BellRing size={16} aria-hidden="true" />
         <h2>Мои места</h2>
-        {/* Пуш догоняет закрытую вкладку: тревога и отбой приходят
-            системным уведомлением. Только по явному выбору. */}
-        {pushOn !== null ? (
+        {/* Обе кнопки — одной группой у правого края, иначе они
+            расползаются по строке заголовка. */}
+        <span className="section-actions">
+          {/* Пуш догоняет закрытую вкладку: тревога и отбой приходят
+              системным уведомлением. Только по явному выбору. */}
+          {pushOn !== null ? (
+            <button
+              type="button"
+              className={`sound-toggle ${pushOn ? "is-on" : ""}`}
+              onClick={onTogglePush}
+              title={
+                pushOn
+                  ? "Выключить уведомления при закрытой вкладке"
+                  : "Уведомлять даже при закрытой вкладке"
+              }
+              aria-label={
+                pushOn
+                  ? "Выключить уведомления при закрытой вкладке"
+                  : "Уведомлять даже при закрытой вкладке"
+              }
+              aria-pressed={pushOn}
+            >
+              <Send size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+          {/* Звук выключен по умолчанию: в этой теме он должен быть осознанным
+              выбором. Кнопка и есть жест, которым браузер разрешает звук. */}
           <button
             type="button"
-            className={`sound-toggle ${pushOn ? "is-on" : ""}`}
-            onClick={onTogglePush}
-            title={
-              pushOn
-                ? "Выключить уведомления при закрытой вкладке"
-                : "Уведомлять даже при закрытой вкладке"
-            }
-            aria-pressed={pushOn}
+            className={`sound-toggle ${soundOn ? "is-on" : ""}`}
+            onClick={onToggleSound}
+            title={soundOn ? "Выключить звук тревоги" : "Включить звук тревоги"}
+            aria-label={soundOn ? "Выключить звук тревоги" : "Включить звук тревоги"}
+            aria-pressed={soundOn}
           >
-            <Send size={14} aria-hidden="true" />
+            {soundOn ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
           </button>
-        ) : null}
-        {/* Звук выключен по умолчанию: в этой теме он должен быть осознанным
-            выбором. Кнопка и есть жест, которым браузер разрешает звук. */}
-        <button
-          type="button"
-          className={`sound-toggle ${soundOn ? "is-on" : ""}`}
-          onClick={onToggleSound}
-          title={soundOn ? "Выключить звук тревоги" : "Включить звук тревоги"}
-          aria-pressed={soundOn}
-        >
-          {soundOn ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
-        </button>
+        </span>
       </div>
 
       {bookmarks.length === 0 ? (
