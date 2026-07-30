@@ -634,7 +634,14 @@ async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
 
   // Районы сюда не входят намеренно: 14.4 МБ на 2327 полигонов, из которых
   // на стартовом масштабе не рисуется ни один. Они подгружаются по зуму.
-  const regions = await read(`${API_BASE}/api/v1/geo/regions.geojson`).catch(() =>
+  // Версия формата ответа. Границы кешируются браузером на час, и когда в
+  // ответ добавляется новое поле — как случилось с идентификатором зоны, —
+  // старый кеш ещё час отдавал бы данные без него, а карта молча не
+  // находила бы регион из адреса. Меняется вместе с набором полей.
+  const GEO_FORMAT = 2;
+  const regions = await read(
+    `${API_BASE}/api/v1/geo/regions.geojson?v=${GEO_FORMAT}`
+  ).catch(() =>
     read("/data/regions.json")
   );
 
