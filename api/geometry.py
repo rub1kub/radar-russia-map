@@ -218,6 +218,12 @@ def _slim_feature(feature: dict, precision: int, level: str | None) -> dict | No
     # показать, когда в самом районе тихо, а закрашен он областной тревогой.
     if properties.get("region"):
         slim["region"] = properties["region"]
+    # Идентификатор зоны справочника. Без него нельзя ни подписаться на
+    # тихое место, ни открыть карту по адресу вида «?region=kurskaya-oblast»
+    # с посадочной страницы: карта берёт геометрию отсюда, а не из файла,
+    # и молча не находила регион, которого ей не назвали.
+    if properties.get("zone"):
+        slim["zone"] = properties["zone"]
     if level:
         # При levels=district,region иначе не разобрать, что чем красить.
         slim["level"] = level
