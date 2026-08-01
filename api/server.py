@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from api.limits import (
@@ -95,6 +96,17 @@ def source_networks() -> dict[str, str | None]:
         return resolve_networks(connection)
 
 app = FastAPI(title="Radar API", version="1.0")
+
+# Сжатие ответов. Снимок обстановки весит 208 КБ, границы регионов — мегабайт,
+# и фронт забирает снимок каждые 25 секунд. Apache к application/json фильтр
+# сжатия не применяет (в его списке типов есть html, css, js и xml, но не
+# json), поэтому всё это ехало на клиента как есть — на небыстром канале
+# карта из-за одного этого «долго грузит и лагает».
+#
+# Сжимаем здесь, а не в конфиге Apache, по двум причинам: конфиг веб-сервера
+# общий с чужими сайтами на той же машине, а этот файл — в репозитории и
+# переживёт переустановку.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(geo_router)
 app.include_router(fires_router)
