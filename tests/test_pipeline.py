@@ -1241,6 +1241,46 @@ def test_aircraft_course_still_reads_as_a_sighting():
     assert parse("Фиксация БПЛА, курс на Новороссийск").signal_type == "detection"
 
 
+def test_live_missiles_over_regions_are_not_a_recap():
+    """«В небе над регионами от 5-ти КР «Фламинго»» — это сейчас, а не сводка.
+
+    Правило про утреннюю сводку Минобороны ловило само сочетание «над
+    регионами» и целиком съедало живое сообщение про крылатые ракеты,
+    которые летят прямо в эту минуту.
+    """
+    observation = parse(
+        "7 КР «Фламинго» были выпущены в направлении Воронежской области. "
+        "2 КР «Фламинго» были уничтожена в г. Лиски. "
+        "В небе над регионами от 5-ти КР «Фламинго»")
+    assert observation.relevant
+    assert observation.threat_type == "rocket"
+
+
+@pytest.mark.parametrize("text", [
+    "112 вражеских БПЛА было уничтожено над регионами нашей страны "
+    "в период с 8:00 до 20:00",
+    "ПВО за день сбила 152 дрона ВСУ над регионами России и акваториями "
+    "Азовского и Черного морей, сообщили в Минобороны",
+    "Перехвачены 182 БПЛА над регионами РФ",
+])
+def test_recap_over_regions_still_filtered(text):
+    """Сводку по-прежнему выдаёт глагол рядом: цели в ней уже сбиты."""
+    assert parse(text).relevant is False
+
+
+@pytest.mark.parametrize("text,signal", [
+    ("Лиски, сбитие КР «Фламинго». Через район еще от 3-х", "intercept"),
+    ("В воздушном пространстве Саратовской области фиксация КР «Фламинго»",
+     "detection"),
+    ("КР Калибр в направлении Курска", "danger"),
+])
+def test_cruise_missiles_read_as_rockets(text, signal):
+    """«КР» и «Фламинго» — крылатые ракеты, даже когда слова «ракета» нет."""
+    observation = parse(text)
+    assert observation.threat_type == "rocket"
+    assert observation.signal_type == signal
+
+
 def test_subscription_footer_does_not_kill_a_real_alert():
     """Обычная подпись в конце — не реклама: её снимает strip_footer."""
     observation = parse("Балашовский район Саратовская область Фиксация БПЛА\n\n"
