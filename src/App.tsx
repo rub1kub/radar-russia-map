@@ -152,6 +152,9 @@ const MAX_SUGGESTIONS = 10;
 const MOBILE_QUERY =
   "(max-width: 760px), (max-height: 500px) and (orientation: landscape)";
 const STATE_POLL_MS = 25_000;
+// Как часто позволено перезапрашивать полигоны активных районов. Сервер
+// держит их в кэше десять секунд, чаще спрашивать нечего.
+const ACTIVE_DISTRICTS_MIN_GAP_MS = 20_000;
 // Насколько должен сдвинуться курсор, чтобы двигать подсказку. Меньше — это
 // дрожание руки, ради которого не стоит перерисовывать приложение.
 const HINT_MOVE_PX = 6;
@@ -752,6 +755,8 @@ export default function App() {
   const selectedKeyRef = useRef<string | null>(null);
   const layersRef = useRef<LayerState | null>(null);
   const loadLazyLayersRef = useRef<(() => void) | null>(null);
+  // Подсветка активных районов заказывается по масштабу, а не при старте.
+  const loadActiveDistrictsRef = useRef<(() => void) | null>(null);
   const featureIndexRef = useRef<globalThis.Map<string, Feature<Geometry>>>(new globalThis.Map());
   // Выбор, отложенный до подгрузки полигонов. Поиск тихого района на свежей
   // странице раньше просто пролетал мимо: полигоны районов ленивые, и
@@ -1612,6 +1617,9 @@ export default function App() {
       if (currentLayers.districts && zoom >= DISTRICTS_ZOOM) {
         void loadVectorLayer("/data/districts.json", districtSource, districtsLoadedRef, "районов");
       }
+      // Подсветка активных районов нужна с того же масштаба, с которого их
+      // видно. Ссылка, а не прямой вызов: обработчик объявлен ниже.
+      loadActiveDistrictsRef.current?.();
       if (currentLayers.urbanAreas && zoom >= URBAN_AREAS_ZOOM) {
         void loadVectorLayer("/data/urban-areas.json", urbanAreaSource, urbanAreasLoadedRef, "городских контуров");
       }
@@ -1651,8 +1659,26 @@ export default function App() {
       }
     };
 
-    void loadActiveDistricts();
-    const activeDistrictsTimer = window.setInterval(loadActiveDistricts, 60_000);
+    // Полигоны активных районов — 76 КБ поверх всего, что и так грузится при
+    // открытии. На стартовом масштабе слой районов не рисуется вовсе
+    // (minZoom у него 4.15), так что первые секунды эти килобайты заняты
+    // ничем — а на мобильном интернете именно они и есть та разница между
+    // «карта появилась» и «страница висит». Ждём, пока районы понадобятся.
+    const districtsNeeded = () =>
+      (mapRef.current?.getView().getZoom() ?? 0) >= DISTRICT_FILL_ZOOM - 1;
+    // Масштаб меняется на каждый щелчок колеса, а подсветка столько раз не
+    // обновляется: без этой заслонки одно приближение стоило бы трёх-четырёх
+    // запросов по 76 КБ подряд.
+    let districtsAskedAt = 0;
+    const loadActiveDistrictsWhenNeeded = () => {
+      const now = Date.now();
+      if (!districtsNeeded() || now - districtsAskedAt < ACTIVE_DISTRICTS_MIN_GAP_MS) return;
+      districtsAskedAt = now;
+      void loadActiveDistricts();
+    };
+    loadActiveDistrictsRef.current = loadActiveDistrictsWhenNeeded;
+    loadActiveDistrictsWhenNeeded();
+    const activeDistrictsTimer = window.setInterval(loadActiveDistrictsWhenNeeded, 60_000);
 
     loadLazyLayersRef.current = maybeLoadLazyLayers;
     // Поиску нужен способ дозаказать полигоны районов, не дожидаясь зума.
