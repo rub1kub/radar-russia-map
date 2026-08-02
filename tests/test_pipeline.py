@@ -636,6 +636,35 @@ def test_lowercase_common_word_is_not_a_village(geocoder):
         == [item for item in geocoder.resolve(["В Сочи привезли шоу"])]
 
 
+def test_home_region_beats_a_bigger_namesake(geocoder):
+    """Брянское «Городище» — брянское, даже если оно деревня.
+
+    У имени 114 тёзок, четыре из них в Брянской области, и все четыре —
+    деревни. Порог безвестности отсекал их раньше, чем учитывался регион
+    канала, и телеграфное «Городище ФПВ» от брянской ленты уезжало в
+    Волгоградскую область, к самому крупному однофамильцу.
+    """
+    zones = geocoder.resolve(["Городище"], home="bryanskaya_oblast")
+    assert zones and zones[0].zone_id.endswith("bryanskaya_oblast")
+
+    # Без прописки канала по-прежнему выигрывает крупнейший тёзка: гадать
+    # не на чем.
+    zones = geocoder.resolve(["Городище"])
+    assert zones and zones[0].zone_id.endswith("volgogradskaya_oblast")
+
+
+def test_named_region_still_beats_home(geocoder):
+    """Названный в тексте регион главнее прописки канала."""
+    zones = geocoder.resolve(["Городище Волгоградская область"],
+                             home="bryanskaya_oblast")
+    assert any(z.zone_id.endswith("volgogradskaya_oblast") for z in zones)
+
+
+def test_home_does_not_rescue_common_words(geocoder):
+    """Послабление не касается обиходных слов: «Победа» без региона — шум."""
+    assert geocoder.resolve(["Победа"], home="bryanskaya_oblast") == []
+
+
 def test_named_feature_is_not_a_village(geocoder):
     """«Арабатская Стрелка» — коса, а не посёлок Стрелка.
 
