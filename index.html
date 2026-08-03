@@ -31,7 +31,11 @@
     <meta name="twitter:card" content="summary_large_image" />
 
     <meta name="theme-color" content="#0e1211" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23151a18'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23e93e4e' stroke-width='2.5' opacity='.45'/%3E%3Ccircle cx='16' cy='16' r='4.5' fill='%23e93e4e'/%3E%3C/svg%3E" />
+    <!-- Иконки файлами, а не data:URI. Яндекс — и Вебмастер, и выдача —
+         забирает именно /favicon.ico: пока его не было, сайт в поиске
+         оставался без значка. Тем же путём иконку берут закладки iOS. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!-- Разметка для поисковиков: без неё карта для робота — пустой div. -->
     <script type="application/ld+json">
@@ -66,8 +70,11 @@
       })(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
 
       window.addEventListener("load", function () {
+        // ssr здесь был ошибкой: с этим флагом Метрика не отправляет
+        // просмотр сама — ждёт ручного ym(id, "hit", url) от серверного
+        // рендеринга, которого у нас нет. Тег грузился, ym определялся,
+        // а посетителей в отчётах не было ни одного, включая владельца.
         ym(111170964, "init", {
-          ssr: true,
           webvisor: false,
           clickmap: false,
           trackLinks: true,
