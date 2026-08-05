@@ -98,6 +98,10 @@
       </p>
     </noscript>
 
+    <!-- Мини-приложение Telegram: скрипт даёт window.Telegram.WebApp, без
+         него карта в мессенджере открывается наполовину экрана и под
+         панелью бота. В обычном браузере он безвреден. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

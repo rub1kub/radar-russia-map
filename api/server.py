@@ -45,6 +45,8 @@ from api.limits import (
 from api.fires import router as fires_router
 from api.geometry import router as geo_router
 from api.push import deliver_loop, router as push_router
+from api.telegram import (deliver_loop as telegram_loop, router as telegram_router,
+                          use_snapshot as telegram_snapshot)
 from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
 from pipeline.incremental import resolve_networks
@@ -111,6 +113,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.include_router(geo_router)
 app.include_router(fires_router)
 app.include_router(push_router)
+app.include_router(telegram_router)
 
 
 @app.on_event("startup")
@@ -119,6 +122,11 @@ async def start_push_loop() -> None:
     # обстановки и доступ к базе, отдельный демон был бы четвёртым
     # процессом без новой пользы.
     asyncio.create_task(deliver_loop(state_snapshot))
+    # Бот отвечает на команды тем же снимком, который видит карта: две
+    # разные картины обстановки в одном продукте — прямой путь к тому,
+    # чтобы человек усомнился в обеих.
+    telegram_snapshot(state_snapshot)
+    asyncio.create_task(telegram_loop(state_snapshot))
 
 ACTIVE_WINDOW = timedelta(hours=6)
 

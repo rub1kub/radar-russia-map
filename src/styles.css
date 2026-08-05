@@ -2813,3 +2813,21 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .history-panel.is-open .history-body { max-height: 40dvh; overflow-y: auto; }
   .day-strip { height: 30px; }
 }
+
+/* --- Карта внутри Telegram ------------------------------------------------ */
+/*
+ * Панель мини-приложения с названием бота и крестиком лежит поверх окна и
+ * своей высоты не сообщает. Без отступа под неё уходит шапка со счётчиками —
+ * то есть ровно то, ради чего человек и открыл карту.
+ */
+.in-telegram .topbar { padding-top: calc(var(--edge) + 52px); }
+.in-telegram .sidebar,
+.in-telegram .details-panel,
+.in-telegram .analytics-card { top: calc(var(--panel-top) + 52px); }
+
+@media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
+  .in-telegram .topbar { padding-top: 60px; }
+  .in-telegram .sidebar,
+  .in-telegram .details-panel,
+  .in-telegram .analytics-card { top: 114px; }
+}
