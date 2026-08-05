@@ -2891,6 +2891,13 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 @media (min-width: 761px) {
   .in-telegram .details-panel,
   .in-telegram .handle-right { top: var(--tg-corner); }
+  /* Высота ленты отмеряется от её собственного верха. Подняв ленту, я
+     оставил прежний расчёт — и она стала на тридцать пикселей длиннее,
+     накрыв кнопку аналитики в нижнем углу. Запас в 56 px — это её высота
+     с отступом, он же стоит в основном правиле. */
+  .in-telegram .details-panel {
+    max-height: calc(100vh - var(--tg-corner) - var(--edge) - 56px);
+  }
 }
 
 /*
