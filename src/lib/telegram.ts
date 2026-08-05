@@ -2,14 +2,16 @@
  * Работа внутри Telegram: карта как мини-приложение.
  *
  * Мини-приложение — это тот же сайт, открытый во встроенном браузере
- * Telegram. Отдельной сборки не нужно, но три вещи приходится поправить,
- * иначе карта в окне мессенджера выглядит сломанной:
+ * Telegram. Отдельной сборки не нужно, но без правок карта в окне
+ * мессенджера ведёт себя как случайно открытая веб-страница, а не как
+ * приложение:
  *
- * 1. Окно открывается наполовину высоты — просим развернуть.
- * 2. Сверху лежит панель Telegram с названием бота и крестиком; без
- *    отступа под неё наша шапка со счётчиками оказывается под ней.
- * 3. У панели свой цвет, по умолчанию светлый — на тёмной карте он режет
- *    глаз, поэтому красим в цвет подложки.
+ * 1. Окно открывается наполовину высоты — разворачиваем на весь экран.
+ * 2. Панели Telegram сверху и снизу светлые по умолчанию и на тёмной карте
+ *    выглядят чужеродно — красим в цвет подложки.
+ * 3. Вертикальный свайп закрывает окно, а на карте это жест панорамы.
+ * 4. Долгое нажатие выделяет текст и тянет элементы — оба жеста мешают
+ *    вести карту пальцем.
  *
  * Всё это включается только внутри Telegram. Проверять наличие объекта
  * Telegram.WebApp мало: скрипт создаёт его в любом браузере, и настоящий
@@ -19,13 +21,18 @@
 type TelegramWebApp = {
   platform?: string;
   initData?: string;
+  version?: string;
   ready: () => void;
   expand: () => void;
   isExpanded?: boolean;
+  isFullscreen?: boolean;
   viewportStableHeight?: number;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
+  setBottomBarColor?: (color: string) => void;
   disableVerticalSwipes?: () => void;
+  requestFullscreen?: () => void;
+  onEvent?: (event: string, handler: () => void) => void;
 };
 
 declare global {
@@ -49,21 +56,40 @@ export function insideTelegram(): boolean {
   return platform !== "unknown" || Boolean(app.initData);
 }
 
+/**
+ * Полный экран появился в Bot API 8.0. У старых клиентов метода просто
+ * нет — там остаётся развёрнутое окно, и карта работает так же. Поэтому
+ * версию не сверяем, а зовём через опциональный доступ.
+ */
+function goFullscreen(app: TelegramWebApp): void {
+  app.expand();
+  try {
+    app.requestFullscreen?.();
+  } catch {
+    // Отказ клиента — не повод ломать запуск.
+  }
+}
+
 export function setupTelegram(): void {
   const app = window.Telegram?.WebApp;
   if (!app || !insideTelegram()) return;
 
   app.ready();
-  app.expand();
+  goFullscreen(app);
 
   // Свайп вниз в Telegram закрывает окно. На карте вертикальный жест —
   // это панорама, и приложение схлопывалось прямо во время просмотра.
   app.disableVerticalSwipes?.();
 
+  // Обе панели мессенджера — в цвет карты, иначе поверх тёмной подложки
+  // висят светлые полосы сверху и снизу.
   app.setHeaderColor?.(SHELL_COLOR);
   app.setBackgroundColor?.(SHELL_COLOR);
+  app.setBottomBarColor?.(SHELL_COLOR);
 
-  // Класс включает отступ под панель Telegram: высоту она не сообщает, а
-  // накрывает верхние 56 px окна.
+  // Если полный экран не дали, окно всё равно должно быть развёрнутым.
+  app.onEvent?.("fullscreenFailed", () => app.expand());
+
+  // Класс включает отступ под панель Telegram и правила поведения жестов.
   document.documentElement.classList.add("in-telegram");
 }

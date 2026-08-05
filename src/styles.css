@@ -2820,6 +2820,33 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
  * своей высоты не сообщает. Без отступа под неё уходит шапка со счётчиками —
  * то есть ровно то, ради чего человек и открыл карту.
  */
+/*
+ * Жесты. В мессенджере палец водит карту, а браузер в это время норовит
+ * выделить подпись региона или потащить элемент — на телефоне это ломает
+ * панораму. Текст в панелях остаётся выделяемым: оттуда копируют название
+ * места и время события.
+ */
+.in-telegram,
+.in-telegram .map-panel,
+.in-telegram .map-surface,
+.in-telegram canvas {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+.in-telegram .event-feed,
+.in-telegram .source-note,
+.in-telegram .details-panel p,
+.in-telegram .analytics-card {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.in-telegram img,
+.in-telegram svg { -webkit-user-drag: none; pointer-events: none; }
+.in-telegram button svg,
+.in-telegram a svg { pointer-events: auto; }
+
 .in-telegram .topbar { padding-top: calc(var(--edge) + 52px); }
 .in-telegram .sidebar,
 .in-telegram .details-panel,
