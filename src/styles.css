@@ -2903,3 +2903,10 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
     bottom: calc(var(--tabbar-height) + var(--tg-bottom) + 12px);
   }
 }
+
+/* Пометка отбоя среди источников: он закрывает событие, а не подтверждает
+   его, и должен читаться иначе, чем «перепост» или «та же сеть». */
+.source-tag.is-clear {
+  color: #9fd4b0;
+  border-color: rgba(159, 212, 176, 0.4);
+}

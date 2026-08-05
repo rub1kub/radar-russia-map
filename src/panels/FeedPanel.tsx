@@ -478,6 +478,13 @@ export function FeedPanel({
                             ) : (
                               <span className="source-name">{item.source_key}</span>
                             )}
+                            {/* Отбой закрывает событие, а не подтверждает его.
+                                Без пометки он стоял в общем списке наравне с
+                                очевидцами, и сообщение «угроза миновала»
+                                читалось как ещё одно свидетельство фиксации. */}
+                            {item.role === "resolve" ? (
+                              <span className="source-tag is-clear">отбой</span>
+                            ) : null}
                             {item.repost ? <span className="source-tag">перепост</span> : null}
                             {item.clone && !item.repost ? (
                               <span className="source-tag">та же сеть</span>
