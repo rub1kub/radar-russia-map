@@ -2865,6 +2865,10 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
  * а кнопки всё равно есть.
  */
 .in-telegram {
+  /* Высота кнопок мессенджера в углу. Клиент её не сообщает — берём
+     измеренную: сами кнопки около 40 px, плюс воздух, чтобы лента не
+     касалась крестика. */
+  --tg-corner: 52px;
   --tg-top: max(
     56px,
     calc(var(--tg-safe-area-inset-top, 0px)
@@ -2874,15 +2878,32 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
                   + var(--tg-content-safe-area-inset-bottom, 0px));
 }
 
-.in-telegram .topbar { padding-top: calc(var(--tg-top) + 4px); }
-.in-telegram .sidebar,
-.in-telegram .details-panel,
-.in-telegram .analytics-card { top: calc(var(--panel-top) + var(--tg-top)); }
+/*
+ * Где именно лежат кнопки мессенджера, зависит от клиента, и опускать из-за
+ * них всё подряд неправильно.
+ *
+ * На компьютере Telegram рисует «три точки» и крестик только в правом
+ * верхнем углу — левая сторона свободна. Поэтому заголовок, счётчики и
+ * панель поиска остаются на своих местах, у самого края, а опускается лишь
+ * то, что стоит справа: лента и её ярлык. Ровно настолько, чтобы уйти
+ * из-под кнопок, — не ниже.
+ */
+@media (min-width: 761px) {
+  .in-telegram .details-panel,
+  .in-telegram .handle-right { top: var(--tg-corner); }
+}
 
-/* Ярлыки панелей висят по краям на той же высоте, что и кнопки Telegram:
-   справа это «три точки» и крестик, и они накрывали ярлык ленты вместе с
-   её счётчиком событий. Опускаем обе метки на ту же величину. */
-.in-telegram .panel-handle { top: calc(var(--panel-top) + var(--tg-top)); }
+/*
+ * На телефоне панель мессенджера лежит полосой во всю ширину, и под неё
+ * уходит всё содержимое разом.
+ */
+@media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
+  .in-telegram .topbar { padding-top: var(--tg-top); }
+  .in-telegram .sidebar,
+  .in-telegram .details-panel,
+  .in-telegram .analytics-card,
+  .in-telegram .panel-handle { top: calc(var(--tg-top) + 54px); }
+}
 
 /* Нижняя навигация поднимается над системной полосой мессенджера. */
 .in-telegram .mobile-tabs {
@@ -2894,10 +2915,6 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .in-telegram .compass-button { bottom: calc(var(--edge) + var(--tg-bottom)); }
 
 @media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
-  .in-telegram .topbar { padding-top: var(--tg-top); }
-  .in-telegram .sidebar,
-  .in-telegram .details-panel,
-  .in-telegram .analytics-card { top: calc(var(--tg-top) + 54px); }
   .in-telegram .history-panel,
   .in-telegram .compass-button {
     bottom: calc(var(--tabbar-height) + var(--tg-bottom) + 12px);
