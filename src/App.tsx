@@ -139,6 +139,9 @@ const HILLSHADE_ATTRIBUTION = import.meta.env.VITE_HILLSHADE_ATTRIBUTION || "Til
 // Стартовый вид — европейская часть, где происходит почти вся обстановка.
 const OVERVIEW_CENTER = fromLonLat([41, 53.5]);
 const DESKTOP_OVERVIEW_ZOOM = 4.15;
+// Ширина окна, под которую подобран обзорный масштаб. Шире — считаем ступень
+// сами, уже — оставляем как есть: на узком десктопе кадр и так тесный.
+const WIDE_REFERENCE_PX = 1500;
 // Вертикальный экран узкий, но высокий: зум, подобранный так, чтобы страна
 // влезла по ширине, растягивал вид на пол-глобуса по высоте — телефон
 // открывался с Африкой и Аравией в кадре, а обстановка занимала треть
@@ -702,7 +705,15 @@ function getMapFitPadding(): [number, number, number, number] {
 }
 
 function getOverviewZoom(): number {
-  return window.matchMedia(MOBILE_QUERY).matches ? MOBILE_OVERVIEW_ZOOM : DESKTOP_OVERVIEW_ZOOM;
+  if (window.matchMedia(MOBILE_QUERY).matches) return MOBILE_OVERVIEW_ZOOM;
+  // Масштаб задан для окна примерно в полторы тысячи пикселей: при нём в
+  // кадре страна и подступы к ней. На широком окне тот же масштаб охватывает
+  // вдвое больше — в мини-приложении Telegram, растянутом на весь монитор,
+  // в кадр попадали Гренландия и Исландия, а Россия жалась к краю. Каждое
+  // удвоение ширины добавляет ступень масштаба, и охват остаётся прежним.
+  const width = window.innerWidth || WIDE_REFERENCE_PX;
+  if (width <= WIDE_REFERENCE_PX) return DESKTOP_OVERVIEW_ZOOM;
+  return DESKTOP_OVERVIEW_ZOOM + Math.log2(width / WIDE_REFERENCE_PX);
 }
 
 function setOverviewView(map: OlMap, duration: number) {
@@ -837,6 +848,18 @@ export default function App() {
     wasMobile.current = isMobile;
     setLeftOpen(!isMobile);
     setRightOpen(!isMobile);
+
+    // Обзорный масштаб подобран под ширину окна: в узком показываем
+    // европейскую часть, в широком — страну целиком. Когда окно меняет
+    // класс, старый масштаб остаётся, и растянутое окно Telegram на
+    // компьютере показывало пол-Земли — Гренландию и Исландию вместо
+    // России. Возвращаем обзор, но только если человек сам никуда не
+    // уехал: приближение и выбранное место трогать нельзя.
+    const map = mapRef.current;
+    if (!map) return;
+    map.updateSize();
+    const zoom = map.getView().getZoom() ?? 0;
+    if (zoom <= getOverviewZoom() + 0.35) setOverviewView(map, 250);
   }, [isMobile]);
   // На узком экране панели занимают почти весь экран, поэтому там они
   // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
