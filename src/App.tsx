@@ -813,10 +813,31 @@ export default function App() {
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
-    const sync = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    const sync = () => setIsMobile(media.matches);
     media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
+    // Плюс обычный resize: во встроенных браузерах — а мини-приложение
+    // Telegram именно такой — событие медиазапроса приходит не всегда, и
+    // разметка перестраивалась без состояния. Слушать оба источника дешевле,
+    // чем разбираться, какой из них сработает у конкретного клиента.
+    window.addEventListener("resize", sync);
+    return () => {
+      media.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+    };
   }, []);
+
+  // Окно может смениться классом уже после запуска: Telegram на компьютере
+  // открывает мини-приложение узким окном, и человек разворачивает его сам.
+  // Панели решали свою судьбу один раз при старте — и на широком экране
+  // оставались свёрнутыми, а таб-бара, которым их открывают на телефоне,
+  // там уже нет. Получалось окно вовсе без ленты и без поиска.
+  const wasMobile = useRef(isMobile);
+  useEffect(() => {
+    if (wasMobile.current === isMobile) return;
+    wasMobile.current = isMobile;
+    setLeftOpen(!isMobile);
+    setRightOpen(!isMobile);
+  }, [isMobile]);
   // На узком экране панели занимают почти весь экран, поэтому там они
   // стартуют свёрнутыми: приоритет у карты, панель открывается по нажатию.
   const [leftOpen, setLeftOpen] = useState(

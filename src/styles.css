@@ -2879,6 +2879,11 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .in-telegram .details-panel,
 .in-telegram .analytics-card { top: calc(var(--panel-top) + var(--tg-top)); }
 
+/* Ярлыки панелей висят по краям на той же высоте, что и кнопки Telegram:
+   справа это «три точки» и крестик, и они накрывали ярлык ленты вместе с
+   её счётчиком событий. Опускаем обе метки на ту же величину. */
+.in-telegram .panel-handle { top: calc(var(--panel-top) + var(--tg-top)); }
+
 /* Нижняя навигация поднимается над системной полосой мессенджера. */
 .in-telegram .mobile-tabs {
   height: calc(var(--tabbar-height) + var(--tg-bottom));
