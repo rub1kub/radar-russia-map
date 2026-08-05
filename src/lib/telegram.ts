@@ -11,11 +11,14 @@
  * 3. У панели свой цвет, по умолчанию светлый — на тёмной карте он режет
  *    глаз, поэтому красим в цвет подложки.
  *
- * Всё это включается только внутри Telegram: в обычном браузере объекта
- * нет, и функция просто ничего не делает.
+ * Всё это включается только внутри Telegram. Проверять наличие объекта
+ * Telegram.WebApp мало: скрипт создаёт его в любом браузере, и настоящий
+ * запуск выдаёт лишь платформа — см. insideTelegram().
  */
 
 type TelegramWebApp = {
+  platform?: string;
+  initData?: string;
   ready: () => void;
   expand: () => void;
   isExpanded?: boolean;
@@ -35,12 +38,20 @@ declare global {
 const SHELL_COLOR = "#0e1211";
 
 export function insideTelegram(): boolean {
-  return Boolean(window.Telegram?.WebApp);
+  const app = window.Telegram?.WebApp;
+  if (!app) return false;
+  // Скрипт Telegram создаёт свой объект в любом браузере, а не только в
+  // мессенджере: сам по себе он ничего не доказывает. Настоящий запуск
+  // выдаёт платформа — вне Telegram она «unknown», и подписанных данных
+  // о пользователе тоже нет. Без этой проверки отступ под панель бота
+  // получил бы каждый обычный посетитель сайта.
+  const platform = app.platform ?? "unknown";
+  return platform !== "unknown" || Boolean(app.initData);
 }
 
 export function setupTelegram(): void {
   const app = window.Telegram?.WebApp;
-  if (!app) return;
+  if (!app || !insideTelegram()) return;
 
   app.ready();
   app.expand();
