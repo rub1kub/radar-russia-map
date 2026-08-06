@@ -1456,3 +1456,62 @@ def test_own_wording_does_refresh_the_event():
     add(fuser, 0, "a", body="Краснофлотское, опасность по БПЛА")
     add(fuser, 7, "b", body="Краснофлотское, работа ПВО, слышны взрывы")
     assert fuser.events[0].last_seen == datetime(2026, 7, 27, 10, 7, tzinfo=timezone.utc)
+
+
+# --- Направления: наблюдение и адресат — разные вещи ------------------------
+
+def test_split_directions_separates_observed_from_targets():
+    from pipeline.parse import split_directions
+
+    observed, targets = split_directions([
+        "Мангуш",
+        "Мариуполь и близлежащие тревога по БПЛА и далее в направлении Азовского моря",
+        "прошли Ейск в направлении Должанской",
+    ])
+    assert observed == ["Мангуш", "Мариуполь и близлежащие тревога по БПЛА и далее",
+                        "прошли Ейск"]
+    assert targets == ["Азовского моря", "Должанской"]
+
+
+def test_destination_zone_keeps_observed_over_target(geocoder):
+    """«Взрывы в Ейске, борта в направлении Ейска» — Ейск остаётся наблюдением."""
+    from pipeline.geocode import destination_zone_ids
+    from pipeline.parse import candidate_phrases
+
+    text = "Взрывы в Ейске. Ещё борта идут в направлении Ейска"
+    assert destination_zone_ids(geocoder, candidate_phrases(text), None) == set()
+
+
+def test_destination_zone_downgraded(geocoder):
+    """Море из «далее в направлении Азовского моря» — адресат, не наблюдение.
+
+    Сигнал сообщения один на все названные места, и зона-адресат получала
+    ту же тревогу, что и зона, где борт видят: Азовское море вспыхивало
+    тревогой от каждого «в направлении моря» из Мангуша.
+    """
+    from pipeline.geocode import destination_zone_ids
+    from pipeline.parse import candidate_phrases
+
+    text = ("Мангуш, Мариуполь и близлежащие тревога по БПЛА "
+            "и далее в направлении Азовского моря")
+    assert destination_zone_ids(geocoder, candidate_phrases(text), None) \
+        == {"azovskoe_more"}
+
+
+def test_feature_named_after_head_is_not_a_village(geocoder):
+    """«Коса Чушка» — коса в Керченском проливе, а не село в Пермском крае.
+
+    Село Коса (Косинский округ) забирало сообщения о переправе: объект
+    стоит впереди, имя за ним, и оба правила прилагательных такой порядок
+    не ловили. «В селе Коса» при этом остаётся селом — за маркером места
+    правило не действует.
+    """
+    from pipeline.parse import candidate_phrases
+
+    assert geocoder.resolve(candidate_phrases(
+        "Порт Кавказ, Коса Чушка — ограничения движения")) == []
+    kept = geocoder.resolve(candidate_phrases("БПЛА в селе Коса"))
+    assert [zone.name for zone in kept] == ["Коса"]
+    # Имя, за которым стоит собственная зона, — сосед, а не имя объекта.
+    names = {z.name for z in geocoder.resolve(["Стрелка, Темрюкский район"])}
+    assert "Стрелка" in names

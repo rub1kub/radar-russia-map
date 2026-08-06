@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 import sys
 from pathlib import Path
@@ -18,7 +20,7 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
-from .geocode import Geocoder, Resolved  # noqa: E402
+from .geocode import Geocoder, Resolved, destination_zone_ids  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -122,16 +124,25 @@ def rebuild(connection) -> dict:
 
         moment = parse_utc(row["posted_at"])
 
+        # Зона-адресат («далее в направлении X») борт ещё не видит:
+        # ей достаётся «опасность», а не сигнал сообщения.
+        targets = (destination_zone_ids(geocoder, observation.place_phrases, home)
+                   if observation.severity > 5 else set())
+
         # Сообщение может называть несколько независимых мест — каждое
         # становится отдельным наблюдением в своей зоне.
         for item in resolved:
+            local = observation
+            if item.zone_id in targets:
+                local = replace(observation, signal_type="danger", severity=5)
+                stats["as_destination"] = stats.get("as_destination", 0) + 1
             fuser.add(
                 raw_id=row["id"],
                 source_key=row["source_key"],
                 tier=TIERS.get(row["source_key"], "regional"),
                 network=networks.get(row["source_key"]),
                 moment=moment,
-                observation=observation,
+                observation=local,
                 zone_path=geocoder.zone_path(item.zone_id),
                 lat=item.lat,
                 lon=item.lon,

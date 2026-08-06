@@ -480,6 +480,39 @@ class Geocoder:
             return False
         return words[index - 1].endswith(ADJECTIVE_ENDINGS)
 
+    def _heads_named_feature(self, words: list[str], index: int,
+                             capitalized: set[str] | None) -> bool:
+        """Совпадение — физико-географический объект, чьё имя стоит следом?
+
+        Третий порядок слов после двух правил выше: не «Азовское море» и не
+        «Арабатская Стрелка», а «Коса Чушка» — объект впереди, имя за ним.
+        Село Коса в Пермском крае забирало сообщения о косе в Керченском
+        проливе. Имя опознаётся по заглавной букве, поэтому проверка живёт
+        в _scan, где регистр ещё не потерян; «в селе Коса» остаётся селом —
+        за ним имени нет, а маркер места стоит перед ним.
+
+        Имя, за которым стоит район или регион, — не имя объекта, а соседний
+        топоним: «Стрелка, Темрюкский район» и без запятой те же три слова,
+        и посёлок должен выжить. Место-тёзку правило не отменяет: посёлок
+        Чушка назван по своей косе и стоит на ней же.
+        """
+        if capitalized is None or index + 1 >= len(words):
+            return False
+        if stem_word(words[index]) not in FEATURE_HEAD_STEMS:
+            return False
+        if index > 0 and stem_word(words[index - 1]) in PLACE_MARKER_STEMS:
+            return False
+        if words[index + 1] not in capitalized:
+            return False
+        follower = words[index + 1:index + 1 + MAX_NGRAM]
+        for size in range(len(follower), 0, -1):
+            chunk = " ".join(follower[:size])
+            hits = list(self.by_name.get(chunk, ()))
+            hits += self.by_stem.get(stem_key(chunk), ())
+            if any(self.zones[zone_id]["level"] != "place" for zone_id in hits):
+                return False
+        return True
+
     def _names_region(self, phrase: str) -> bool:
         """Стоит ли за фразой зона уровня региона — в любом из двух индексов."""
         zone_ids = list(self.by_name.get(phrase, ()))
@@ -602,6 +635,9 @@ class Geocoder:
                 continue
             match, size = hit
             if size == 1 and self._lowercase_common_word(match, words[index], capitalized):
+                index += 1
+                continue
+            if size == 1 and self._heads_named_feature(words, index, capitalized):
                 index += 1
                 continue
             found.append(match)
@@ -1001,3 +1037,27 @@ class Geocoder:
 
     def zone_path(self, zone_id: str) -> list[str]:
         return list(self.chain(zone_id))
+
+
+def destination_zone_ids(geocoder: Geocoder, phrases: list[str],
+                         home: str | None) -> set[str]:
+    """Зоны, для которых сообщение — предупреждение, а не наблюдение.
+
+    Сигнал у сообщения один на все названные места, и зона-адресат
+    («далее в направлении Азовского моря») получала ту же тревогу, что
+    и зона, где борт видят. Здесь адресаты вычисляются отдельно, чтобы
+    конвейер понизил им сигнал до «опасности».
+
+    Зона, названная и наблюдением, и адресатом («взрывы в Ейске, борта
+    в направлении Ейска»), остаётся наблюдением: наблюдение сильнее.
+    """
+    from .parse import split_directions
+
+    observed, targets = split_directions(phrases)
+    if not targets:
+        return set()
+    target_ids = {item.zone_id for item in geocoder.resolve(targets, home=home)}
+    if not target_ids:
+        return set()
+    observed_ids = {item.zone_id for item in geocoder.resolve(observed, home=home)}
+    return target_ids - observed_ids

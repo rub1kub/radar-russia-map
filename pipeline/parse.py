@@ -423,6 +423,32 @@ MOVING_TO_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def split_directions(phrases: list[str]) -> tuple[list[str], list[str]]:
+    """Фразы наблюдения отдельно, адресаты движения отдельно.
+
+    «Мангуш тревога по БПЛА и далее в направлении Азовского моря» — Мангуш
+    видит борт, а море его только ждёт. Сигнал у сообщения один на всех,
+    и до этого разделения море получало ту же тревогу, что и Мангуш.
+
+    Хвост после оборота движения — адресаты; голова до него — наблюдение.
+    «Прошли Ейск в направлении моря»: Ейск остаётся наблюдением.
+    """
+    observed: list[str] = []
+    targets: list[str] = []
+    for phrase in phrases:
+        match = MOVING_TO_RE.search(phrase)
+        if not match:
+            observed.append(phrase)
+            continue
+        head = phrase[:match.start()].strip(" ,—-")
+        tail = phrase[match.end():].strip(" ,—-")
+        if head:
+            observed.append(head)
+        if tail:
+            targets.append(tail)
+    return observed, targets
+
 # --- Сигнал: что произошло. Порядок важен, первое совпадение выигрывает -----
 SIGNALS: list[tuple[str, str, int]] = [
     # Только именительный падеж: «отбоя ждём», «отбоя нет» — это ещё тревога.

@@ -21,6 +21,8 @@ last_seen события. Без задержки опоздавшее на се
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import argparse
 import json
 import sqlite3
@@ -35,7 +37,7 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
-from .geocode import Geocoder, Resolved  # noqa: E402
+from .geocode import Geocoder, Resolved, destination_zone_ids  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -486,14 +488,22 @@ def run_once(
 
         moment = parse_utc(row["posted_at"])
 
+        # Зона-адресат («далее в направлении X») борт ещё не видит:
+        # ей достаётся «опасность», а не сигнал сообщения.
+        targets = (destination_zone_ids(geocoder, observation.place_phrases, home)
+                   if observation.severity > 5 else set())
+
         for item in resolved:
+            local = observation
+            if item.zone_id in targets:
+                local = replace(observation, signal_type="danger", severity=5)
             fuser.add(
                 raw_id=row["id"],
                 source_key=row["source_key"],
                 tier=tiers.get(row["source_key"], DEFAULT_TIER),
                 network=NETWORKS.get(row["source_key"]),
                 moment=moment,
-                observation=observation,
+                observation=local,
                 zone_path=geocoder.zone_path(item.zone_id),
                 lat=item.lat,
                 lon=item.lon,
