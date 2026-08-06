@@ -411,6 +411,11 @@ def main() -> int:
     named = []
     for feature in regions:
         props = feature.get("properties") or {}
+        # Акватории посадочной страницы не получают: она вся построена
+        # вокруг районов субъекта, а у моря их нет. На карте и в ленте
+        # оно при этом полноценная зона.
+        if props.get("kind") == "sea":
+            continue
         if props.get("name") and props.get("zone"):
             named.append((props["name"], str(props["zone"]).replace("_", "-"),
                           props["id"], props["zone"]))

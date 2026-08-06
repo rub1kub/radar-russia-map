@@ -37,6 +37,9 @@ def load_polygons(path: Path) -> list[dict]:
         rows.append({
             "source_id": str(feature["properties"].get("id") or ""),
             "name": str(feature["properties"].get("name") or "").strip(),
+            # Акваторию отличаем по метке из исходных данных: она зона, но
+            # не родитель — см. build().
+            "kind": feature["properties"].get("kind"),
             "geom": geometry if geometry.is_valid else geometry.buffer(0),
         })
     return [row for row in rows if row["name"]]
@@ -140,20 +143,26 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
         add_zone(zone_id, None, "region", region["name"],
                  centroid.y, centroid.x, None, None, region["source_id"])
 
-    region_tree = STRtree([region["geom"] for region in regions])
-    print(f"регионов: {len(regions)}")
+    # Акватория — такая же зона, как субъект: по ней приходят сообщения о
+    # безэкипажных катерах и о бортах, идущих с моря. Но родителем она быть
+    # не может: у косы или острова опорная точка нередко оказывается в воде,
+    # и такой район ушёл бы из своей области в море.
+    land = [region for region in regions if region.get("kind") != "sea"]
+    land_ids = [region["zone_id"] for region in land]
+    region_tree = STRtree([region["geom"] for region in land])
+    print(f"регионов: {len(regions)} (из них акваторий: {len(regions) - len(land)})")
 
     def find_region(geometry) -> str | None:
         probe = geometry if geometry.geom_type == "Point" else geometry.representative_point()
         # Города федерального значения — анклавы внутри области, поэтому из всех
         # содержащих полигонов берем наименьший по площади.
-        hits = [index for index in region_tree.query(probe) if regions[index]["geom"].contains(probe)]
+        hits = [index for index in region_tree.query(probe) if land[index]["geom"].contains(probe)]
         if hits:
-            best = min(hits, key=lambda index: regions[index]["geom"].area)
-            return region_ids[best]
+            best = min(hits, key=lambda index: land[index]["geom"].area)
+            return land_ids[best]
         # Точка вне всех полигонов (море, погрешность границ) — ближайший регион.
         nearest = region_tree.nearest(probe)
-        return region_ids[nearest] if nearest is not None else None
+        return land_ids[nearest] if nearest is not None else None
 
     # --- Районы --------------------------------------------------------
     districts = load_polygons(DATA / "districts.json")

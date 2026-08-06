@@ -843,7 +843,12 @@ const regions = compactFeatureCollection(
   (props, index) => ({
     id: props.id ?? props.shapeID ?? `region-${index}`,
     name: props.name ?? regionNameByIso.get(props.shapeISO) ?? props.shapeName,
-    iso: props.iso ?? props.shapeISO ?? null
+    iso: props.iso ?? props.shapeISO ?? null,
+    // Акватория среди субъектов. Сообщения про Азовское море ложились на
+    // сушу, названную рядом, а если рядом ничего не названо — терялись
+    // вовсе. Признак нужен дальше по конвейеру: морю нельзя отдавать
+    // прибрежные районы, а посадочную страницу «по районам» ему не собрать.
+    ...(props.kind ? { kind: props.kind } : {})
   }),
   3
 );

@@ -730,7 +730,6 @@ def test_exact_form_wins_over_stemmed(geocoder):
     "по старой трассе",                     # Старая Деревня
     "в сторону примерно",                   # посёлок Примерный
     "крайне много БПЛА",                    # посёлок Крайний
-    "с Азовского моря",                     # станица Азовская
     "в северной части района",              # посёлок Северный
     "над нашим воздушным пространством",    # посёлок Наш
     "Берегите себя и своих близких",        # деревня Своя
@@ -738,6 +737,20 @@ def test_exact_form_wins_over_stemmed(geocoder):
 def test_stemmed_match_does_not_invent_places(geocoder, phrase):
     """Стеммер схлопывает словоформы, а значит легко ловит обиходные слова."""
     assert geocoder.resolve([phrase]) == []
+
+
+def test_sea_is_a_zone_not_a_coastal_village(geocoder):
+    """«С Азовского моря идут БПЛА» — это про море, а не про станицу.
+
+    Раньше акватории в справочнике не было: слово «море» стояло в
+    стоп-листе, и сообщение либо садилось на сушу, названную рядом, либо
+    терялось совсем. Теперь у моря своя зона, и по ней видно безэкипажные
+    катера и борта, идущие с воды.
+    """
+    zones = geocoder.resolve(["С Азовского моря идут БПЛА"])
+    names = {item.name for item in zones}
+    assert "Азовское море" in names
+    assert not any("Азовская" in name for name in names)
 
 
 @pytest.mark.parametrize("phrase,expected", [
