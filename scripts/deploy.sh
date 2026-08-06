@@ -33,6 +33,20 @@ MODE="${1:-all}"
 # под собой, и после него простое «curl» в этом скрипте не находилось.
 CURL="$(command -v curl)"
 
+# Сеть до сервера временами дремлет: выкатка дважды обрывалась на первом же
+# ssh по таймауту, хотя со второй попытки проходила сразу. Каждый сетевой
+# шаг повторяется до трёх раз с паузой — но только сетевой: упавшие тесты
+# или сборку повторять бессмысленно.
+retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    [[ $attempt == 3 ]] && return 1
+    echo "  сеть не ответила (попытка $attempt из 3), жду 5 секунд…"
+    sleep 5
+  done
+}
+
 if [[ "$MODE" == "--db" ]]; then
   echo "База больше не заливается: сбор идёт на сервере, и домашняя копия"
   echo "затёрла бы собранное. Забрать боевую базу для отладки:"
@@ -58,16 +72,16 @@ echo "=== 3/5 сборка фронта"
 VITE_API_BASE="$SITE" npm run build 2>&1 | tail -3
 
 echo "=== 4/5 выкатка"
-ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only 2>&1 | tail -2"
+retry ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only 2>&1 | tail -2"
 # Страницы регионов и sitemap собираются на сервере: в них идёт сводка из
 # базы, а база живёт только там. Из синхронизации они исключены, иначе
 # --delete снёс бы их до того, как соберётся новая версия, и всё это время
 # посадочные отдавали бы 404.
-rsync -az --delete --exclude "region/" --exclude "sitemap.xml" \
+retry rsync -az --delete --exclude "region/" --exclude "sitemap.xml" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
-ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
+retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
   ./.venv/bin/python -m scripts.seo_pages --ping 2>&1 | tail -2"
-ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"
+retry ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"
 
 echo "=== 5/5 проверка боевого"
 sleep 4

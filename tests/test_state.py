@@ -128,3 +128,39 @@ def test_windows_follow_zone_size():
     assert (ZONE_FADE_BY_LEVEL["place"]
             < ZONE_FADE_BY_LEVEL["district"]
             < ZONE_FADE_BY_LEVEL["region"])
+
+
+def test_route_rows_deduplicate_reposts(tmp_path, monkeypatch):
+    """Пять каналов перепечатали один маршрут — на карте одна линия.
+
+    Репосты и клоны дают копии той же линии за минуты, и карта рисовала
+    их стопкой: непрозрачность складывалась, свежая линия выглядела
+    старой тревогой. У склейки самое свежее время из копий.
+    """
+    import sqlite3
+
+    from api import server
+    from pipeline.db import SCHEMA
+
+    db = tmp_path / "radar.db"
+    connection = sqlite3.connect(db)
+    connection.executescript(SCHEMA)
+    points = '[[46.7, 38.2, "Ейск"], [46.9, 38.4, "Должанская"]]'
+    for index, minute in enumerate(("01", "03", "07")):
+        connection.execute(
+            "INSERT INTO raw_messages (source_key, chat_id, message_id,"
+            " posted_at, text) VALUES (?, ?, ?, ?, ?)",
+            (f"ch{index}", index, 1, f"2026-08-06T10:{minute}:00+00:00", "..."))
+        connection.execute(
+            "INSERT INTO routes (raw_message_id, source_key, posted_at,"
+            " threat_type, severity, points) VALUES (?,?,?,?,?,?)",
+            (connection.execute("SELECT last_insert_rowid()").fetchone()[0],
+             f"ch{index}", f"2026-08-06T10:{minute}:00+00:00", "uav", 7, points))
+    connection.commit()
+    connection.close()
+
+    monkeypatch.setattr(server, "DB_PATH", db)
+    from datetime import datetime, timezone
+    rows = server.route_rows(datetime(2026, 8, 6, 9, 0, tzinfo=timezone.utc))
+    assert len(rows) == 1
+    assert rows[0]["at"] == "2026-08-06T10:07:00+00:00"

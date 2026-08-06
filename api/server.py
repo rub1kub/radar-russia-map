@@ -332,15 +332,25 @@ ROUTE_WINDOW = timedelta(minutes=90)
 
 def route_rows(since: datetime, until: datetime | None = None,
                limit: int = 400) -> list[dict]:
-    """Маршруты, названные самими сообщениями, за окно времени."""
+    """Маршруты, названные самими сообщениями, за окно времени.
+
+    Одинаковая линия склеивается в одну: репосты и каналы-клоны дают до
+    пяти копий того же маршрута за минуты, и карта рисовала их стопкой.
+    Ключ — сами точки: время не участвует, иначе копии, разошедшиеся на
+    секунды, остались бы разными. У склейки живёт самое свежее время —
+    линия гаснет по последнему упоминанию, как значки.
+    """
     bound = " AND posted_at < ?" if until else ""
     params: tuple = (since.isoformat(), until.isoformat(), limit) if until \
         else (since.isoformat(), limit)
     rows = query(
         f"""
-        SELECT posted_at, threat_type, severity, points FROM routes
+        SELECT max(posted_at) AS posted_at, threat_type,
+               max(severity) AS severity, points
+        FROM routes
         WHERE posted_at >= ?{bound}
-        ORDER BY posted_at DESC LIMIT ?
+        GROUP BY points, threat_type
+        ORDER BY max(posted_at) DESC LIMIT ?
         """,
         params,
     )
