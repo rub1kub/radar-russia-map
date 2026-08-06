@@ -2569,12 +2569,10 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .map-action,
   .history-toggle { display: none; }
 
-  /* Шапка компактнее: на телефоне важен сам счётчик, а не подпись. */
-  .brand p { display: none; }
-  /* Без nowrap заголовок ломался на две строки и шапка снова становилась
-     двухэтажной — ровно то, от чего уходим. */
-  .brand h1 { font-size: 12px; white-space: nowrap; letter-spacing: 0; }
-  .brand svg { width: 17px; height: 17px; flex: none; }
+  /* Названию на телефоне делать нечего: что это карта обстановки, видно
+     по самой карте, а каждый сантиметр шапки на счету. Заголовок остаётся
+     в разметке ради поисковиков и читалок — прячем, не выкидываем. */
+  .brand { display: none; }
   .topbar { padding: 8px 10px; gap: 8px; flex-wrap: nowrap; }
   .stat-strip { gap: 6px; }
 
@@ -2591,7 +2589,6 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
     flex: none;
   }
   .stat-date { display: none; }
-  .brand { padding: 6px 9px; gap: 6px; flex: none; }
   .stat-chip { padding: 3px 7px; gap: 5px; font-size: 13px; }
 
   /* Панели — листы поверх карты, во всю ширину, до таб-бара. */
@@ -2773,7 +2770,8 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .map-action,
   .history-toggle { display: none; }
 
-  .brand p { display: none; }
+  /* Названию и в альбомном телефоне делать нечего — высоты и так нет. */
+  .brand { display: none; }
   .topbar { padding: 6px 10px; }
 
   /* Размытие фона стоит видеоядру телефона кадр за кадром — см. блок выше. */
