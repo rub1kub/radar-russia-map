@@ -1545,3 +1545,30 @@ def test_found_debris_is_aftermath_not_impact():
     # А падение без «последствий нет» — событие: о нём ещё ничего не ясно.
     fresh = parse("Обломки БПЛА упали на жилой дом, возгорание")
     assert fresh.relevant and fresh.signal_type == "impact"
+
+
+def test_late_arrival_joins_instead_of_twin():
+    """Опоздавшее к слушателю сообщение не рождает событие-близнеца.
+
+    Каналы доставляются не в порядке публикации. Волна РСЧС: первое
+    сообщение открыло событие, третье (свежее) продлило его, а второе
+    пришло к слушателю позже свежего — и отбрасывалось стражем gap < 0,
+    рождая второе событие в той же зоне. Подписчик получал две
+    «опасности» подряд с разницей в минуту.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="danger", severity=5)
+    add(fuser, 2, "c", signal="danger", severity=5)   # свежее уже пришло
+    add(fuser, 1, "b", signal="danger", severity=5)   # опоздавшее — в то же событие
+    assert len(fuser.events) == 1
+    assert len(fuser.events[0].sources) == 3
+    # Время события двигает только свежее, опоздавшее его не откатывает.
+    assert fuser.events[0].last_seen.minute == 2
+
+
+def test_too_old_arrival_still_makes_its_own_event():
+    """Совсем старое сообщение к живому событию не приписывается."""
+    fuser = Fuser()
+    add(fuser, 40, "a", signal="danger", severity=5)
+    add(fuser, 10, "b", signal="danger", severity=5)  # старше окна жизни
+    assert len(fuser.events) == 2

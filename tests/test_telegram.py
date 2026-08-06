@@ -138,3 +138,40 @@ def test_twin_events_send_one_message(tmp_path, monkeypatch):
     later = dict(twin, id="evt-c", last_seen_at="2026-08-06T17:05:00+00:00")
     telegram.deliver_once({"events": [later]})
     assert len(sent) == 2
+
+
+def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
+    """Цвет кружка в уведомлении — та же ранжировка, что в легенде карты.
+
+    Красное — борт видят (фиксация, перехват, взрыв), оранжевое — тревога,
+    жёлтое — опасность, зелёное — отбой. Раньше всё, кроме отбоя, было
+    красным, и «опасность» выглядела так же грозно, как взрыв.
+    """
+    import json
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "t")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
+            (1, json.dumps(["z"]), 0))
+        connection.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    def event(eid, signal, status="active", at="2026-08-06T16:00:00+00:00"):
+        return {"id": eid, "status": status, "zone_path": ["z"],
+                "signal_type": signal, "threat_type": "uav",
+                "zone_name": "Тест", "last_seen_at": at}
+
+    telegram.deliver_once({"events": [
+        event("e1", "detection", at="2026-08-06T16:01:00+00:00"),
+        event("e2", "alarm", at="2026-08-06T16:02:00+00:00"),
+        event("e3", "danger", at="2026-08-06T16:03:00+00:00"),
+        event("e4", "allclear", status="resolved",
+              at="2026-08-06T16:04:00+00:00"),
+    ]})
+    heads = [text.split()[0] for text in sent]
+    assert heads == ["🔴", "🟠", "🟡", "🟢"]

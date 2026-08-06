@@ -227,14 +227,22 @@ def test_late_message_still_confirms_instead_of_splitting(db, geocoder):
     assert events[0]["source_count"] == 2
 
 
-def test_without_grace_late_message_splits_event(db, geocoder):
-    """Тот же сценарий без задержки разваливается — ради этого она и введена."""
+def test_late_message_joins_even_without_grace(db, geocoder):
+    """Опоздавшее сообщение присоединяется и без придержки хвоста.
+
+    Задержка LATE_GRACE ловит переупорядочивание в пределах полуминуты,
+    но каналы опаздывают и сильнее: волна РСЧС рождала событие-близнеца,
+    когда второе сообщение доходило позже более свежего. Теперь слияние
+    само принимает опоздавшее наблюдение в окно жизни события — придержка
+    осталась первым рубежом, а не единственным.
+    """
     post(db, 1, "alpha", 10, second=1)
     sweep(db, geocoder, 10, second=5, grace=timedelta(0))
     post(db, 2, "beta", 10, second=0)
     sweep(db, geocoder, 10, second=6, grace=timedelta(0))
 
-    assert len(rows(db, "SELECT id FROM events")) == 2
+    events = rows(db, "SELECT id, source_count FROM events")
+    assert len(events) == 1, "опоздавшее сообщение породило событие-близнеца"
 
 
 def test_watermark_stops_before_held_tail(db, geocoder):

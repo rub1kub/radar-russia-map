@@ -178,11 +178,19 @@ class Fuser:
             if event.threat_type != threat and "unknown" not in (event.threat_type, threat):
                 continue
 
-            gap = moment - event.last_seen
-            if gap < timedelta(0):
+            # Наблюдение может прийти к слушателю позже более свежих: каналы
+            # доставляются не в порядке публикации, и опоздание бывает больше
+            # LATE_GRACE. Раньше такое отбрасывалось (gap < 0), и волна РСЧС
+            # рождала событие-близнеца в той же зоне через секунды — подписчик
+            # получал две «опасности» подряд. Опоздавшее присоединяется, если
+            # попадает в окно жизни события; время события оно не двигает —
+            # присоединение берёт max(last_seen, moment).
+            if moment - event.last_seen > SAME_ZONE_WINDOW:
+                continue
+            if moment < event.first_seen - SAME_ZONE_WINDOW:
                 continue
 
-            if event.zone_id == zone_id and gap <= SAME_ZONE_WINDOW:
+            if event.zone_id == zone_id:
                 return event
         return None
 

@@ -206,6 +206,21 @@ SIGNAL_WORD = {
     "infra": "инфраструктура",
 }
 
+# Те же полосы, что в легенде карты: красное — борт видят (фиксация,
+# перехват, взрыв), оранжевое — тревога, жёлтое — опасность, зелёное —
+# отбой. Служебное (инфраструктура) — без цвета угрозы.
+SIGNAL_DOT = {
+    "detection": "🔴", "intercept": "🔴", "impact": "🔴",
+    "alarm": "🟠",
+    "danger": "🟡",
+    "allclear": "🟢",
+    "infra": "⚪",
+}
+
+
+def _dot(event: dict) -> str:
+    return SIGNAL_DOT.get(event.get("signal_type", ""), "⚪")
+
 THREAT_WORD = {
     "uav": "БПЛА", "fpv": "FPV", "rocket": "ракета",
     "kab": "КАБ", "bek": "БЭК", "aviation": "авиация",
@@ -264,7 +279,7 @@ def region_text(zone: sqlite3.Row) -> str:
                 f"нет.\n\nЧтобы получать уведомления: /watch {zone['name_ru']}")
     lines = [head, ""]
     for event in events[:LIST_LIMIT]:
-        lines.append("• " + _event_line(event))
+        lines.append(f"{_dot(event)} " + _event_line(event))
     if len(events) > LIST_LIMIT:
         lines.append(f"…и ещё {len(events) - LIST_LIMIT}")
     lines.append("")
@@ -500,7 +515,8 @@ def deliver_once(snapshot: dict) -> int:
                     continue
                 # Второй рубеж — сам текст: время события входит в строку,
                 # так что настоящий новый удар от повтора отличим.
-                head = "🟢 Отбой" if cleared else "🔴 По вашему месту"
+                head = ("🟢 Отбой" if cleared
+                        else f"{_dot(event)} По вашему месту")
                 text = f"{head}\n\n{_event_line(event)}"
                 line_key = "line:" + hashlib.sha1(text.encode()).hexdigest()
                 if connection.execute(
