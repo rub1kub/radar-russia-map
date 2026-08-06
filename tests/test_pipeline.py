@@ -1515,3 +1515,24 @@ def test_feature_named_after_head_is_not_a_village(geocoder):
     # Имя, за которым стоит собственная зона, — сосед, а не имя объекта.
     names = {z.name for z in geocoder.resolve(["Стрелка, Темрюкский район"])}
     assert "Стрелка" in names
+
+
+def test_found_debris_is_aftermath_not_impact():
+    """«Обнаружили обломки БПЛА» — хроника после факта, а не взрыв в эфире.
+
+    Борт мог упасть когда угодно раньше: находка поднимала взрыв/9 в
+    живом эфире, а подписчикам улетало «взрыв». Настоящее падение с
+    последствиями правило не трогает.
+    """
+    from pipeline.parse import parse
+
+    found = parse("В Прикубанском округе Краснодара обнаружили обломки БПЛА.\n\n"
+                  "Фрагменты беспилотника упали во дворе дома. "
+                  "Пострадавших и разрушений нет.")
+    assert not found.relevant
+
+    live = parse("Обломки БПЛА упали на территории предприятия, пострадали четверо")
+    assert live.relevant and live.signal_type == "impact"
+
+    damage = parse("Обнаружены обломки БПЛА, повреждена крыша дома")
+    assert damage.relevant and damage.signal_type == "impact"

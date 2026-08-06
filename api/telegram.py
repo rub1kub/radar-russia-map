@@ -23,6 +23,7 @@ iOS браузерные уведомления работают только д
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -47,6 +48,14 @@ TICK_SEC = 20
 # Сколько помним, что событие уже отправлено. Сутки с запасом перекрывают
 # время жизни события, а таблица не растёт бесконечно.
 SENT_TTL_SEC = 24 * 3600
+
+# Окно, в котором одинаковый ТЕКСТ уведомления не отправляется повторно.
+# Дедуп по id события не спасает, когда слияние раскололо одну волну на
+# два события в той же зоне: рестарт конвейера в разгар волны дал два
+# «взрыва» с разными id, и подписчик получил одно и то же дважды с
+# разницей в минуту. Полчаса — двойное окно слияния: настоящий второй
+# удар по тому же месту позже него уже различим временем в тексте.
+SAME_LINE_TTL_SEC = 30 * 60
 # Сколько мест показываем в ответе на команду.
 LIST_LIMIT = 8
 # Предел подписок на один чат: список должен помещаться в сообщение, а
@@ -484,17 +493,38 @@ def deliver_once(snapshot: dict) -> int:
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]
+                inserted = connection.execute(
+                    "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
+                    " VALUES (?,?,?)", (row["chat_id"], key, now)).rowcount
+                if not inserted:
+                    continue
+                # Второй рубеж — сам текст: время события входит в строку,
+                # так что настоящий новый удар от повтора отличим.
+                head = "🟢 Отбой" if cleared else "🔴 По вашему месту"
+                text = f"{head}\n\n{_event_line(event)}"
+                line_key = "line:" + hashlib.sha1(text.encode()).hexdigest()
                 if connection.execute(
-                        "SELECT 1 FROM tg_sent WHERE chat_id = ? AND event_key = ?",
-                        (row["chat_id"], key)).fetchone():
+                        "SELECT 1 FROM tg_sent WHERE chat_id = ? AND event_key = ?"
+                        " AND sent_at > ?",
+                        (row["chat_id"], line_key,
+                         now - SAME_LINE_TTL_SEC)).fetchone():
+                    connection.commit()
                     continue
                 connection.execute(
                     "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
-                    " VALUES (?,?,?)", (row["chat_id"], key, now))
-                head = "🟢 Отбой" if cleared else "🔴 По вашему месту"
-                send(int(row["chat_id"]),
-                     f"{head}\n\n{_event_line(event)}",
-                     open_map_button("Посмотреть на карте"))
+                    " VALUES (?,?,?)", (row["chat_id"], line_key, now))
+                # Отметка коммитится ДО отправки. Раньше коммит был один на
+                # всю пачку в конце: рестарт API между отправкой и коммитом
+                # терял отметки, и следующий такт рассылал всё то же самое
+                # ещё раз. Обратная цена — упади процесс в зазоре между
+                # коммитом и отправкой, уведомление пропадёт, — но дубль
+                # тревоги подрывает доверие сильнее, чем редкий пропуск.
+                connection.commit()
+                try:
+                    send(int(row["chat_id"]), text,
+                         open_map_button("Посмотреть на карте"))
+                except Exception:  # noqa: BLE001 — один чат не рушит рассылку
+                    continue
                 sent += 1
         connection.commit()
     return sent
