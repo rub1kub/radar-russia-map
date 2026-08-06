@@ -138,8 +138,13 @@ def send(chat_id: int, text: str, keyboard: dict | None = None) -> dict:
 
 
 def open_map_button(text: str = "Открыть карту") -> dict:
-    """Кнопка, открывающая мини-приложение прямо в Telegram."""
-    return {"inline_keyboard": [[{"text": text, "web_app": {"url": SITE}}]]}
+    """Кнопка с обычной ссылкой, а не web_app.
+
+    Кнопка web_app при пересылке сообщения пропадает — Telegram не даёт
+    чужим чатам открывать мини-приложение бота. Ссылка переживает репост,
+    а сайт в Telegram-браузере сам понимает, что открыт из мессенджера.
+    """
+    return {"inline_keyboard": [[{"text": text, "url": SITE}]]}
 
 
 # --- Поиск зоны по названию -------------------------------------------------

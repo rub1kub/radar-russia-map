@@ -1572,3 +1572,21 @@ def test_too_old_arrival_still_makes_its_own_event():
     add(fuser, 40, "a", signal="danger", severity=5)
     add(fuser, 10, "b", signal="danger", severity=5)  # старше окна жизни
     assert len(fuser.events) == 2
+
+
+def test_allclear_from_the_past_does_not_close_future_event():
+    """Опоздавший отбой не гасит событие, родившееся после него.
+
+    Каналы доставляются не в порядке публикации: отбой прежней волны
+    дошёл до слушателя после свежей «опасности» и закрыл её задним
+    числом — у события вышло resolved_at раньше first_seen, а подписчик
+    получил отбой опасности, которой не видел.
+    """
+    fuser = Fuser()
+    add(fuser, 5, "a", signal="danger", severity=5)
+    add(fuser, 3, "b", signal="allclear", severity=0)   # отбой из прошлого
+    assert fuser.events[0].resolved_at is None
+
+    # Настоящий отбой — после начала события — закрывает как раньше.
+    add(fuser, 7, "c", signal="allclear", severity=0)
+    assert fuser.events[0].resolved_at is not None

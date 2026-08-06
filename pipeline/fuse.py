@@ -221,6 +221,13 @@ class Fuser:
             for event in self._open:
                 if event.resolved_at:
                     continue
+                # Отбой закрывает только то, что началось до него. Каналы
+                # доставляются не в порядке публикации, и опоздавший отбой
+                # прежней волны закрывал событие, родившееся позже него:
+                # у события выходило resolved_at раньше first_seen, а
+                # подписчик получал отбой опасности, которой не видел.
+                if event.first_seen > moment:
+                    continue
                 if event.zone_id != zone_id and zone_id not in event.zone_path:
                     continue
                 # Отбой без названной угрозы снимает всё: «отбой всех ранее
