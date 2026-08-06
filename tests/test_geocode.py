@@ -401,6 +401,24 @@ def test_district_polygons_carry_their_region():
     assert not without, f"без региона: {len(without)} из {len(features)}"
 
 
+def test_polygons_carry_their_zone():
+    """Полигон без зоны — мёртвый полигон.
+
+    По полю zone карта красит регион при тревоге и открывает карточку по
+    клику. Поле дописывает справочник, а пересборка данных однажды его
+    снесла у всех 2416 районов: штамп протух от правки самого скрипта.
+    Теперь prepare-data переносит привязки из прошлого файла, и этот тест
+    сторожит результат.
+    """
+    import json
+    from pipeline.db import ROOT
+
+    for name in ("regions.json", "districts.json"):
+        features = json.loads((ROOT / "public" / "data" / name).read_text(encoding="utf-8"))["features"]
+        without = [f for f in features if not (f.get("properties") or {}).get("zone")]
+        assert not without, f"{name}: без зоны {len(without)} из {len(features)}"
+
+
 def test_short_city_names_resolve(geocoder):
     """Трёхбуквенные города не гибнут на страже длины.
 

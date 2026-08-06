@@ -75,8 +75,39 @@ rmSync(join(outData, "cities.json"), { force: true });
 rmSync(join(root, "public", "icons"), { force: true, recursive: true });
 
 const readJson = (path) => JSON.parse(readFileSync(join(root, path), "utf8"));
+
+// Полигон знает свою зону в справочнике: по полям zone и region карта
+// красит регион при тревоге в его районе и открывает карточку по клику.
+// Эти поля дописывает pipeline.gazetteer — здесь их неоткуда взять, и
+// перезапись файла их роняла. Штамп от этого не спасает: любая правка
+// самого скрипта его протухает, а следующая сборка выкладывает на карту
+// полигоны, ни к чему не привязанные.
+const KEPT_FACTS = ["zone", "region"];
+
+const keepFacts = (name, collection) => {
+  const path = join(outData, name);
+  if (!existsSync(path) || !Array.isArray(collection?.features)) return collection;
+  let known;
+  try {
+    known = new Map(JSON.parse(readFileSync(path, "utf8")).features
+      .map((feature) => [feature.properties?.id, feature.properties]));
+  } catch {
+    return collection;   // Битый прошлый файл — не повод терять новый.
+  }
+  for (const feature of collection.features) {
+    const previous = known.get(feature.properties?.id);
+    if (!previous) continue;
+    for (const field of KEPT_FACTS) {
+      if (previous[field] != null && feature.properties[field] == null) {
+        feature.properties[field] = previous[field];
+      }
+    }
+  }
+  return collection;
+};
+
 const writeJson = (name, data) => {
-  writeFileSync(join(outData, name), JSON.stringify(data));
+  writeFileSync(join(outData, name), JSON.stringify(keepFacts(name, data)));
 };
 
 const roundNumber = (value, precision) => {
