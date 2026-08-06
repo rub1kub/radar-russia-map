@@ -175,3 +175,53 @@ def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     ]})
     heads = [text.split()[0] for text in sent]
     assert heads == ["🔴", "🟠", "🟡", "🟢"]
+
+
+def test_init_data_signature_is_checked(monkeypatch):
+    """Журнал открытий верит только подписи Telegram, а не любому POST."""
+    import hashlib
+    import hmac as hmac_mod
+    from urllib.parse import urlencode
+
+    monkeypatch.setattr(telegram, "token", lambda: "12345:secret")
+    fields = {"user": '{"id": 7, "username": "u", "first_name": "n"}',
+              "auth_date": "1754500000"}
+    check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret = hmac_mod.new(b"WebAppData", b"12345:secret", hashlib.sha256).digest()
+    good_hash = hmac_mod.new(secret, check.encode(), hashlib.sha256).hexdigest()
+
+    signed = urlencode({**fields, "hash": good_hash})
+    assert telegram.validate_init_data(signed) is not None
+
+    forged = urlencode({**fields, "hash": "0" * 64})
+    assert telegram.validate_init_data(forged) is None
+    assert telegram.validate_init_data("") is None
+
+
+def test_commands_land_in_activity_log(tmp_path, monkeypatch):
+    """Каждая команда — строка в журнале, человек — в tg_chats с именем."""
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: None)
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "testbot")
+
+    monkeypatch.setattr(telegram, "find_zone", lambda query: None)
+    telegram.handle_text(5, "/status", {"username": "dmitry", "first_name": "Д"})
+    telegram.handle_text(5, "Курская область")
+
+    with telegram.closing(telegram._connect()) as connection:
+        kinds = [row["kind"] for row in
+                 connection.execute("SELECT kind FROM tg_activity ORDER BY at")]
+        chat = connection.execute(
+            "SELECT username, name FROM tg_chats WHERE chat_id = 5").fetchone()
+    assert kinds == ["/status", "text"]
+    assert chat["username"] == "dmitry" and chat["name"] == "Д"
+
+
+def test_map_button_is_a_tme_link(monkeypatch):
+    """Кнопка — ссылка t.me: переживает репост и открывает мини-приложение."""
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "tihoenebo_bot")
+    monkeypatch.setattr(telegram, "_username_cache", None)
+    button = telegram.open_map_button()["inline_keyboard"][0][0]
+    assert button["url"] == "https://t.me/tihoenebo_bot?startapp"
+    assert "web_app" not in button

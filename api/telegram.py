@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -75,7 +76,22 @@ CREATE TABLE IF NOT EXISTS tg_sent (
     sent_at   INTEGER NOT NULL,
     PRIMARY KEY (chat_id, event_key)
 );
+-- Журнал действий: кто написал команду, кто открыл карту из Telegram.
+-- Отдельно от tg_chats: чат хранит состояние, журнал хранит историю.
+CREATE TABLE IF NOT EXISTS tg_activity (
+    chat_id INTEGER NOT NULL,
+    kind    TEXT NOT NULL,
+    at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tg_activity_at ON tg_activity (at);
 """
+
+# Колонки, дописанные позже создания таблицы: CREATE IF NOT EXISTS старую
+# форму не меняет, поэтому доливаем через ALTER и глотаем «уже есть».
+SCHEMA_PATCHES = (
+    "ALTER TABLE tg_chats ADD COLUMN username TEXT",
+    "ALTER TABLE tg_chats ADD COLUMN name TEXT",
+)
 
 router = APIRouter(prefix="/api/v1/tg", tags=["telegram"])
 
@@ -107,6 +123,11 @@ def _connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.executescript(SCHEMA)
+    for patch in SCHEMA_PATCHES:
+        try:
+            connection.execute(patch)
+        except sqlite3.OperationalError:
+            pass  # колонка уже долита
     return connection
 
 
@@ -137,14 +158,33 @@ def send(chat_id: int, text: str, keyboard: dict | None = None) -> dict:
     return call("sendMessage", **payload)
 
 
-def open_map_button(text: str = "Открыть карту") -> dict:
-    """Кнопка с обычной ссылкой, а не web_app.
+_username_cache: str | None = None
 
-    Кнопка web_app при пересылке сообщения пропадает — Telegram не даёт
-    чужим чатам открывать мини-приложение бота. Ссылка переживает репост,
-    а сайт в Telegram-браузере сам понимает, что открыт из мессенджера.
+
+def bot_username() -> str | None:
+    """Имя бота для t.me-ссылок: из окружения или один раз через getMe."""
+    global _username_cache
+    if _username_cache is None:
+        _username_cache = os.environ.get("TELEGRAM_BOT_USERNAME", "").strip()
+        if not _username_cache and token():
+            result = call("getMe").get("result") or {}
+            _username_cache = result.get("username") or ""
+    return _username_cache or None
+
+
+def open_map_button(text: str = "Открыть карту") -> dict:
+    """Кнопка со ссылкой t.me — мини-приложение, переживающее репост.
+
+    Кнопка web_app при пересылке пропадает: Telegram не даёт чужим чатам
+    открывать мини-приложение бота напрямую. Ссылка t.me/бот?startapp
+    остаётся у репоста и открывает карту в самом Telegram, а при первом
+    открытии мессенджер спрашивает разрешение боту писать человеку.
+    Требует включённого Main Mini App у BotFather; без имени бота кнопка
+    ведёт на сайт.
     """
-    return {"inline_keyboard": [[{"text": text, "url": SITE}]]}
+    username = bot_username()
+    url = f"https://t.me/{username}?startapp" if username else SITE
+    return {"inline_keyboard": [[{"text": text, "url": url}]]}
 
 
 # --- Поиск зоны по названию -------------------------------------------------
@@ -318,13 +358,33 @@ def _zones_of(connection: sqlite3.Connection, chat_id: int) -> list[str]:
         return []
 
 
-def _touch(connection: sqlite3.Connection, chat_id: int) -> None:
+def _touch(connection: sqlite3.Connection, chat_id: int,
+           username: str | None = None, name: str | None = None) -> None:
     stamp = now_utc().isoformat()
     connection.execute(
-        """INSERT INTO tg_chats (chat_id, zones, created_at, last_seen)
-           VALUES (?, '[]', ?, ?)
-           ON CONFLICT(chat_id) DO UPDATE SET last_seen = excluded.last_seen""",
-        (chat_id, stamp, stamp))
+        """INSERT INTO tg_chats (chat_id, zones, created_at, last_seen, username, name)
+           VALUES (?, '[]', ?, ?, ?, ?)
+           ON CONFLICT(chat_id) DO UPDATE SET
+               last_seen = excluded.last_seen,
+               username  = COALESCE(excluded.username, tg_chats.username),
+               name      = COALESCE(excluded.name, tg_chats.name)""",
+        (chat_id, stamp, stamp, username, name))
+
+
+def record_activity(chat_id: int, kind: str,
+                    username: str | None = None, name: str | None = None) -> None:
+    """Каждое действие человека — строка в журнале.
+
+    Кто написал команду, кто открыл карту из Telegram: без журнала о
+    людях известно только «подписан / не подписан», а владельцу нужно
+    видеть, живёт ли бот вообще.
+    """
+    with closing(_connect()) as connection:
+        _touch(connection, chat_id, username, name)
+        connection.execute(
+            "INSERT INTO tg_activity (chat_id, kind, at) VALUES (?,?,?)",
+            (chat_id, kind, now_utc().isoformat()))
+        connection.commit()
 
 
 def watch(chat_id: int, zone_id: str) -> str:
@@ -374,13 +434,19 @@ def my_text(chat_id: int) -> str:
 
 # --- Разбор команд ----------------------------------------------------------
 
-def handle_text(chat_id: int, text: str) -> None:
+def handle_text(chat_id: int, text: str,
+                user: dict | None = None) -> None:
     raw = (text or "").strip()
     if not raw:
         return
     head, _, argument = raw.partition(" ")
     command = head.split("@")[0].lower()
     argument = argument.strip()
+
+    # Каждое обращение — в журнал: команду целиком, свободный текст — меткой.
+    record_activity(chat_id, command if command.startswith("/") else "text",
+                    (user or {}).get("username"),
+                    (user or {}).get("first_name"))
 
     if command in ("/start",):
         send(chat_id,
@@ -467,8 +533,52 @@ async def webhook(
     if chat_id and text:
         # Отвечаем в потоке: Bot API синхронный, а держать вебхук открытым
         # дольше нужного нельзя — Telegram повторит обновление.
-        await asyncio.to_thread(handle_text, int(chat_id), text)
+        await asyncio.to_thread(handle_text, int(chat_id), text,
+                                message.get("from") or {})
     return Response(status_code=200)
+
+
+def validate_init_data(init_data: str) -> dict | None:
+    """Подпись initData мини-приложения — по алгоритму Telegram.
+
+    Секрет — HMAC от токена бота с ключом «WebAppData»; им подписывается
+    отсортированная строка пар. Без проверки эндпоинт открыт всему
+    интернету, и журнал открытий можно было бы накрутить curl-ом.
+    """
+    if not init_data or not token():
+        return None
+    from urllib.parse import parse_qsl
+
+    fields = dict(parse_qsl(init_data, keep_blank_values=True))
+    their_hash = fields.pop("hash", "")
+    check = "\n".join(f"{key}={value}" for key, value in sorted(fields.items()))
+    secret = hmac.new(b"WebAppData", token().encode(), hashlib.sha256).digest()
+    ours = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not their_hash or not hmac.compare_digest(ours, their_hash):
+        return None
+    return fields
+
+
+@router.post("/opened")
+async def map_opened(request: Request) -> dict:
+    """Карта открыта из Telegram — записываем, кто пришёл."""
+    try:
+        payload = await request.json()
+    except ValueError:
+        return {"ok": False}
+    fields = validate_init_data(str(payload.get("init_data") or ""))
+    if fields is None:
+        return {"ok": False}
+    try:
+        user = json.loads(fields.get("user") or "{}")
+    except ValueError:
+        user = {}
+    if not user.get("id"):
+        return {"ok": False}
+    await asyncio.to_thread(
+        record_activity, int(user["id"]), "open_map",
+        user.get("username"), user.get("first_name"))
+    return {"ok": True}
 
 
 @router.get("/health")

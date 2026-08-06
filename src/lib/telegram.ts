@@ -22,6 +22,7 @@
 type TelegramWebApp = {
   platform?: string;
   initData?: string;
+  initDataUnsafe?: { user?: { allows_write_to_pm?: boolean } };
   version?: string;
   ready: () => void;
   expand: () => void;
@@ -33,6 +34,7 @@ type TelegramWebApp = {
   setBottomBarColor?: (color: string) => void;
   disableVerticalSwipes?: () => void;
   requestFullscreen?: () => void;
+  requestWriteAccess?: (callback?: (granted: boolean) => void) => void;
   onEvent?: (event: string, handler: () => void) => void;
 };
 
@@ -104,4 +106,29 @@ export function setupTelegram(): void {
 
   // Класс включает отступ под панель Telegram и правила поведения жестов.
   document.documentElement.classList.add("in-telegram");
+
+  // Открытие карты — в журнал бота: подписанные данные проверяет сервер,
+  // самим им верить нельзя. Ошибка сети здесь никого не касается.
+  if (app.initData) {
+    import("./api")
+      .then(({ API_BASE }) =>
+        fetch(`${API_BASE}/api/v1/tg/opened`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ init_data: app.initData })
+        }))
+      .catch(() => undefined);
+  }
+
+  // Право писать человеку: без него бот не может прислать уведомление
+  // тому, кто пришёл по ссылке, но ни разу не написал в чат. Telegram
+  // помнит выданное разрешение, поэтому спрашиваем только тех, у кого
+  // его ещё нет.
+  if (app.initDataUnsafe?.user?.allows_write_to_pm === false) {
+    try {
+      app.requestWriteAccess?.(() => undefined);
+    } catch {
+      // Старый клиент без метода — просто живём дальше.
+    }
+  }
 }
