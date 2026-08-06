@@ -1536,3 +1536,12 @@ def test_found_debris_is_aftermath_not_impact():
 
     damage = parse("Обнаружены обломки БПЛА, повреждена крыша дома")
     assert damage.relevant and damage.signal_type == "impact"
+
+    # Та же хроника глаголом падения: оперштаб всегда говорит после факта.
+    fell = parse("В Прикубанском округе упали фрагменты беспилотника во дворе "
+                 "дома, пострадавших и разрушений нет, сообщил краевой оперштаб")
+    assert not fell.relevant
+
+    # А падение без «последствий нет» — событие: о нём ещё ничего не ясно.
+    fresh = parse("Обломки БПЛА упали на жилой дом, возгорание")
+    assert fresh.relevant and fresh.signal_type == "impact"
