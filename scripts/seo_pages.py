@@ -25,6 +25,7 @@ import json
 import re
 import sqlite3
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -370,6 +371,48 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
 """
 
 
+def fill_prerender(named: list, stats: dict, updated: str) -> bool:
+    """Вписать в главную то, что робот без JavaScript иначе не увидит.
+
+    SPA для поисковика — пустой div: разметка ld+json есть, а текста и
+    внутренних ссылок нет. Блок между маркерами в dist/index.html живёт
+    до монтирования React и виден роботу: сводка за окно и ссылки на
+    все посадочные регионов. Сами маркеры лежат в index.html репозитория.
+    """
+    index = OUT / "index.html"
+    if not index.exists():
+        return False
+    html = index.read_text(encoding="utf-8")
+    start, end = "<!-- prerender:start -->", "<!-- prerender:end -->"
+    if start not in html or end not in html:
+        print("пререндер: маркеров в dist/index.html нет — блок не вписан")
+        return False
+
+    active = sum(1 for _, _, _, zone in named if stats.get(zone))
+    total = sum(entry["events"] for entry in stats.values())
+    lines = [
+        f'<p style="margin:18px 0 6px;color:#9da8a0">За последнюю неделю — '
+        f'{total} событий в {active} регионах. Обновлено {escape(updated)}.</p>',
+        '<nav aria-label="Регионы"><h2 style="margin:18px 0 8px;font-size:16px">'
+        'Обстановка по регионам</h2>',
+        '<ul style="margin:0;padding:0;list-style:none;display:flex;'
+        'flex-wrap:wrap;gap:6px 14px;max-width:900px">',
+    ]
+    for name, slug, _, zone in named:
+        count = stats.get(zone, {}).get("events", 0)
+        suffix = f" · {count}" if count else ""
+        lines.append(
+            f'<li><a href="/region/{slug}/" style="color:#9da8a0">'
+            f'{escape(name)}{suffix}</a></li>')
+    lines.append("</ul></nav>")
+
+    head, _, rest = html.partition(start)
+    _, _, tail = rest.partition(end)
+    index.write_text(head + start + "\n" + "\n".join(lines) + "\n" + end + tail,
+                     encoding="utf-8")
+    return True
+
+
 def ping_indexnow(urls: list[str], key: str) -> None:
     """Позвать роботов Яндекса и Bing сразу, не дожидаясь обхода.
 
@@ -388,14 +431,23 @@ def ping_indexnow(urls: list[str], key: str) -> None:
         data=payload,
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            print(f"IndexNow: {response.status}")
-    except urllib.error.HTTPError as error:
-        # Отказ робота — не повод ронять сборку: страницы уже на месте.
-        print(f"IndexNow отказал: {error.code}")
-    except OSError as error:
-        print(f"IndexNow недоступен: {error}")
+    # До трёх попыток: рукопожатие с yandex.com временами не укладывается
+    # в таймаут, а со второго раза проходит сразу. Повторяется только
+    # сетевая ошибка — отказ робота повторять бессмысленно.
+    for attempt in (1, 2, 3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                print(f"IndexNow: {response.status}")
+            return
+        except urllib.error.HTTPError as error:
+            # Отказ робота — не повод ронять сборку: страницы уже на месте.
+            print(f"IndexNow отказал: {error.code}")
+            return
+        except OSError as error:
+            if attempt == 3:
+                print(f"IndexNow недоступен: {error}")
+                return
+            time.sleep(5)
 
 
 def main() -> int:
@@ -447,8 +499,10 @@ def main() -> int:
         f"{entries}\n</urlset>\n", encoding="utf-8")
 
     with_data = sum(1 for _, _, _, zone in named if stats.get(zone))
+    filled = fill_prerender(named, stats, updated)
     print(f"SEO: страниц {len(named)}, со сводкой {with_data}, "
-          f"в sitemap {len(urls)} адресов")
+          f"в sitemap {len(urls)} адресов"
+          + (", пререндер главной обновлён" if filled else ""))
 
     if "--ping" in sys.argv:
         keys = [path for path in OUT.glob("*.txt") if path.stem.isalnum()
