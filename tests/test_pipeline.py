@@ -1654,3 +1654,28 @@ def test_airport_clear_is_targeted():
     add(fuser2, 0, "a", signal="infra", severity=2, threat="infra")
     add(fuser2, 1, "b", signal="allclear", severity=0, threat="unknown")
     assert fuser2.events[0].resolved_at is None
+
+
+def test_infra_does_not_bridge_via_unknown():
+    """«unknown» не мостит infra с чем угодно несвязанным.
+
+    Аэропорт закрылся без названной причины (threat=infra), следом
+    пришло «Приготовиться к фиксациям» — реальная тревога без слова
+    «БПЛА» (threat=unknown). Раньше unknown служил мостиком между любыми
+    угрозами, и второе наблюдение сливалось в закрытие аэропорта,
+    наследуя ложную метку «infra» вместо настоящей тревоги.
+    """
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="infra", threat="infra", severity=2)
+    add(fuser, 2, "b", signal="alarm", threat="unknown", severity=7)
+    assert len(fuser.events) == 2, "несвязанные события слились в одно"
+    kinds = {(e.signal_type, e.threat_type) for e in fuser.events}
+    assert ("infra", "infra") in kinds
+    assert ("alarm", "unknown") in kinds
+
+    # А для обычных угроз unknown по-прежнему мостит: «работа ПВО» без
+    # слова «БПЛА» подряд за детекцией остаётся тем же событием.
+    fuser2 = Fuser()
+    add(fuser2, 0, "a", signal="detection", threat="uav", severity=8)
+    add(fuser2, 2, "b", signal="intercept", threat="unknown", severity=8)
+    assert len(fuser2.events) == 1

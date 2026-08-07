@@ -175,8 +175,18 @@ class Fuser:
         for event in reversed(self._open):
             if event.resolved_at:
                 continue
-            if event.threat_type != threat and "unknown" not in (event.threat_type, threat):
-                continue
+            if event.threat_type != threat:
+                # «unknown» — мостик между разными формулировками одной и
+                # той же угрозы («сбит» вслед за «работа ПВО» без слова
+                # «БПЛА»). Для infra он не работает: этот тип угрозы сам
+                # проставляется, только когда текст угрозу НЕ назвал —
+                # мостик пускал бы через него любое несвязанное «unknown»
+                # наблюдение, и «Приготовиться к фиксациям» без слова
+                # «БПЛА» подряд с закрытием аэропорта сливалось в одно
+                # событие, наследуя ложную метку «аэропорт».
+                bridge = "unknown" in (event.threat_type, threat)
+                if not bridge or "infra" in (event.threat_type, threat):
+                    continue
 
             # Наблюдение может прийти к слушателю позже более свежих: каналы
             # доставляются не в порядке публикации, и опоздание бывает больше
