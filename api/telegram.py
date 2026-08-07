@@ -269,6 +269,7 @@ def _dot(event: dict) -> str:
 THREAT_WORD = {
     "uav": "БПЛА", "fpv": "FPV", "rocket": "ракета",
     "kab": "КАБ", "bek": "БЭК", "aviation": "авиация",
+    # infra намеренно без слова: сигнал «инфраструктура» уже сказал всё.
 }
 
 

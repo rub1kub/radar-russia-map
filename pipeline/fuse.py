@@ -234,6 +234,11 @@ class Fuser:
                 # объявленных», «отбой тревоги».
                 if cleared != "unknown" and event.threat_type not in (cleared, "unknown"):
                     continue
+                # Инфраструктура — отдельная пара «закрыто — открыто».
+                # «Отбой тревоги» аэропорт не открывает, а «сняты
+                # ограничения» не гасят дроновую тревогу по городу.
+                if (event.threat_type == "infra") != (cleared == "infra"):
+                    continue
                 event.resolved_at = moment
                 event.last_seen = max(event.last_seen, moment)
                 event.contributions.append((raw_id, source_key, "resolve", moment))

@@ -2903,7 +2903,20 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
  * уходит всё содержимое разом.
  */
 @media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
-  .in-telegram .topbar { padding-top: var(--tg-top); }
+  /* Счётчики встают в один ряд с кнопками самого Telegram — ровно по
+     центру между «Закрыть» слева и управлением справа. Вертикальный
+     центр — середина полосы кнопок: системная зона плюс половина
+     контентной. Запас 30px — для клиентов без переменных. */
+  .in-telegram .topbar { padding-top: 0; }
+  .in-telegram .topbar-stats {
+    position: fixed;
+    left: 50%;
+    top: max(30px, calc(var(--tg-safe-area-inset-top, 0px)
+        + var(--tg-content-safe-area-inset-top, 46px) / 2));
+    transform: translate(-50%, -50%);
+    margin: 0;
+    z-index: 6;
+  }
   .in-telegram .sidebar,
   .in-telegram .details-panel,
   .in-telegram .analytics-card,

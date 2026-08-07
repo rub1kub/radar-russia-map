@@ -121,6 +121,16 @@ SOURCES: list[Source] = [
     Source("radar_voron", "radar_voron", "Радар Воронежский", "regional", 13882, region="voronezh", network=None),
     Source("radar_alertss", "radar_alertss", "ЧП ВОРОНЕЖ НОВОСТИ", "regional", 2415, region="voronezh", network=None),
 
+    # --- Аэропорты, 07.08.2026 ----------------------------------------
+    # «Говорит Росавиация»: единственный первоисточник ограничений на
+    # приём и выпуск — все прочие пересказывают его. Формат стабильный:
+    # «Аэропорт X. ВВЕДЕНЫ/СНЯТЫ временные ограничения…»
+    Source("favt_info", "favt_info", "Говорит Росавиация", "official", 137_000, region="other", network=None),
+    # Канал, добавленный владельцем по идентификатору: имени на момент
+    # добавления нет, poll ходит по chat_id (см. seed в poll_state).
+    # Название и tier уточнить после первого опроса.
+    Source("ch1938794947", "c1938794947", "Канал 1938794947 (уточняется)", "mixed", 0, region="other", network=None),
+
     # --- Официальные ленты и вторая волна радаров, 27.07.2026 ---------
     Source("mchs31", "mchs31", "МЧС Белгородской области", "official", 18925, region="belgorod", network=None),
     Source("operativno31", "operativno31", "Оперштаб Белгородской области", "official", 14959, region="belgorod", network=None),

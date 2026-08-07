@@ -1590,3 +1590,40 @@ def test_allclear_from_the_past_does_not_close_future_event():
     # Настоящий отбой — после начала события — закрывает как раньше.
     add(fuser, 7, "c", signal="allclear", severity=0)
     assert fuser.events[0].resolved_at is not None
+
+
+# --- Аэропорты: пара «закрыто — открыто» ------------------------------------
+
+def test_airport_closure_and_reopening_pair():
+    """«ВВЕДЕНЫ ограничения» и «СНЯТЫ ограничения» — событие и его отбой.
+
+    Формулировки Росавиации. У пары собственный тип угрозы infra: снятие
+    ограничений не гасит дроновую тревогу по городу, а «отбой БПЛА» не
+    открывает аэропорт.
+    """
+    from pipeline.parse import parse
+
+    closed = parse("Аэропорт Краснодар (Пашковский). ВВЕДЕНЫ временные "
+                   "ограничения на прием и выпуск воздушных судов.")
+    assert (closed.signal_type, closed.threat_type) == ("infra", "infra")
+
+    opened = parse("Аэропорт Краснодар (Пашковский). СНЯТЫ временные "
+                   "ограничения на прием и выпуск воздушных судов.")
+    assert (opened.signal_type, opened.threat_type) == ("allclear", "infra")
+
+
+def test_airport_clear_is_targeted():
+    """Снятие ограничений закрывает аэропорт, но не дроновую тревогу."""
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="alarm", severity=7, threat="uav")
+    add(fuser, 1, "b", signal="infra", severity=2, threat="infra")
+    add(fuser, 2, "c", signal="allclear", severity=0, threat="infra")
+    events = {e.threat_type: e for e in fuser.events}
+    assert events["infra"].resolved_at is not None, "аэропорт не открылся"
+    assert events["uav"].resolved_at is None, "снятие ограничений погасило тревогу"
+
+    # И наоборот: «отбой» без слова про аэропорт его не открывает.
+    fuser2 = Fuser()
+    add(fuser2, 0, "a", signal="infra", severity=2, threat="infra")
+    add(fuser2, 1, "b", signal="allclear", severity=0, threat="unknown")
+    assert fuser2.events[0].resolved_at is None
