@@ -1612,6 +1612,33 @@ def test_airport_closure_and_reopening_pair():
     assert (opened.signal_type, opened.threat_type) == ("allclear", "infra")
 
 
+def test_airport_mention_does_not_erase_known_threat():
+    """«Повышенная бдительность по БПЛА, введены ограничения в аэропорту» —
+    угроза названа текстом, затирать её нельзя.
+
+    Перезапись threat_type на infra стирала «uav», найденный тем же
+    текстом. Следующее сообщение — настоящая тревога без слова «БПЛА» —
+    наследовало «infra» и теряло тип угрозы: событие показывало пустую
+    подпись угрозы вместо «БПЛА».
+    """
+    from pipeline.parse import parse
+
+    mixed = parse("г. Чебоксары - повышенная бдительность по БПЛА.\n\n"
+                  "Введены временные ограничения в аэропорту «Чебоксары».")
+    assert (mixed.signal_type, mixed.threat_type) == ("infra", "uav")
+
+    bare = parse("🚨 ВНИМАНИЕ ВСЕМ! Объявлена «ВОЗДУШНАЯ ТРЕВОГА» "
+                 "на территории города Чебоксары!")
+    assert (bare.signal_type, bare.threat_type) == ("alarm", "unknown")
+
+    fuser = Fuser()
+    add(fuser, 0, "a", signal=mixed.signal_type, threat=mixed.threat_type, severity=mixed.severity)
+    add(fuser, 2, "b", signal=bare.signal_type, threat=bare.threat_type, severity=bare.severity)
+    assert len(fuser.events) == 1
+    assert fuser.events[0].signal_type == "alarm"
+    assert fuser.events[0].threat_type == "uav", "тип угрозы потерян при слиянии"
+
+
 def test_airport_clear_is_targeted():
     """Снятие ограничений закрывает аэропорт, но не дроновую тревогу."""
     fuser = Fuser()
