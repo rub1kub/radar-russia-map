@@ -1707,3 +1707,34 @@ def test_city_district_aliases_resolve_to_their_city(geocoder):
 
     kirovsky = geocoder.resolve(candidate_phrases("Кировский район Приморского края"))
     assert any("Кировский район" == z.name for z in kirovsky)
+
+
+# --- Аудит алертов 8 августа: ложные срабатывания -----------------------------
+
+def test_alert_audit_false_positives(geocoder):
+    """Четыре класса ложных из живого аудита за два дня.
+
+    Каждый случай — реальное сообщение из корпуса, дававшее событие не
+    там или не тем классом.
+    """
+    from pipeline.parse import parse, candidate_phrases
+
+    # «Московская трасса» — дорога в Крыму, не Московская область.
+    road = geocoder.resolve(candidate_phrases(
+        "По Московской трассе от Гвардейское на Симферополь от 5 штук"))
+    assert "Московская область" not in [z.name for z in road]
+
+    # «Готовит запуски» — намерение, борт ещё на земле.
+    intent = parse("Противник готовит запуски БПЛА от Николаевской области")
+    assert (intent.signal_type, intent.severity) == ("danger", 5)
+
+    # Турция — не наша карта: новость о проливах не «фиксация».
+    news = parse("Турция закрывает проход судов в Черное море "
+                 "из-за атак БПЛА украины.")
+    assert not news.relevant
+
+    # «Ильский НПЗ» — имя завода по посёлку, гасить его нельзя.
+    # (Сам Ильский в справочнике пока отсутствует — дыра GeoNames, — но
+    # «Афипский НПЗ» на месте и обязан находить свой посёлок.)
+    npz = geocoder.resolve(candidate_phrases("Афипский НПЗ атакован БПЛА"))
+    assert [z.name for z in npz] == ["Афипский"]
