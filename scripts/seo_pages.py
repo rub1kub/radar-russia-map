@@ -45,6 +45,8 @@ DATA = ROOT / "public" / "data"
 
 # Окно сводки. Месяц — чтобы попадали и тихие регионы: за неделю у половины
 # субъектов нет ничего, и страница снова стала бы пустым шаблоном.
+# Сколько последних событий показывает посадочная страница.
+RECENT_EVENTS = 6
 WINDOW = timedelta(days=30)
 TOP_DISTRICTS = 6
 # Сколько соседей по алфавиту показать в перелинковке. Робот ходит по
@@ -53,6 +55,21 @@ NEIGHBOURS = 6
 
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря")
+
+# Подпись одного события в списке последних (единственное число).
+SIGNAL_ONE = {
+    "detection": "фиксация борта",
+    "intercept": "перехват",
+    "impact": "взрыв",
+    "alarm": "тревога",
+    "danger": "опасность",
+    "allclear": "отбой",
+    "infra": "инфраструктура",
+}
+THREAT_ONE = {
+    "uav": "БПЛА", "fpv": "FPV", "rocket": "ракета",
+    "kab": "КАБ", "bek": "БЭК", "aviation": "авиация",
+}
 
 SIGNAL_WORDS = {
     "detection": "фиксации бортов",
@@ -171,7 +188,7 @@ def collect_stats(connection: sqlite3.Connection) -> dict[str, dict]:
         entry = stats.setdefault(region_id, {
             "events": 0, "days": set(), "last": None,
             "districts": Counter(), "signals": Counter(),
-            "threats": Counter(), "hours": Counter(),
+            "threats": Counter(), "hours": Counter(), "recent": [],
         })
         entry["events"] += 1
         stamp = datetime.fromisoformat(row["first_seen_at"]).astimezone(MSK)
@@ -187,6 +204,13 @@ def collect_stats(connection: sqlite3.Connection) -> dict[str, dict]:
         # странице Ростовской области — не информация.
         if row["level"] in ("district", "place") and row["name_ru"]:
             entry["districts"][row["name_ru"]] += 1
+        entry["recent"].append(
+            (row["first_seen_at"], row["name_ru"] or "", row["signal_type"],
+             row["threat_type"] or "unknown"))
+    # Свежие сверху; страница показывает несколько последних — это и есть
+    # то, что отличает её от вчерашней копии и от соседнего региона.
+    for entry in stats.values():
+        entry["recent"] = sorted(entry["recent"], reverse=True)[:RECENT_EVENTS]
     return stats
 
 
@@ -261,6 +285,89 @@ def summary_block(name: str, stats: dict | None) -> str:
     return "\n".join(parts)
 
 
+def recent_block(name: str, stats: dict | None) -> str:
+    """Последние события текстом — то, чего нет на вчерашней копии страницы.
+
+    Список обновляется каждые шесть часов вместе со сводкой; для поисковика
+    это живой уникальный контент, для человека — ответ «а что было
+    последним» без открытия карты.
+    """
+    if not stats or not stats.get("recent"):
+        return ""
+    items = []
+    previous = None
+    for iso, place, signal, threat in stats["recent"]:
+        # Имя самого региона в его же списке — не информация; подряд
+        # идущие одинаковые строки не добавляют ничего, кроме длины.
+        if place == name:
+            place = ""
+        if (place, signal, threat) == previous:
+            continue
+        previous = (place, signal, threat)
+        what = SIGNAL_ONE.get(signal, signal)
+        if signal == "infra" and threat == "airport":
+            what = "аэропорт закрыт"
+        elif signal == "allclear" and threat == "airport":
+            what = "аэропорт открыт"
+        tail = (f" · {THREAT_ONE[threat]}"
+                if threat in THREAT_ONE else "")
+        where = f"{escape(place)} — " if place else ""
+        stamp = datetime.fromisoformat(iso).astimezone(MSK)
+        items.append(
+            f'<li><time datetime="{escape(iso)}">{moment(iso)}</time>: '
+            f"{where}{escape(what)}{tail}</li>")
+    return ("<h2>Последние события</h2>"
+            '      <ul class="tops">' + "".join(items) + "</ul>")
+
+
+def faq_block(name: str, stats: dict | None) -> tuple[str, str]:
+    """FAQ с цифрами самого региона — и HTML, и разметка FAQPage.
+
+    Ответы собираются из сводки, а не из шаблона: три страницы с дословно
+    одинаковым FAQ поисковик склеит, а с разными числами — нет.
+    """
+    where = f"{preposition(name)} {inflect(name)}"
+    if stats and stats["events"]:
+        count = stats["events"]
+        activity = (f"За последние 30 дней карта отметила {where} {count} "
+                    f"{plural(count, 'событие', 'события', 'событий')}, "
+                    f"последнее — {moment(stats['last'])} по Москве.")
+        window = busiest_window(stats["hours"])
+        if window:
+            activity += f" Чаще всего сообщения приходят {window}."
+    else:
+        activity = (f"За последние 30 дней сообщений об опасности {where} "
+                    f"в отслеживаемых каналах не было.")
+    qa = [
+        (f"Что сейчас происходит {where}?",
+         activity + " Текущую минуту показывает живая карта — кнопка выше."),
+        ("Откуда данные и можно ли им верить?",
+         "Карта собирает открытые Telegram-каналы мониторинга и официальные "
+         "ленты (МЧС, РСЧС, оперштабы, Росавиация). У каждого события видно, "
+         "сколько независимых источников его подтвердили, и открывается "
+         "первоисточник. Карта неофициальная: она может опаздывать и "
+         "ошибаться, при опасности следуйте указаниям экстренных служб."),
+        ("Как получать уведомления о тревогах по своему месту?",
+         "На карте выберите район и нажмите колокольчик — уведомления будут "
+         "приходить в браузер даже при закрытой вкладке. В Telegram то же "
+         "самое делает бот: команда /watch с названием места."),
+    ]
+    html = ["<h2>Вопросы и ответы</h2>"]
+    for question, answer in qa:
+        html.append(f"      <h3>{escape(question)}</h3> "
+                    f"<p>{escape(answer)}</p>")
+    ld = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {"@type": "Question", "name": question,
+             "acceptedAnswer": {"@type": "Answer", "text": answer}}
+            for question, answer in qa
+        ],
+    }, ensure_ascii=False)
+    return " ".join(html), ld
+
+
 def page(name: str, slug: str, districts: list[str], stats: dict | None,
          neighbours: list[tuple[str, str]], updated: str) -> str:
     where = f"{preposition(name)} {inflect(name)}"
@@ -291,6 +398,8 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         f'<li><a href="/region/{other_slug}/">{escape(other_name)}</a></li>'
         for other_name, other_slug in neighbours)
 
+    faq_html, faq_ld = faq_block(name, stats)
+
     return f"""<!doctype html>
 <html lang="ru">
   <head>
@@ -312,12 +421,22 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         {{"@type":"ListItem","position":1,"name":"Карта обстановки","item":"{SITE}/"}},
         {{"@type":"ListItem","position":2,"name":{json.dumps(name, ensure_ascii=False)},"item":"{url}"}}]}}
     </script>
+    <script type="application/ld+json">
+      {{"@context":"https://schema.org","@type":"WebPage","url":"{url}",
+        "name":{json.dumps(title, ensure_ascii=False)},
+        "about":{{"@type":"Place","name":{json.dumps(name, ensure_ascii=False)},
+                 "containedInPlace":{{"@type":"Country","name":"Россия"}}}},
+        "isPartOf":{{"@type":"WebSite","name":"Тихое небо","url":"{SITE}/"}}}}
+    </script>
+    <script type="application/ld+json">{faq_ld}</script>
     <style>
       body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
              font:16px/1.6 Inter, system-ui, -apple-system, sans-serif; }}
       main {{ max-width:760px; margin:0 auto; padding:40px 20px 80px; }}
       h1 {{ font-size:29px; line-height:1.25; margin:0 0 14px; }}
       h2 {{ font-size:19px; margin:34px 0 10px; color:#eef2ec; }}
+      h3 {{ font-size:15px; margin:20px 0 6px; color:#dfe6df; }}
+      time {{ color:#dfe6df; }}
       p {{ color:#aab4ad; }}
       strong {{ color:#e6ebe6; }}
       nav.crumbs {{ font-size:13px; color:#7d8a83; margin:0 0 18px; }}
@@ -345,6 +464,8 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
 
       {summary_block(name, stats)}
 
+      {recent_block(name, stats)}
+
       <h2>Что показывает карта</h2>
       <p>
         Тревоги, предупреждения об опасности и отбои — так, как о них
@@ -354,6 +475,8 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
       </p>
 
       {district_list}
+
+      {faq_html}
 
       <h2>Соседние регионы</h2>
       <ul class="around">{neighbour_list}</ul>
