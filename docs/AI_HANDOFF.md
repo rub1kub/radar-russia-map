@@ -542,6 +542,28 @@ ssh root@144.31.30.62 'systemctl stop tihoenebo-pipeline
 Перед рискованной правкой имеет смысл скопировать базу — бэкапы уже не
 раз спасали при откате.
 
+После простоя хоста обычный `poll.py` читает историю каждого известного
+канала до сохранённого `message_id`, без фиксированного окна: часовой разрыв
+не должен терять сообщения. Для аудита или ручной догрузки есть
+`ingest/backfill.py`. Запускать его можно **только на production**, где лежит
+единственная Telegram-сессия, и только при остановленном сборщике:
+
+```bash
+systemctl stop tihoenebo-poll tihoenebo-pipeline
+cd /opt/tihoenebo
+PYTHONPATH=/opt/tihoenebo:/opt/tihoenebo/ingest \
+  ./.venv/bin/python ingest/backfill.py \
+    --since 2026-08-07T23:55:00+00:00 \
+    --until 2026-08-08T00:47:21+00:00
+# После проверки dry-run повторить с --apply, затем вернуть оба сервиса.
+systemctl start tihoenebo-poll tihoenebo-pipeline
+```
+
+Перед `--apply` обязателен SQLite online-backup и `PRAGMA integrity_check`.
+Команда идемпотентна по `UNIQUE(source_key, message_id)` и не двигает
+`poll_state`; после запуска сервис сам добирает публикации, появившиеся во
+время обслуживания.
+
 Для точечных правок справочника зон (не всего конвейера) —
 `scripts/add_sea_zones.py` как образец: добавляет данные, не трогая
 существующие `zones`/`events` через `DELETE FROM zones` (упёрлось бы во

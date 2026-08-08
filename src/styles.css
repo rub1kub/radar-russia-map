@@ -271,6 +271,33 @@ button {
   gap: 8px;
 }
 
+/* Выбор подложки — сегменты в одну строку над чекбоксами слоёв. */
+.basemap-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.basemap-switch button {
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.basemap-switch button.is-active {
+  background: rgba(242, 183, 101, 0.16);
+  color: var(--accent);
+}
+
 .layer-list label {
   display: flex;
   align-items: center;

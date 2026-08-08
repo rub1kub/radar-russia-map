@@ -29,8 +29,10 @@ from pipeline.timeutil import now_utc, utc_iso
 
 # Сколько сообщений тянуть при первом знакомстве с каналом.
 FIRST_RUN_LIMIT = 40
-# Дальше хватает небольшого окна: за интервал опроса больше и не набегает.
-CATCH_UP_LIMIT = 60
+# После первого знакомства читаем историю до сохранённого message_id. Нулевой
+# limit у Pyrogram означает «без лимита»; цикл ниже сам остановится на seen.
+# Фиксированное окно теряло старую часть сообщений после долгого простоя.
+CATCH_UP_LIMIT = 0
 
 
 def ensure_state(connection) -> None:
@@ -99,10 +101,10 @@ async def fetch(client, source, peer, seen, limit) -> tuple[list[tuple], int]:
     async for message in client.get_chat_history(peer, limit=limit):
         if message.id <= seen:
             break
+        highest = max(highest, message.id)
         text = message.text or message.caption or ""
         if not text.strip():
             continue
-        highest = max(highest, message.id)
         rows.append((
             source.key, message.chat.id, message.id,
             utc_iso(message.date) if message.date else now_utc().isoformat(),

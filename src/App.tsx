@@ -94,6 +94,7 @@ type GeoJsonFeatureCollection = {
 type Dataset = {
   regions: GeoJsonFeatureCollection;
   districts: GeoJsonFeatureCollection;
+  featuredPlaces: GeoJsonFeatureCollection;
 };
 
 type SelectedObject = {
@@ -130,9 +131,63 @@ const DISTRICTS_ZOOM = 5.0;
 const ROADS_ZOOM = 4.65;
 const RAILWAYS_ZOOM = 4.8;
 const DISTRICT_SELECTION_ZOOM = 5.4;
+const FEATURED_PLACES_ZOOM = 7.1;
+const FEATURED_PLACE_LABEL_ZOOM = 7.75;
 const BASEMAP_URL =
   import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
 const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© OpenStreetMap contributors, © CARTO";
+
+// Подложки на выбор. Тёмная — родная и остаётся по умолчанию: весь
+// интерфейс построен под неё. Светлая привычнее людям с бумажных карт,
+// спутник отвечает на «а что там вообще на местности». Контуры зон
+// читаются на всех трёх: у границ двойной штрих — светлый ореол плюс
+// тёмное ядро, — он и был выбран ради независимости от фона.
+type BasemapScheme = "dark" | "light" | "satellite";
+const BASEMAP_SCHEMES: Record<
+  BasemapScheme,
+  { label: string; url: string; attributions: string; maxZoom: number;
+    hillshade: boolean; opacity: number }
+> = {
+  dark: {
+    label: "Тёмная",
+    url: BASEMAP_URL,
+    attributions: BASEMAP_ATTRIBUTION,
+    maxZoom: 20,
+    hillshade: true,
+    // Слегка притушена нарочно: фон не должен спорить с событиями.
+    opacity: 0.9
+  },
+  light: {
+    label: "Светлая",
+    url: "https://{a-d}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    attributions: BASEMAP_ATTRIBUTION,
+    maxZoom: 20,
+    hillshade: true,
+    // Полная: под ней чёрный фон приложения, и 0.9 превращали
+    // светлую подложку в серую дымку.
+    opacity: 1
+  },
+  satellite: {
+    label: "Спутник",
+    // Снимки уже несут рельеф — подмешивать hillshade поверх незачем.
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attributions: "© Esri, Maxar, Earthstar Geographics",
+    maxZoom: 19,
+    hillshade: false,
+    opacity: 1
+  }
+};
+const BASEMAP_STORE_KEY = "radar.basemap";
+
+function loadBasemapScheme(): BasemapScheme {
+  try {
+    const saved = localStorage.getItem(BASEMAP_STORE_KEY);
+    if (saved === "light" || saved === "satellite") return saved;
+  } catch {
+    // Приватный режим без localStorage — просто тёмная.
+  }
+  return "dark";
+}
 const HILLSHADE_URL =
   import.meta.env.VITE_HILLSHADE_URL || "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}";
 const HILLSHADE_ATTRIBUTION = import.meta.env.VITE_HILLSHADE_ATTRIBUTION || "Tiles © Esri";
@@ -210,17 +265,21 @@ function selectedFromFeature(feature: FeatureLike): SelectedObject {
 
   if (kind === "place") {
     const population = feature.get("population");
+    const typeLabel = asText(feature.get("typeLabel"), "Населенный пункт");
+    const district = feature.get("district") ? String(feature.get("district")) : null;
+    const details: Array<[string, string]> = [["Тип", typeLabel]];
+    if (district) details.push(["Район", district]);
+    details.push(
+      ["Население", typeof population === "number" ? numberFormat.format(population) : "нет данных"],
+      ["Координаты", `${asText(feature.get("lat"))}, ${asText(feature.get("lon"))}`]
+    );
     return {
       kind,
       id,
       name,
       zone,
-      subtitle: asText(feature.get("typeLabel"), "Населенный пункт"),
-      details: [
-        ["Тип", asText(feature.get("typeLabel"), "Населенный пункт")],
-        ["Население", typeof population === "number" ? numberFormat.format(population) : "нет данных"],
-        ["Координаты", `${asText(feature.get("lat"))}, ${asText(feature.get("lon"))}`]
-      ]
+      subtitle: district ? `${typeLabel} · ${district}` : typeLabel,
+      details
     };
   }
 
@@ -431,6 +490,43 @@ function createDistrictStyle(
         width: 0.45 + growth * 0.45
       })
     });
+  };
+}
+
+function createFeaturedPlaceStyle(
+  selectedKeyRef: React.MutableRefObject<string | null>
+) {
+  return (feature: FeatureLike, resolution: number) => {
+    const zoom = resolutionToZoom(resolution);
+    const selected = selectedKeyRef.current === featureKey(feature);
+    const styles = [
+      new Style({
+        fill: new Fill({
+          color: selected ? "rgba(246, 199, 61, 0.1)" : "rgba(150, 164, 157, 0.12)"
+        }),
+        stroke: new Stroke({
+          color: selected ? "rgba(255, 248, 220, 0.92)" : "rgba(194, 206, 200, 0.46)",
+          width: selected ? 1.8 : 0.8
+        })
+      })
+    ];
+
+    if (zoom >= FEATURED_PLACE_LABEL_ZOOM) {
+      styles.push(
+        new Style({
+          text: new Text({
+            text: asText(feature.get("name"), ""),
+            font: "500 11px Inter, system-ui, sans-serif",
+            offsetY: String(feature.get("id")) === "519835" ? -12 : 12,
+            fill: new Fill({ color: "rgba(225, 232, 228, 0.92)" }),
+            stroke: new Stroke({ color: "rgba(8, 12, 11, 0.94)", width: 3.2 }),
+            padding: [2, 4, 2, 4]
+          })
+        })
+      );
+    }
+
+    return styles;
   };
 }
 
@@ -664,13 +760,21 @@ async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
   // находила бы регион из адреса. Меняется вместе с набором полей — и вместе
   // с геометрией: версия 3 отдаёт прорежённые контуры.
   const GEO_FORMAT = 3;
-  const regions = await read(
-    `${API_BASE}/api/v1/geo/regions.geojson?v=${GEO_FORMAT}`
-  ).catch(() =>
-    read("/data/regions.json")
-  );
+  const [regions, featuredPlaces] = await Promise.all([
+    read(`${API_BASE}/api/v1/geo/regions.geojson?v=${GEO_FORMAT}`).catch(() =>
+      read("/data/regions.json")
+    ),
+    read("/data/featured-places.json").catch(() => ({
+      type: "FeatureCollection",
+      features: []
+    }))
+  ]);
 
-  return { regions, districts: { type: "FeatureCollection", features: [] } };
+  return {
+    regions,
+    districts: { type: "FeatureCollection", features: [] },
+    featuredPlaces
+  };
 }
 
 function fitFeature(map: OlMap, feature: FeatureLike, maxZoom: number) {
@@ -751,6 +855,7 @@ export default function App() {
   const districtsLoadedRef = useRef(false);
   const regionLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const districtLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
+  const featuredPlaceLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   // Состояние зон, ключ — source_id полигона в regions.json / districts.json.
   const zoneStateRef = useRef<globalThis.Map<string, ZoneCount>>(new globalThis.Map());
   const eventIconSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
@@ -793,6 +898,7 @@ export default function App() {
   const [rotation, setRotation] = useState(0);
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [basemapScheme, setBasemapScheme] = useState<BasemapScheme>(loadBasemapScheme);
   const [layers, setLayers] = useState<LayerState>({
     basemap: true,
     landCover: false,
@@ -1066,6 +1172,7 @@ export default function App() {
     setSelectedRegionPolygon(feature ? regionPolygonOf(feature) : null);
     regionLayerRef.current?.changed();
     districtLayerRef.current?.changed();
+    featuredPlaceLayerRef.current?.changed();
     // Выбор места — это вопрос «что там происходит», и ответ лежит в ленте.
     // Со свёрнутой панелью нажатие на район не показывало ничего.
     if (feature) {
@@ -1373,6 +1480,15 @@ export default function App() {
       featureIndexRef.current.set(featureKey(feature), feature);
     });
 
+    const featuredPlaceFeatures = geoJson.readFeatures(dataset.featuredPlaces, {
+      dataProjection: "EPSG:4326",
+      featureProjection: "EPSG:3857"
+    }) as Feature<Geometry>[];
+    featuredPlaceFeatures.forEach((feature) => {
+      feature.set("kind", "place");
+      featureIndexRef.current.set(featureKey(feature), feature);
+    });
+
 
     const landCoverSource = new VectorSource<Feature<Geometry>>();
     const waterBodySource = new VectorSource<Feature<Geometry>>();
@@ -1384,16 +1500,21 @@ export default function App() {
     const railwaySource = new VectorSource<Feature<Geometry>>();
     const regionSource = new VectorSource({ features: regionFeatures });
     const districtSource = new VectorSource({ features: districtFeatures });
+    const featuredPlaceSource = new VectorSource({
+      features: featuredPlaceFeatures,
+      attributions: "© OpenStreetMap contributors"
+    });
 
+    const scheme = BASEMAP_SCHEMES[basemapScheme];
     const basemapLayer = new TileLayer({
       source: new XYZ({
-        url: BASEMAP_URL,
-        attributions: BASEMAP_ATTRIBUTION,
+        url: scheme.url,
+        attributions: scheme.attributions,
         crossOrigin: "anonymous",
-        maxZoom: 20
+        maxZoom: scheme.maxZoom
       }),
       visible: layers.basemap,
-      opacity: 0.9,
+      opacity: scheme.opacity,
       zIndex: 0
     });
     const hillshadeLayer = new TileLayer({
@@ -1403,7 +1524,7 @@ export default function App() {
         crossOrigin: "anonymous",
         maxZoom: 13
       }),
-      visible: layers.basemap,
+      visible: layers.basemap && scheme.hillshade,
       opacity: 0.24,
       zIndex: 1
     });
@@ -1504,6 +1625,13 @@ export default function App() {
       minZoom: 4.15,
       style: createDistrictStyle(selectedKeyRef, zoneStateRef)
     });
+    const featuredPlaceLayer = new VectorLayer({
+      source: featuredPlaceSource,
+      visible: layers.districts,
+      zIndex: 30,
+      minZoom: FEATURED_PLACES_ZOOM,
+      style: createFeaturedPlaceStyle(selectedKeyRef)
+    });
 
     basemapLayerRef.current = basemapLayer;
     hillshadeLayerRef.current = hillshadeLayer;
@@ -1519,6 +1647,7 @@ export default function App() {
     fireLayerRef.current = fireLayer;
     regionLayerRef.current = regionLayer;
     districtLayerRef.current = districtLayer;
+    featuredPlaceLayerRef.current = featuredPlaceLayer;
 
     const map = new OlMap({
       target: mapNodeRef.current,
@@ -1539,6 +1668,7 @@ export default function App() {
         railwayLayer,
         regionLayer,
         districtLayer,
+        featuredPlaceLayer,
         fireLayer,
         trailLayer,
         routeLayer,
@@ -1741,6 +1871,7 @@ export default function App() {
       maybeLoadLazyLayers();
       regionLayerRef.current?.changed();
       districtLayerRef.current?.changed();
+      featuredPlaceLayerRef.current?.changed();
     });
     maybeLoadLazyLayers();
 
@@ -1767,7 +1898,8 @@ export default function App() {
 
       const hit = map.hasFeatureAtPixel(event.pixel, {
         hitTolerance: 5,
-        layerFilter: (layer) => layer === regionLayer || layer === districtLayer
+        layerFilter: (layer) =>
+          layer === regionLayer || layer === districtLayer || layer === featuredPlaceLayer
       });
       const target = map.getTargetElement();
       if (target) target.style.cursor = hit ? "pointer" : "";
@@ -1828,10 +1960,15 @@ export default function App() {
       const zoom = map.getView().getZoom() ?? 0;
       let regionFeature: FeatureLike | null = null;
       let districtFeature: FeatureLike | null = null;
+      let placeFeature: FeatureLike | null = null;
 
       map.forEachFeatureAtPixel(
         event.pixel,
         (feature, layer) => {
+          if (layer === featuredPlaceLayer && !placeFeature) {
+            placeFeature = feature;
+            return false;
+          }
           if (layer === districtLayer && !districtFeature) {
             districtFeature = feature;
             return false;
@@ -1843,14 +1980,16 @@ export default function App() {
         },
         {
           hitTolerance: 8,
-          layerFilter: (layer) => layer === districtLayer || layer === regionLayer
+          layerFilter: (layer) =>
+            layer === featuredPlaceLayer || layer === districtLayer || layer === regionLayer
         }
       );
 
       const picked =
-        zoom >= DISTRICT_SELECTION_ZOOM
+        placeFeature ??
+        (zoom >= DISTRICT_SELECTION_ZOOM
           ? districtFeature ?? regionFeature
-          : regionFeature ?? districtFeature;
+          : regionFeature ?? districtFeature);
 
       // Повторное нажатие по уже выбранному месту снимает выбор: иначе
       // выйти из него можно было только крестиком в ленте, а рука тянется
@@ -1894,6 +2033,7 @@ export default function App() {
       eventIconLayerRef.current = null;
       regionLayerRef.current = null;
       districtLayerRef.current = null;
+      featuredPlaceLayerRef.current = null;
       featureIndexRef.current.clear();
     };
   }, [applySelectedFeature, dataset]);
@@ -1901,7 +2041,9 @@ export default function App() {
   useEffect(() => {
     layersRef.current = layers;
     basemapLayerRef.current?.setVisible(layers.basemap);
-    hillshadeLayerRef.current?.setVisible(layers.basemap);
+    hillshadeLayerRef.current?.setVisible(
+      layers.basemap && BASEMAP_SCHEMES[basemapScheme].hillshade
+    );
     landCoverLayerRef.current?.setVisible(layers.landCover);
     waterBodyLayerRef.current?.setVisible(layers.waterBodies);
     riverLayerRef.current?.setVisible(layers.rivers);
@@ -1912,6 +2054,7 @@ export default function App() {
     railwayLayerRef.current?.setVisible(layers.railways);
     regionLayerRef.current?.setVisible(layers.regions);
     districtLayerRef.current?.setVisible(layers.districts);
+    featuredPlaceLayerRef.current?.setVisible(layers.districts);
     fireLayerRef.current?.setVisible(layers.fires);
     loadLazyLayersRef.current?.();
 
@@ -1938,7 +2081,26 @@ export default function App() {
           firesLoadedRef.current = false;
         });
     }
-  }, [layers]);
+  }, [layers, basemapScheme]);
+
+  // Смена подложки: новый источник в тот же слой, карта не пересоздаётся.
+  useEffect(() => {
+    const scheme = BASEMAP_SCHEMES[basemapScheme];
+    basemapLayerRef.current?.setSource(
+      new XYZ({
+        url: scheme.url,
+        attributions: scheme.attributions,
+        crossOrigin: "anonymous",
+        maxZoom: scheme.maxZoom
+      })
+    );
+    basemapLayerRef.current?.setOpacity(scheme.opacity);
+    try {
+      localStorage.setItem(BASEMAP_STORE_KEY, basemapScheme);
+    } catch {
+      // Приватный режим — выбор живёт до перезагрузки.
+    }
+  }, [basemapScheme]);
 
   // Лента показывает то, что человек видит на экране: карта и список
   // перестают жить отдельными жизнями. Отключается тумблером «в кадре».
@@ -2019,12 +2181,18 @@ export default function App() {
       const map = mapRef.current;
       if (!map) return;
 
-      // У региона и района полигон уже загружен — подлетаем к его границам.
-      if (item.source_id && item.level !== "place") {
+      // Для объектов с загруженным контуром подлетаем к границам, а не к
+      // условной центральной точке. Большинство населённых пунктов остаются
+      // точечными; точные контуры пока есть у приоритетных объектов.
+      if (item.source_id) {
         const feature = featureIndexRef.current.get(`${item.level}:${item.source_id}`);
         if (feature) {
           applySelectedFeature(feature);
-          fitFeature(map, feature, item.level === "region" ? 5.2 : 7.4);
+          fitFeature(
+            map,
+            feature,
+            item.level === "region" ? 5.2 : item.level === "district" ? 7.4 : 9.15
+          );
           setQuery(item.name);
           setSuggestions([]);
           return;
@@ -2368,6 +2536,19 @@ export default function App() {
               <span>Слои карты</span>
             </summary>
             <div className="layer-list">
+              <div className="basemap-switch" role="radiogroup" aria-label="Подложка карты">
+                {(Object.keys(BASEMAP_SCHEMES) as BasemapScheme[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={basemapScheme === key ? "is-active" : ""}
+                    aria-pressed={basemapScheme === key}
+                    onClick={() => setBasemapScheme(key)}
+                  >
+                    {BASEMAP_SCHEMES[key].label}
+                  </button>
+                ))}
+              </div>
               {LAYER_OPTIONS.map(({ key, label, swatch }) => (
                 <label key={key}>
                   <input
