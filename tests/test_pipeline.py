@@ -1690,3 +1690,20 @@ def test_infra_does_not_bridge_via_unknown():
     add(fuser2, 0, "a", signal="detection", threat="uav", severity=8)
     add(fuser2, 2, "b", signal="intercept", threat="unknown", severity=8)
     assert len(fuser2.events) == 1
+
+
+def test_city_district_aliases_resolve_to_their_city(geocoder):
+    """«Прикубанский округ» без слова «Краснодар» — это Краснодар.
+
+    Внутригородские округа — алиасы своего города (только уникальные по
+    стране имена: «Ворошиловский район» есть и в Ростове, и в Волгограде,
+    и его среди алиасов нет). Настоящие районы других субъектов алиасами
+    не задеты.
+    """
+    from pipeline.parse import candidate_phrases
+
+    got = geocoder.resolve(candidate_phrases("Прикубанский округ, опасность по БПЛА"))
+    assert [z.name for z in got] == ["городской округ Краснодар"]
+
+    kirovsky = geocoder.resolve(candidate_phrases("Кировский район Приморского края"))
+    assert any("Кировский район" == z.name for z in kirovsky)

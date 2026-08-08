@@ -58,6 +58,7 @@ import {
 import { zoneFeed } from "./lib/feed";
 import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/sound";
 import { disablePush, enablePush, pushEnabled, pushSupported, syncPushZones } from "./lib/push";
+import { telegramWatch } from "./lib/telegram";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
@@ -2437,6 +2438,20 @@ export default function App() {
     if (!pushOn) return;
     void syncPushZones(bookmarks.map((item) => item.zone_id));
   }, [pushOn, bookmarks]);
+
+  // В мини-аппе Telegram колокольчик подписывает на уведомления в чат:
+  // дельта закладок уходит боту как /watch и /unwatch. Начальная загрузка
+  // дельты не даёт — ссылка стартует с того же списка.
+  const bookmarksBefore = useRef(bookmarks);
+  useEffect(() => {
+    const before = bookmarksBefore.current;
+    bookmarksBefore.current = bookmarks;
+    if (before === bookmarks) return;
+    const was = new Set(before.map((item) => item.zone_id));
+    const now = new Set(bookmarks.map((item) => item.zone_id));
+    for (const zoneId of now) if (!was.has(zoneId)) telegramWatch(zoneId, true);
+    for (const zoneId of was) if (!now.has(zoneId)) telegramWatch(zoneId, false);
+  }, [bookmarks]);
 
   return (
     <div className="app-shell">

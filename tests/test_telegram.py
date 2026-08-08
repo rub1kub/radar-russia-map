@@ -237,3 +237,61 @@ def test_airport_line_speaks_plainly():
         "zone_name": "Внуково", "signal_type": "infra", "threat_type": "airport",
         "status": "resolved", "last_seen_at": "2026-08-08T11:00:00+00:00"})
     assert "аэропорт открыт" in opened
+
+
+def test_map_watch_subscribes_chat(tmp_path, monkeypatch):
+    """Колокольчик в мини-аппе подписывает чат — как команда /watch.
+
+    Подпись initData обязательна: без неё любой подписывал бы чужие чаты
+    голым POST-ом. Бот отвечает в чат подтверждением.
+    """
+    import asyncio
+    import hashlib
+    import hmac as hmac_mod
+    import json
+    from urllib.parse import urlencode
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "12345:secret")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS zones (id TEXT PRIMARY KEY, name_ru TEXT)")
+        connection.execute(
+            "INSERT INTO zones (id, name_ru) VALUES ('kursk', 'Курская область')")
+        connection.commit()
+
+    fields = {"user": '{"id": 9, "username": "u", "first_name": "n"}',
+              "auth_date": "1754500000"}
+    check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret = hmac_mod.new(b"WebAppData", b"12345:secret", hashlib.sha256).digest()
+    good = hmac_mod.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    signed = urlencode({**fields, "hash": good})
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    class FakeRequest:
+        def __init__(self, payload):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    ok = asyncio.run(telegram.map_watch(
+        FakeRequest({"init_data": signed, "zone_id": "kursk", "on": True})))
+    assert ok == {"ok": True}
+    with telegram.closing(telegram._connect()) as connection:
+        zones = json.loads(connection.execute(
+            "SELECT zones FROM tg_chats WHERE chat_id = 9").fetchone()["zones"])
+        kinds = [r["kind"] for r in connection.execute(
+            "SELECT kind FROM tg_activity")]
+    assert zones == ["kursk"]
+    assert "watch_map" in kinds
+    assert sent and "Слежу" in sent[0]
+
+    # Подделка не проходит и ничего не подписывает.
+    forged = urlencode({**fields, "hash": "0" * 64})
+    bad = asyncio.run(telegram.map_watch(
+        FakeRequest({"init_data": forged, "zone_id": "kursk", "on": True})))
+    assert bad == {"ok": False}

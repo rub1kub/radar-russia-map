@@ -565,6 +565,47 @@ def validate_init_data(init_data: str) -> dict | None:
     return fields
 
 
+@router.post("/watch")
+async def map_watch(request: Request) -> dict:
+    """Колокольчик в мини-аппе — та же подписка, что команда /watch.
+
+    Web Push внутри Telegram не живёт, а бот живёт: нажатие на карте
+    уходит сюда с подписанными initData, и уведомления о месте приходят
+    в чат. Бот отвечает подтверждением — человек сразу видит, что связь
+    установлена. Подпись обязательна: без неё любой мог бы подписывать
+    чужие чаты голым POST-ом.
+    """
+    try:
+        payload = await request.json()
+    except ValueError:
+        return {"ok": False}
+    fields = validate_init_data(str(payload.get("init_data") or ""))
+    if fields is None:
+        return {"ok": False}
+    try:
+        user = json.loads(fields.get("user") or "{}")
+    except ValueError:
+        user = {}
+    if not user.get("id"):
+        return {"ok": False}
+    zone_id = str(payload.get("zone_id") or "")
+    with closing(_connect()) as connection:
+        known = connection.execute(
+            "SELECT 1 FROM zones WHERE id = ?", (zone_id,)).fetchone()
+    if not known:
+        return {"ok": False}
+    chat_id = int(user["id"])
+    turned_on = bool(payload.get("on"))
+    await asyncio.to_thread(
+        record_activity, chat_id,
+        "watch_map" if turned_on else "unwatch_map",
+        user.get("username"), user.get("first_name"))
+    reply = await asyncio.to_thread(
+        watch if turned_on else unwatch, chat_id, zone_id)
+    await asyncio.to_thread(send, chat_id, reply)
+    return {"ok": True}
+
+
 @router.post("/opened")
 async def map_opened(request: Request) -> dict:
     """Карта открыта из Telegram — записываем, кто пришёл."""

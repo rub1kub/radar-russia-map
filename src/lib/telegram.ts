@@ -132,3 +132,24 @@ export function setupTelegram(): void {
     }
   }
 }
+
+/**
+ * Колокольчик в мини-аппе подписывает на уведомления в сам Telegram.
+ *
+ * Web Push внутри мессенджера не живёт, а бот — живёт: нажатие на
+ * колокольчик уходит боту тем же смыслом, что команда /watch, и бот
+ * отвечает в чат подтверждением. Снятие закладки — как /unwatch.
+ * Вне Telegram функция молчит: там работают браузерные уведомления.
+ */
+export function telegramWatch(zoneId: string, on: boolean): void {
+  const app = window.Telegram?.WebApp;
+  if (!app || !insideTelegram() || !app.initData) return;
+  void import("./api")
+    .then(({ API_BASE }) =>
+      fetch(`${API_BASE}/api/v1/tg/watch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ init_data: app.initData, zone_id: zoneId, on })
+      }))
+    .catch(() => undefined);
+}
