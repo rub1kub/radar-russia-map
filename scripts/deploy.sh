@@ -72,7 +72,17 @@ echo "=== 3/5 сборка фронта"
 VITE_API_BASE="$SITE" npm run build 2>&1 | tail -3
 
 echo "=== 4/5 выкатка"
-retry ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only 2>&1 | tail -2"
+# Пайп к tail раньше глотал код ошибки: упавший по сети pull выглядел
+# успехом, сервер молча оставался на старом коммите, а пересборка корпуса
+# шла старым кодом. Теперь pull без пайпа, а следом жёсткая сверка: HEAD
+# сервера обязан совпасть с тем, что мы только что запушили.
+retry ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only"
+EXPECTED="$(git rev-parse origin/main)"
+DEPLOYED="$(ssh "$SERVER" "cd $REMOTE_DIR && git rev-parse HEAD")"
+if [[ "$DEPLOYED" != "$EXPECTED" ]]; then
+  echo "ОСТАНОВКА: сервер на $DEPLOYED, ожидался $EXPECTED — pull не прошёл."
+  exit 1
+fi
 # Страницы регионов и sitemap собираются на сервере: в них идёт сводка из
 # базы, а база живёт только там. Из синхронизации они исключены, иначе
 # --delete снёс бы их до того, как соберётся новая версия, и всё это время
