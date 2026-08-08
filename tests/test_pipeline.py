@@ -1605,11 +1605,16 @@ def test_airport_closure_and_reopening_pair():
 
     closed = parse("Аэропорт Краснодар (Пашковский). ВВЕДЕНЫ временные "
                    "ограничения на прием и выпуск воздушных судов.")
-    assert (closed.signal_type, closed.threat_type) == ("infra", "infra")
+    assert (closed.signal_type, closed.threat_type) == ("infra", "airport")
 
     opened = parse("Аэропорт Краснодар (Пашковский). СНЯТЫ временные "
                    "ограничения на прием и выпуск воздушных судов.")
-    assert (opened.signal_type, opened.threat_type) == ("allclear", "infra")
+    assert (opened.signal_type, opened.threat_type) == ("allclear", "airport")
+
+    # Мост остаётся общей «инфраструктурой» — у него своя пара, и отбой
+    # аэропорта его не открывает.
+    bridge = parse("Движение автотранспорта по Крымскому мосту перекрыто")
+    assert bridge.threat_type == "infra"
 
 
 def test_airport_mention_does_not_erase_known_threat():
@@ -1643,17 +1648,23 @@ def test_airport_clear_is_targeted():
     """Снятие ограничений закрывает аэропорт, но не дроновую тревогу."""
     fuser = Fuser()
     add(fuser, 0, "a", signal="alarm", severity=7, threat="uav")
-    add(fuser, 1, "b", signal="infra", severity=2, threat="infra")
-    add(fuser, 2, "c", signal="allclear", severity=0, threat="infra")
+    add(fuser, 1, "b", signal="infra", severity=2, threat="airport")
+    add(fuser, 2, "c", signal="allclear", severity=0, threat="airport")
     events = {e.threat_type: e for e in fuser.events}
-    assert events["infra"].resolved_at is not None, "аэропорт не открылся"
+    assert events["airport"].resolved_at is not None, "аэропорт не открылся"
     assert events["uav"].resolved_at is None, "снятие ограничений погасило тревогу"
 
     # И наоборот: «отбой» без слова про аэропорт его не открывает.
     fuser2 = Fuser()
-    add(fuser2, 0, "a", signal="infra", severity=2, threat="infra")
+    add(fuser2, 0, "a", signal="infra", severity=2, threat="airport")
     add(fuser2, 1, "b", signal="allclear", severity=0, threat="unknown")
     assert fuser2.events[0].resolved_at is None
+
+    # Мост и аэропорт — разные пары: отбой одного не открывает другой.
+    fuser3 = Fuser()
+    add(fuser3, 0, "a", signal="infra", severity=2, threat="infra")
+    add(fuser3, 1, "b", signal="allclear", severity=0, threat="airport")
+    assert fuser3.events[0].resolved_at is None
 
 
 def test_infra_does_not_bridge_via_unknown():

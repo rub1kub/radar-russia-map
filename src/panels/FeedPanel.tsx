@@ -377,8 +377,10 @@ export function FeedPanel({
                       </span>
                       <span className="event-meta">
                         {!historyLabel && event.status === "resolved"
-                          ? `Отбой · ${signalLabel(event.signal_type).toLowerCase()}`
-                          : signalLabel(event.signal_type)}
+                          ? event.threat_type === "airport"
+                            ? "Аэропорт открыт"
+                            : `Отбой · ${signalLabel(event.signal_type).toLowerCase()}`
+                          : signalLabel(event.signal_type, event.threat_type)}
                         {event.threat_type !== "unknown"
                           ? ` · ${threatLabel(event.threat_type)}`
                           : ""}

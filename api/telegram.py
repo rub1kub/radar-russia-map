@@ -281,6 +281,11 @@ def _moment(iso: str) -> str:
 def _event_line(event: dict) -> str:
     place = event.get("place_name") or event.get("zone_name") or "—"
     signal = SIGNAL_WORD.get(event.get("signal_type", ""), event.get("signal_type", ""))
+    # Аэропорты называются прямо, а не общим словом «инфраструктура»:
+    # владелец просил писать как есть. Открытие — та же пара, что закрытие.
+    if event.get("threat_type") == "airport":
+        signal = ("аэропорт открыт" if event.get("status") == "resolved"
+                  else "аэропорт закрыт")
     threat = THREAT_WORD.get(event.get("threat_type", ""))
     tail = f" · {threat}" if threat else ""
     return f"<b>{place}</b> — {signal}{tail}, {_moment(event['last_seen_at'])}"

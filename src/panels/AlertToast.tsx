@@ -42,7 +42,9 @@ export function AlertToast({ alerts, onDismiss, onPick }: Props) {
       <button className="alert-body" type="button" onClick={() => onPick(top)}>
         <span className="alert-title">{top.place_name}</span>
         <span className="alert-meta">
-          {cleared ? "Отбой" : signalLabel(top.signal_type)}
+          {cleared
+            ? top.threat_type === "airport" ? "Аэропорт открыт" : "Отбой"
+            : signalLabel(top.signal_type, top.threat_type)}
           {top.threat_type !== "unknown" ? ` · ${threatLabel(top.threat_type)}` : ""}
         </span>
         {alerts.length > 1 ? (

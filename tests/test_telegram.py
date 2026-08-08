@@ -225,3 +225,15 @@ def test_map_button_is_a_tme_link(monkeypatch):
     button = telegram.open_map_button()["inline_keyboard"][0][0]
     assert button["url"] == "https://t.me/tihoenebo_bot?startapp"
     assert "web_app" not in button
+
+
+def test_airport_line_speaks_plainly():
+    """«аэропорт закрыт» / «аэропорт открыт» вместо «инфраструктуры»."""
+    closed = telegram._event_line({
+        "zone_name": "Внуково", "signal_type": "infra", "threat_type": "airport",
+        "status": "active", "last_seen_at": "2026-08-08T10:00:00+00:00"})
+    assert "аэропорт закрыт" in closed
+    opened = telegram._event_line({
+        "zone_name": "Внуково", "signal_type": "infra", "threat_type": "airport",
+        "status": "resolved", "last_seen_at": "2026-08-08T11:00:00+00:00"})
+    assert "аэропорт открыт" in opened

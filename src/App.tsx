@@ -5,6 +5,7 @@ import View from "ol/View";
 import GeoJSON from "ol/format/GeoJSON";
 import Feature from "ol/Feature";
 import LineString from "ol/geom/LineString";
+import CircleGeom from "ol/geom/Circle";
 import Point from "ol/geom/Point";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
@@ -215,6 +216,24 @@ const STATE_POLL_MS = 25_000;
 const ACTIVE_DISTRICTS_MIN_GAP_MS = 20_000;
 // Насколько должен сдвинуться курсор, чтобы двигать подсказку. Меньше — это
 // дрожание руки, ради которого не стоит перерисовывать приложение.
+// Скорость цели для круга возможного положения, м/с. Основа та же, что
+// у выцветания: дальнобойный БПЛА самолётной схемы ~150 км/ч; ракета и
+// авиация быстрее настолько, что круг честнее не рисовать вовсе — они
+// уходят из любого разумного круга за минуты (окно их значка и так
+// короткое). БЭК медленнее борта.
+const THREAT_SPEED_MPS: Record<string, number> = {
+  uav: 41.7,
+  fpv: 25,
+  bek: 21,
+  unknown: 41.7
+};
+// Меньше двух километров круг неотличим от самого значка.
+const RADIUS_MIN_M = 2_000;
+
+function threatSpeedMps(threat: string): number {
+  return THREAT_SPEED_MPS[threat] ?? 0;
+}
+
 const HINT_MOVE_PX = 6;
 // С какого поворота карта считается косой и показывается компас — градус.
 // Ниже человек отклонения не видит, а кнопка бы уже мозолила глаз.
@@ -1354,7 +1373,7 @@ export default function App() {
           // события — центр его зоны, и в тихом районе рядом он выглядит
           // необъяснимо. Подсказка отвечает, чей он и когда поставлен.
           title: event.place_name,
-          signal: signalLabel(event.signal_type),
+          signal: signalLabel(event.signal_type, event.threat_type),
           threat: event.threat_type === "unknown" ? "" : threatLabel(event.threat_type),
           // Сырой тип угрозы — для скорости выцветания значка.
           threatType: event.threat_type,
@@ -1418,6 +1437,44 @@ export default function App() {
     // эфире карта утверждает лишь то, что сказали источники.
     const trailSource = trailSourceRef.current;
     trailSource.clear();
+
+    // Круг возможного положения вокруг свежей фиксации: борт видели в
+    // точке N минут назад, и с тех пор он мог уйти на скорость × время.
+    // Это не выдумка маршрута, а та же физика ~150 км/ч, из которой
+    // выведено выцветание; круг честно говорит «уже может быть здесь» и
+    // растёт, пока жив значок. Только для фиксаций: перехват и взрыв —
+    // точки свершившегося, им расползаться некуда.
+    if (!inHistory) {
+      for (const event of shownEvents) {
+        if (event.signal_type !== "detection") continue;
+        if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
+        const ageMs = Math.max(0, referenceMs - new Date(event.last_seen_at).getTime());
+        if (!iconVisible(ageMs, event.threat_type)) continue;
+        const radiusM = (ageMs / 1000) * threatSpeedMps(event.threat_type);
+        if (radiusM < RADIUS_MIN_M) continue;
+        const fresh = iconFreshness(ageMs, event.threat_type);
+        const circle = new Feature({
+          geometry: new CircleGeom(
+            fromLonLat([event.lon, event.lat]),
+            // Меркатор растягивает метры с широтой — без поправки круг
+            // под Мурманском был бы вдвое меньше заявленного.
+            radiusM / Math.cos((event.lat * Math.PI) / 180)
+          )
+        });
+        circle.setStyle(
+          new Style({
+            fill: new Fill({ color: severityColor(event.severity, 0.045 * fresh) }),
+            stroke: new Stroke({
+              color: severityColor(event.severity, 0.4 * fresh),
+              width: 1.1,
+              lineDash: [5, 7]
+            })
+          })
+        );
+        trailSource.addFeature(circle);
+      }
+    }
+
     if (inHistory && historyAt) {
       const atMs = new Date(historyAt).getTime();
       for (const trail of historyTrails) {

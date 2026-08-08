@@ -132,3 +132,14 @@ describe("durationMinutes", () => {
     expect(durationMinutes("2026-07-27T10:00:00Z", "2026-07-27T10:47:00Z")).toBe(47);
   });
 });
+
+describe("подписи аэропортов", () => {
+  it("закрытие и открытие называются прямо, а не «инфраструктурой»", () => {
+    expect(signalLabel("infra", "airport")).toBe("Аэропорт закрыт");
+    expect(signalLabel("allclear", "airport")).toBe("Аэропорт открыт");
+    // Мост остаётся общей инфраструктурой.
+    expect(signalLabel("infra", "infra")).toBe("Инфраструктура");
+    // Обычный отбой аэропортом не притворяется.
+    expect(signalLabel("allclear")).toBe("Отбой");
+  });
+});

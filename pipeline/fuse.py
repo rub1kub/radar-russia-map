@@ -34,6 +34,13 @@ ACCURACY_M = {"place": 4_000, "district": 12_000, "region": 40_000}
 
 RESOLVING = {"allclear", "retracted"}
 
+# Типы угрозы, живущие парой «закрыто — открыто» со своим отбоем:
+# аэропорты и прочая инфраструктура. Они проставляются разбором сами,
+# когда текст угрозу не назвал, поэтому в общих правилах слияния ведут
+# себя иначе: не мостятся через «unknown» и закрываются только своим
+# отбоем — «сняты ограничения» в аэропорту не гасят тревогу по мосту.
+PAIRED_THREATS = {"infra", "airport"}
+
 # Длина, начиная с которой дословное совпадение текста — это copy-paste, а не
 # совпадение слов. Короткое «Опасность БПЛА» две ленты пишут одинаково просто
 # потому, что иначе не скажешь, и считать их одним голосом нельзя.
@@ -185,7 +192,9 @@ class Fuser:
                 # «БПЛА» подряд с закрытием аэропорта сливалось в одно
                 # событие, наследуя ложную метку «аэропорт».
                 bridge = "unknown" in (event.threat_type, threat)
-                if not bridge or "infra" in (event.threat_type, threat):
+                paired = (event.threat_type in PAIRED_THREATS
+                          or threat in PAIRED_THREATS)
+                if not bridge or paired:
                     continue
 
             # Наблюдение может прийти к слушателю позже более свежих: каналы
@@ -244,10 +253,12 @@ class Fuser:
                 # объявленных», «отбой тревоги».
                 if cleared != "unknown" and event.threat_type not in (cleared, "unknown"):
                     continue
-                # Инфраструктура — отдельная пара «закрыто — открыто».
-                # «Отбой тревоги» аэропорт не открывает, а «сняты
-                # ограничения» не гасят дроновую тревогу по городу.
-                if (event.threat_type == "infra") != (cleared == "infra"):
+                # Пары «закрыто — открыто» закрываются только своим
+                # отбоем: «отбой тревоги» аэропорт не открывает, «сняты
+                # ограничения» не гасят дроновую тревогу по городу, а
+                # мост и аэропорт не закрывают друг друга.
+                if ((event.threat_type in PAIRED_THREATS or cleared in PAIRED_THREATS)
+                        and event.threat_type != cleared):
                     continue
                 event.resolved_at = moment
                 event.last_seen = max(event.last_seen, moment)
