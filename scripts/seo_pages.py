@@ -192,6 +192,10 @@ def collect_stats(connection: sqlite3.Connection) -> dict[str, dict]:
         })
         entry["events"] += 1
         stamp = datetime.fromisoformat(row["first_seen_at"]).astimezone(MSK)
+        if stamp.date() == now_utc().astimezone(MSK).date():
+            entry["today"] = entry.get("today", 0) + 1
+        if (now_utc() - datetime.fromisoformat(row["first_seen_at"])).total_seconds() < 7200:
+            entry["fresh"] = entry.get("fresh", 0) + 1
         entry["days"].add(stamp.date())
         entry["hours"][stamp.hour] += 1
         if entry["last"] is None or row["first_seen_at"] > entry["last"]:
@@ -338,8 +342,29 @@ def faq_block(name: str, stats: dict | None) -> tuple[str, str]:
     else:
         activity = (f"За последние 30 дней сообщений об опасности {where} "
                     f"в отслеживаемых каналах не было.")
+    today = stats.get("today", 0) if stats else 0
+    fresh = stats.get("fresh", 0) if stats else 0
+    if fresh:
+        now_answer = (f"За последние два часа карта отметила {where} {fresh} "
+                      f"{plural(fresh, 'событие', 'события', 'событий')}. "
+                      f"Текущую минуту показывает живая карта — кнопка выше; "
+                      f"эта сводка обновляется ежечасно.")
+    else:
+        now_answer = (f"На момент обновления сводки свежих событий {where} "
+                      f"не было. Текущую минуту показывает живая карта — "
+                      f"кнопка выше; эта сводка обновляется ежечасно.")
+    if today:
+        today_answer = (f"Да: сегодня карта отметила {where} {today} "
+                        f"{plural(today, 'событие', 'события', 'событий')}, "
+                        f"последнее — {moment(stats['last'])} по Москве. "
+                        f"Подробности по районам — на карте и в ленте.")
+    else:
+        today_answer = (f"Сегодня сообщений об опасности {where} в "
+                        f"отслеживаемых каналах не было. " + activity)
     qa = [
-        (f"Что сейчас происходит {where}?",
+        (f"Есть ли сейчас тревога {where}?", now_answer),
+        (f"Была ли сегодня тревога {where}?", today_answer),
+        (f"Что было {where} за последний месяц?",
          activity + " Текущую минуту показывает живая карта — кнопка выше."),
         ("Откуда данные и можно ли им верить?",
          "Карта собирает открытые Telegram-каналы мониторинга и официальные "
@@ -371,7 +396,10 @@ def faq_block(name: str, stats: dict | None) -> tuple[str, str]:
 def page(name: str, slug: str, districts: list[str], stats: dict | None,
          neighbours: list[tuple[str, str]], updated: str) -> str:
     where = f"{preposition(name)} {inflect(name)}"
-    title = f"Тревога и БПЛА {where} — карта обстановки сейчас"
+    # Формула из реальных запросов Вебмастера: люди спрашивают «тревога в
+    # X сейчас», «была ли сегодня», «карта по районам» — все три слова
+    # должны быть в заголовке.
+    title = f"Тревога и БПЛА {where} сейчас — карта по районам"
     count = stats["events"] if stats else 0
     if count:
         description = (
