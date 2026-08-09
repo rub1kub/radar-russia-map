@@ -25,3 +25,7 @@ research/data_sources/Ecoregions2017.zip
 
 # Штамп пропуска prepare:data: локальное состояние, не данные
 public/data/.prepare-stamp.json
+
+# Подписи малых населённых пунктов режутся на сотни статических клеток.
+# Они воспроизводимо собираются prepare:data и попадают в dist при сборке.
+public/data/place-labels/

@@ -27,7 +27,8 @@ const outData = join(root, "public", "data");
 // пересборки. Принудительно: npm run prepare:data -- --force
 const stampPath = join(outData, ".prepare-stamp.json");
 const expectedOutputs = [
-  "regions.json", "districts.json", "places.json", "summary.json",
+  "regions.json", "districts.json", "places.json", "city-labels.json",
+  "place-labels/manifest.json", "summary.json",
   "water-bodies.json", "rivers.json", "river-network-major.json",
   "river-network-detail.json", "urban-areas.json", "roads.json",
   "railways.json", "terrain-regions.json", "glaciers.json", "land-cover.json"
@@ -286,7 +287,7 @@ const levenshtein = (left, right) => {
 };
 
 const pickPlaceName = (name, asciiName, alternates) => {
-  if (hasCyrillic(name)) return name;
+  if (hasCyrillic(name) && !/[A-Za-z]/.test(name)) return name;
   const cyrillic = alternates
     .split(",")
     .map((item) => item.trim())
@@ -426,7 +427,7 @@ const pickSupplementalRussianPlaceName = (name, asciiName, alternates) => {
   }
 
   if (hasCyrillicAny(name)) return normalizeSupplementalRussianPlaceName(name);
-  return supplementalPlaceNameOverrides.get(name) ?? transliterateLatinPhrase(name || asciiName);
+  return supplementalPlaceNameOverrides.get(name) ?? transliterateLatinPhrase(name || asciiName, true);
 };
 
 const placeTypeLabel = (featureCode) => {
@@ -665,8 +666,9 @@ const buildDistrictNameLookup = (geonamesRaw) => {
   return lookup;
 };
 
-const latinWordToCyrillic = (word) => {
+const latinWordToCyrillic = (word, placeMode = false) => {
   const endingRules = [
+    ...(placeMode ? [[/yye$/i, "ые"], [/yy$/i, "ый"]] : []),
     [/skij$/i, "ский"],
     [/skiy$/i, "ский"],
     [/sky$/i, "ский"],
@@ -680,7 +682,9 @@ const latinWordToCyrillic = (word) => {
 
   for (const [pattern, replacement] of endingRules) {
     if (pattern.test(word)) {
-      return capitalizeCyrillic(latinWordToCyrillic(word.replace(pattern, "")) + replacement);
+      return capitalizeCyrillic(
+        latinWordToCyrillic(word.replace(pattern, ""), placeMode) + replacement
+      );
     }
   }
 
@@ -691,6 +695,7 @@ const latinWordToCyrillic = (word) => {
     ["jo", "ё"],
     ["zh", "ж"],
     ["kh", "х"],
+    ...(placeMode ? [["tsk", "тск"]] : []),
     ["ts", "ц"],
     ["ch", "ч"],
     ["sh", "ш"],
@@ -714,6 +719,11 @@ const latinWordToCyrillic = (word) => {
     }
 
     const char = rest[0];
+    if (placeMode && char === "y") {
+      output += /[аеёиоуыэюя]$/i.test(output) ? "й" : "ы";
+      rest = rest.slice(1);
+      continue;
+    }
     output +=
       {
         a: "а",
@@ -751,17 +761,49 @@ const latinWordToCyrillic = (word) => {
 
 const capitalizeCyrillic = (value) => (value ? value[0].toUpperCase() + value.slice(1) : value);
 
-const transliterateLatinPhrase = (value) =>
-  String(value || "")
+const placeTransliterationOverrides = new Map([
+  ["Narian-Mar", "Нарьян-Мар"],
+  ["Naryan-Mar", "Нарьян-Мар"],
+  ["Kisilevsk", "Киселёвск"]
+]);
+
+const canonicalPlaceNameOverrides = new Map([
+  ["Кисилевск", "Киселёвск"],
+  ["Ленинскнй", "Ленинский"]
+]);
+
+const transliterateLatinPhrase = (value, placeMode = false) => {
+  const raw = String(value || "");
+  const source = placeMode
+    ? (placeTransliterationOverrides.get(raw.trim()) ?? raw)
+      .replace(/schtsch/gi, "shch")
+      .replace(/tsch/gi, "ch")
+      .replace(/šč/gi, "shch")
+      .replace(/č/gi, "ch")
+      .replace(/š/gi, "sh")
+      .replace(/ž/gi, "zh")
+      .replace(/ë/gi, "yo")
+      .replace(/[’`]/g, "'")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/^Nizny(?=[a-z])/i, "Nizhny")
+      .replace(/^(?:poselok|derevnya|selo)\s+/i, "")
+      .replace(/\s+(?:village|settlement)$/i, "")
+    : raw;
+
+  const transliterated = source
     .replace(/closed administrative-territorial formation of/gi, "закрытое административно-территориальное образование")
-    .split(/([-\s'])/)
+    .split(placeMode ? /([-\s])/ : /([-\s'])/)
     .map((part) => {
       if (!/[A-Za-z]/.test(part)) return part;
-      return latinWordToCyrillic(part);
+      return latinWordToCyrillic(part, placeMode);
     })
-    .join("")
+    .join("");
+
+  return (placeMode ? transliterated.replace(/'/g, "ь") : transliterated)
     .replace(/\s+/g, " ")
     .trim();
+};
 
 const fallbackRussianDistrictName = (value) => {
   const clean = String(value || "")
@@ -1247,7 +1289,11 @@ const parseGeoNamesPlaces = (raw, shouldInclude, pickName = pickPlaceName) =>
     const roundedLat = roundNumber(lat, 5);
     const roundedLon = roundNumber(lon, 5);
     const preferredName = preferredPlaceNameByCoord.get(`${roundedLat}|${roundedLon}`);
-    const name = preferredName ?? pickName(cols[1], cols[2], cols[3]);
+    const pickedName = preferredName ?? pickName(cols[1], cols[2], cols[3]);
+    const russianName = /[A-Za-z]/.test(pickedName)
+      ? transliterateLatinPhrase(pickedName, true)
+      : pickedName;
+    const name = canonicalPlaceNameOverrides.get(russianName) ?? russianName;
     const asciiName = cols[2] && cols[2] !== name ? cols[2] : "";
     const featureCode = cols[7];
 
@@ -1269,7 +1315,20 @@ const places = [
   ...parseGeoNamesPlaces(geonamesRaw, () => true),
   ...parseGeoNamesPlaces(geonamesUaRaw, (cols) => supplementalPlaceAdmin1Codes.has(cols[10]), pickSupplementalRussianPlaceName)
 ]
-  .sort((a, b) => (b[5] ?? 0) - (a[5] ?? 0) || String(a[1]).localeCompare(String(b[1]), "ru"));
+  // После населения достаточно стабильного кодового порядка. Locale
+  // collation для 200 тысяч кириллических строк замедляла ETL на минуты,
+  // а пользовательской сортировки этот массив не задаёт.
+  .sort((a, b) => {
+    const populationOrder = (b[5] ?? 0) - (a[5] ?? 0);
+    if (populationOrder !== 0) return populationOrder;
+    return a[1] === b[1] ? 0 : a[1] < b[1] ? -1 : 1;
+  });
+
+const malformedPlaceNames = places.filter((row) => /[A-Za-z]|йй|нй|ьь/.test(row[1]));
+if (malformedPlaceNames.length > 0) {
+  const examples = malformedPlaceNames.slice(0, 5).map((row) => row[1]).join(", ");
+  throw new Error(`Нерусские имена населённых пунктов: ${examples}`);
+}
 
 writeJson("places.json", {
   fields: ["id", "name", "asciiName", "lat", "lon", "population", "featureCode", "typeLabel"],
@@ -1283,15 +1342,52 @@ writeJson("places.json", {
 //
 // Берутся не только крупные: столица субъекта — ориентир при любом
 // населении (Анадырь, Нарьян-Мар), райцентр и десятитысячник — уже на
-// районном масштабе. Ниже десяти тысяч не подписываем: имена деревень
-// человек получает поиском и кликом, а не ковром по карте.
+// районном масштабе. Более мелкие места идут ниже отдельными клетками,
+// чтобы не создавать сотни тысяч OpenLayers-фич при старте.
+const isOverviewPlaceLabel = (row) =>
+  (row[5] ?? 0) >= 10_000 || row[6] === "PPLA" || row[6] === "PPLA2";
+
 const cityLabels = places
-  .filter((row) => (row[5] ?? 0) >= 10_000 || row[6] === "PPLA" || row[6] === "PPLA2")
+  .filter(isOverviewPlaceLabel)
   .map((row) => ({
     name: row[1], lat: row[3], lon: row[4],
     population: row[5] ?? 0, code: row[6]
   }));
 writeJson("city-labels.json", { cities: cityLabels });
+
+// Почти 200 тысяч сёл и посёлков нельзя создавать как OpenLayers-фичи
+// при старте: это снова сделает карту тяжёлой. Режем их на клетки по 2°;
+// клиент на близком масштабе забирает только клетки текущего экрана.
+const PLACE_LABELS_FORMAT = 2;
+const PLACE_LABEL_CELL_SIZE = 2;
+const inactivePlaceCodes = new Set(["PPLH", "PPLQ", "PPLW"]);
+const placeLabelCells = new Map();
+let detailedPlaceLabels = 0;
+
+for (const row of places) {
+  if (isOverviewPlaceLabel(row) || inactivePlaceCodes.has(row[6])) continue;
+  const x = Math.floor(row[4] / PLACE_LABEL_CELL_SIZE);
+  const y = Math.floor(row[3] / PLACE_LABEL_CELL_SIZE);
+  const key = `${x}_${y}`;
+  const cell = placeLabelCells.get(key) ?? [];
+  // Порядок полей документирован типом DetailedPlaceLabelRow на клиенте.
+  cell.push([row[1], row[3], row[4], row[5], row[6]]);
+  placeLabelCells.set(key, cell);
+  detailedPlaceLabels += 1;
+}
+
+const placeLabelsDir = join(outData, "place-labels");
+rmSync(placeLabelsDir, { force: true, recursive: true });
+mkdirSync(placeLabelsDir, { recursive: true });
+const placeLabelCellKeys = [...placeLabelCells.keys()].sort();
+for (const key of placeLabelCellKeys) {
+  writeFileSync(join(placeLabelsDir, `${key}.json`), JSON.stringify(placeLabelCells.get(key)));
+}
+writeFileSync(join(placeLabelsDir, "manifest.json"), JSON.stringify({
+  version: PLACE_LABELS_FORMAT,
+  cellSize: PLACE_LABEL_CELL_SIZE,
+  cells: placeLabelCellKeys
+}));
 
 const oktmoCsv = readFileSync(
   join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"),
@@ -1314,6 +1410,7 @@ const summary = {
   roads: roads.features.length,
   railways: railways.features.length,
   places: places.length,
+  detailedPlaceLabels,
   oktmoRows
 };
 writeJson("summary.json", summary);

@@ -14,7 +14,7 @@ import XYZ from "ol/source/XYZ";
 import { Attribution, defaults as defaultControls, ScaleLine } from "ol/control";
 import { containsCoordinate, createEmpty, extend, getCenter } from "ol/extent";
 import { unByKey } from "ol/Observable";
-import { fromLonLat } from "ol/proj";
+import { fromLonLat, transformExtent } from "ol/proj";
 import Style from "ol/style/Style";
 import CircleStyle from "ol/style/Circle";
 import Fill from "ol/style/Fill";
@@ -71,6 +71,12 @@ import {
   toggleBookmark
 } from "./lib/bookmarks";
 import type { Bookmark } from "./lib/bookmarks";
+import {
+  DETAILED_PLACE_LABEL_ZOOM,
+  detailedPlaceLabelMinZoom,
+  placeLabelCellKeys
+} from "./lib/placeLabels";
+import type { DetailedPlaceLabelRow, PlaceLabelManifest } from "./lib/placeLabels";
 import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
@@ -145,6 +151,9 @@ const RAILWAYS_ZOOM = 4.8;
 const DISTRICT_SELECTION_ZOOM = 5.4;
 const FEATURED_PLACES_ZOOM = 7.1;
 const FEATURED_PLACE_LABEL_ZOOM = 7.75;
+const MAP_MAX_ZOOM = 15.5;
+const PLACE_LABELS_FORMAT = 2;
+const PLACE_LABEL_CELL_CACHE_LIMIT = 32;
 const BASEMAP_URL =
   import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
 const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© OpenStreetMap contributors, © CARTO";
@@ -545,21 +554,28 @@ function createCityLabelStyle(schemeRef: React.MutableRefObject<BasemapScheme>) 
     const zoom = resolutionToZoom(resolution);
     const population = asNumber(feature.get("population"), 0);
     const code = asText(feature.get("code"), "");
-    if (zoom < cityLabelMinZoom(population, code)) return undefined;
+    const detailed = feature.get("detailed") === true;
+    const minZoom = detailed
+      ? detailedPlaceLabelMinZoom(population, code)
+      : cityLabelMinZoom(population, code);
+    if (zoom < minZoom) return undefined;
     const major = population >= 1_000_000;
+    const minor = detailed && population < 5_000 && !code.startsWith("PPLA");
     // На светлой подложке светлый текст с тёмным ореолом превращается в
     // грязь — цвета меняются местами вместе со схемой.
     const light = schemeRef.current === "light";
     return new Style({
       text: new Text({
         text: asText(feature.get("name"), ""),
-        font: `${major ? 600 : 500} ${major ? 12.5 : 11}px Inter, system-ui, sans-serif`,
+        font: `${major ? 600 : minor ? 400 : 500} ${major ? 12.5 : minor ? 10 : 11}px Inter, system-ui, sans-serif`,
         fill: new Fill({
-          color: light ? "rgba(52, 62, 58, 0.9)" : "rgba(225, 232, 228, 0.88)"
+          color: light
+            ? `rgba(52, 62, 58, ${minor ? 0.76 : 0.9})`
+            : `rgba(225, 232, 228, ${minor ? 0.76 : 0.88})`
         }),
         stroke: new Stroke({
           color: light ? "rgba(255, 255, 255, 0.85)" : "rgba(8, 11, 11, 0.85)",
-          width: 2.4
+          width: minor ? 2 : 2.4
         })
       })
     });
@@ -1752,7 +1768,8 @@ export default function App() {
       style: createFeaturedPlaceStyle(selectedKeyRef)
     });
 
-    const cityLabelSource = new VectorSource({
+    const cityLabelSource = new VectorSource<Feature<Geometry>>({
+      attributions: "© GeoNames",
       features: dataset.cityLabels.map((city) => {
         const feature = new Feature({
           geometry: new Point(fromLonLat([city.lon, city.lat])),
@@ -1765,8 +1782,10 @@ export default function App() {
     });
     const cityLabelLayer = new VectorLayer({
       source: cityLabelSource,
-      zIndex: 9,
-      declutter: true,
+      // Подписи должны лежать поверх дорог и административных контуров,
+      // но под событиями. Раньше дороги с zIndex 24 перечёркивали текст.
+      zIndex: 31,
+      declutter: "place-labels",
       style: createCityLabelStyle(basemapSchemeRef)
     });
     cityLabelLayerRef.current = cityLabelLayer;
@@ -1817,7 +1836,7 @@ export default function App() {
         center: OVERVIEW_CENTER,
         zoom: getOverviewZoom(),
         minZoom: 1.75,
-        maxZoom: 9.8
+        maxZoom: MAP_MAX_ZOOM
       })
     });
 
@@ -1852,6 +1871,133 @@ export default function App() {
       applyStartView();
     }
     let disposed = false;
+    let detailedPlaceRequest = 0;
+    let renderedDetailedPlaceFeatures: Feature<Geometry>[] = [];
+    let placeLabelManifestPromise: Promise<PlaceLabelManifest | null> | null = null;
+    let placeLabelCells: ReadonlySet<string> = new Set();
+    const placeLabelCellCache = new globalThis.Map<
+      string,
+      Promise<DetailedPlaceLabelRow[]>
+    >();
+
+    const clearDetailedPlaceLabels = () => {
+      if (!renderedDetailedPlaceFeatures.length) return;
+      cityLabelSource.removeFeatures(renderedDetailedPlaceFeatures);
+      renderedDetailedPlaceFeatures = [];
+    };
+
+    const loadPlaceLabelManifest = () => {
+      if (placeLabelManifestPromise) return placeLabelManifestPromise;
+      placeLabelManifestPromise = fetch(
+        `/data/place-labels/manifest.json?v=${PLACE_LABELS_FORMAT}`
+      )
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+          const manifest = (await response.json()) as PlaceLabelManifest;
+          if (
+            manifest.version !== PLACE_LABELS_FORMAT ||
+            !Number.isFinite(manifest.cellSize) ||
+            manifest.cellSize <= 0 ||
+            !Array.isArray(manifest.cells)
+          ) {
+            throw new Error("неизвестный формат подписей");
+          }
+          placeLabelCells = new Set(manifest.cells);
+          return manifest;
+        })
+        .catch(() => {
+          placeLabelManifestPromise = null;
+          return null;
+        });
+      return placeLabelManifestPromise;
+    };
+
+    const loadPlaceLabelCell = (
+      key: string,
+      version: number
+    ): Promise<DetailedPlaceLabelRow[]> => {
+      const cached = placeLabelCellCache.get(key);
+      if (cached) {
+        // Map хранит порядок вставки: повторно посещённая клетка становится
+        // самой свежей и не вылетает первой из небольшого LRU-кеша.
+        placeLabelCellCache.delete(key);
+        placeLabelCellCache.set(key, cached);
+        return cached;
+      }
+      const request = fetch(`/data/place-labels/${key}.json?v=${version}`)
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+          const rows = await response.json();
+          return Array.isArray(rows) ? rows as DetailedPlaceLabelRow[] : [];
+        })
+        .catch(() => {
+          if (placeLabelCellCache.get(key) === request) {
+            placeLabelCellCache.delete(key);
+          }
+          return [];
+        });
+      placeLabelCellCache.set(key, request);
+      while (placeLabelCellCache.size > PLACE_LABEL_CELL_CACHE_LIMIT) {
+        const oldest = placeLabelCellCache.keys().next().value;
+        if (typeof oldest !== "string") break;
+        placeLabelCellCache.delete(oldest);
+      }
+      return request;
+    };
+
+    const syncDetailedPlaceLabels = async () => {
+      const requestId = ++detailedPlaceRequest;
+      const zoom = map.getView().getZoom() ?? 0;
+      if (zoom < DETAILED_PLACE_LABEL_ZOOM) {
+        clearDetailedPlaceLabels();
+        return;
+      }
+
+      const size = map.getSize();
+      if (!size || size[0] <= 0 || size[1] <= 0) return;
+      const manifest = await loadPlaceLabelManifest();
+      if (!manifest || disposed || requestId !== detailedPlaceRequest) return;
+
+      const lonLatExtent = transformExtent(
+        map.getView().calculateExtent(size),
+        "EPSG:3857",
+        "EPSG:4326"
+      );
+      const keys = placeLabelCellKeys(lonLatExtent, manifest.cellSize, placeLabelCells);
+      const rowsByCell = await Promise.all(
+        keys.map((key) => loadPlaceLabelCell(key, manifest.version))
+      );
+      if (disposed || requestId !== detailedPlaceRequest) return;
+
+      const features: Feature<Geometry>[] = [];
+      for (const rows of rowsByCell) {
+        for (const row of rows) {
+          if (!Array.isArray(row) || row.length < 5) continue;
+          const [name, lat, lon, rawPopulation, code] = row;
+          const population = asNumber(rawPopulation, 0);
+          if (
+            typeof name !== "string" ||
+            typeof code !== "string" ||
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lon) ||
+            zoom < detailedPlaceLabelMinZoom(population, code)
+          ) {
+            continue;
+          }
+          features.push(new Feature({
+            geometry: new Point(fromLonLat([lon, lat])),
+            name,
+            population,
+            code,
+            detailed: true
+          }));
+        }
+      }
+
+      clearDetailedPlaceLabels();
+      cityLabelSource.addFeatures(features);
+      renderedDetailedPlaceFeatures = features;
+    };
 
     const loadVectorLayer = async (
       url: string,
@@ -2003,8 +2149,12 @@ export default function App() {
         setViewExtent(map.getView().calculateExtent(size));
       }
     };
-    map.on("moveend", syncExtent);
-    syncExtent();
+    const syncMapView = () => {
+      syncExtent();
+      void syncDetailedPlaceLabels();
+    };
+    map.on("moveend", syncMapView);
+    syncMapView();
 
     const viewResolutionKey = map.getView().on("change:resolution", () => {
       maybeLoadLazyLayers();
@@ -2141,9 +2291,12 @@ export default function App() {
 
     return () => {
       disposed = true;
+      detailedPlaceRequest += 1;
       window.clearInterval(activeDistrictsTimer);
       resizeObserver.disconnect();
       unByKey(viewResolutionKey);
+      map.un("moveend", syncMapView);
+      clearDetailedPlaceLabels();
       map.setTarget(undefined);
       mapRef.current = null;
       basemapLayerRef.current = null;
@@ -2346,7 +2499,10 @@ export default function App() {
         applySelectedFeature(null);
         map.getView().animate({
           center: fromLonLat([item.lon, item.lat]),
-          zoom: Math.max(map.getView().getZoom() ?? 5, item.level === "district" ? 7 : 8.8),
+          zoom: Math.max(
+            map.getView().getZoom() ?? 5,
+            item.level === "place" ? 11 : item.level === "district" ? 7 : 5.2
+          ),
           duration: 420
         });
       }
