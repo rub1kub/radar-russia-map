@@ -721,18 +721,53 @@ function createRiverStyle(feature: FeatureLike, resolution: number) {
   });
 }
 
-function createUrbanAreaStyle(feature: FeatureLike, resolution: number) {
-  if (resolutionToZoom(resolution) < asNumber(feature.get("minZoom"), 6)) return undefined;
+function createUrbanAreaStyle(schemeRef: React.MutableRefObject<BasemapScheme>) {
+  const styleCache = new globalThis.Map<string, Style[]>();
 
-  const areaSqKm = asNumber(feature.get("areaSqKm"), 0);
-  const alpha = areaSqKm >= 450 ? 0.32 : areaSqKm >= 120 ? 0.26 : areaSqKm >= 40 ? 0.2 : 0.16;
-  return new Style({
-    fill: new Fill({ color: `rgba(58, 68, 64, ${alpha})` }),
-    stroke: new Stroke({
-      color: areaSqKm >= 120 ? "rgba(64, 76, 72, 0.34)" : "rgba(72, 82, 78, 0.18)",
-      width: areaSqKm >= 120 ? 0.8 : 0.45
-    })
-  });
+  return (feature: FeatureLike, resolution: number) => {
+    if (resolutionToZoom(resolution) < asNumber(feature.get("minZoom"), 6)) return undefined;
+
+    const areaSqKm = asNumber(feature.get("areaSqKm"), 0);
+    const size = areaSqKm >= 450 ? "large" : areaSqKm >= 120 ? "medium" : "small";
+    const scheme = schemeRef.current;
+    const cacheKey = `${scheme}:${size}`;
+    const cached = styleCache.get(cacheKey);
+    if (cached) return cached;
+
+    const coreWidth = size === "large" ? 1.5 : size === "medium" ? 1.3 : 1.05;
+    const fillAlpha = size === "large" ? 0.19 : size === "medium" ? 0.15 : 0.11;
+    const colors = scheme === "dark"
+      ? {
+          fill: `rgba(184, 197, 190, ${fillAlpha})`,
+          halo: "rgba(4, 8, 7, 0.82)",
+          core: "rgba(224, 232, 227, 0.76)"
+        }
+      : scheme === "light"
+        ? {
+            fill: `rgba(54, 66, 61, ${fillAlpha})`,
+            halo: "rgba(255, 255, 255, 0.92)",
+            core: "rgba(46, 57, 52, 0.7)"
+          }
+        : {
+            fill: `rgba(232, 239, 234, ${fillAlpha * 0.8})`,
+            halo: "rgba(3, 6, 5, 0.82)",
+            core: "rgba(245, 248, 246, 0.86)"
+          };
+
+    // Двойная линия сохраняет силуэт на светлых полях, тёмной застройке
+    // и спутниковом снимке. Тонкая заливка лишь отделяет город от фона.
+    const styles = [
+      new Style({
+        stroke: new Stroke({ color: colors.halo, width: coreWidth + 2.4 })
+      }),
+      new Style({
+        fill: new Fill({ color: colors.fill }),
+        stroke: new Stroke({ color: colors.core, width: coreWidth })
+      })
+    ];
+    styleCache.set(cacheKey, styles);
+    return styles;
+  };
 }
 
 function createRoadStyle(feature: FeatureLike, resolution: number) {
@@ -1001,7 +1036,7 @@ export default function App() {
     landCover: false,
     waterBodies: false,
     rivers: false,
-    urbanAreas: false,
+    urbanAreas: true,
     roads: false,
     railways: false,
     regions: true,
@@ -1699,9 +1734,9 @@ export default function App() {
     const urbanAreaLayer = new VectorLayer({
       source: urbanAreaSource,
       visible: layers.urbanAreas,
-      zIndex: 8,
+      zIndex: 26,
       minZoom: 4.3,
-      style: createUrbanAreaStyle
+      style: createUrbanAreaStyle(basemapSchemeRef)
     });
     const roadLayer = new VectorLayer({
       source: roadSource,
@@ -2389,6 +2424,7 @@ export default function App() {
     );
     basemapLayerRef.current?.setOpacity(scheme.opacity);
     basemapSchemeRef.current = basemapScheme;
+    urbanAreaLayerRef.current?.changed();
     cityLabelLayerRef.current?.changed();
     try {
       localStorage.setItem(BASEMAP_STORE_KEY, basemapScheme);

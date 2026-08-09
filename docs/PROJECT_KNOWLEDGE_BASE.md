@@ -295,7 +295,7 @@ VITE_HILLSHADE_ATTRIBUTION
 | 6 | Крупная речная сеть | выключен | `river-network-major.json` | слой рек + zoom `>= 4.8` |
 | 7 | Детальная речная сеть | выключен | `river-network-detail.json` | слой рек + zoom `>= 7.6` |
 | 8 | Именные реки | выключен | `rivers.json` | по включению, layer minZoom `2.6` |
-| 8 | Городские контуры | включен | `urban-areas.json` | zoom `>= 4.3` |
+| 26 | Городские контуры | включен | `urban-areas.json` | zoom `>= 4.3` |
 | 20 | Районы | включен | `districts.json` | сразу, layer minZoom `4.15` |
 | 23 | Железные дороги | включен | `railways.json` | zoom `>= 4.8` |
 | 24 | Дороги | включен | `roads.json` | zoom `>= 4.65` |
@@ -1398,4 +1398,3 @@ Browser smoke:
 3. выполнить `npm run build`;
 4. провести browser smoke;
 5. указать дату последней сверки в начале документа.
-

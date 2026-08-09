@@ -357,8 +357,9 @@ button {
 }
 
 .swatch-urban {
-  border: 1px solid rgba(72, 82, 78, 0.24);
-  background: rgba(58, 68, 64, 0.22);
+  border: 1px solid rgba(224, 232, 227, 0.76);
+  box-shadow: 0 0 0 1px rgba(4, 8, 7, 0.82);
+  background: rgba(184, 197, 190, 0.19);
 }
 
 .swatch-road {
