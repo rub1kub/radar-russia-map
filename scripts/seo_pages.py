@@ -189,6 +189,13 @@ CITY_SLUG_REDIRECTS = {
     "bogorodsk": "noginsk",
 }
 
+# Только варианты, которые уже встречаются в живых поисковых запросах.
+# Не расширять список догадками: alternateName должен помогать реальному
+# интенту, а не превращать посадочную в перечень ключевых слов.
+PLACE_SEARCH_ALIASES = {
+    "Санкт-Петербург": ("СПб", "Питер"),
+}
+
 
 def canonical_city_name(name: str) -> str:
     cleaned = re.sub(r"^г\.\s*", "", name, flags=re.IGNORECASE)
@@ -814,6 +821,13 @@ def faq_block(name: str, stats: dict | None,
          "приходить в браузер даже при закрытой вкладке. В Telegram то же "
          "самое делает бот: команда /watch с названием места."),
     ]
+    if name == "Санкт-Петербург":
+        qa.insert(2, (
+            "Где смотреть тревогу в СПб и Питере?",
+            "СПб и Питер — распространённые названия Санкт-Петербурга. "
+            "Эта страница показывает одну сводку по городу и его районам, "
+            "независимо от того, какое название использовал источник.",
+        ))
     html = ["<h2>Вопросы и ответы</h2>"]
     for question, answer in qa:
         html.append(f"      <h3>{escape(question)}</h3> "
@@ -839,6 +853,7 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
          neighbours: list[tuple[str, str]], updated: str) -> str:
     page_kind = "city" if path_prefix == "city" else "region"
     where = location_phrase(name, page_kind)
+    aliases = PLACE_SEARCH_ALIASES.get(name, ())
     # Формула из реальных запросов Вебмастера: люди спрашивают «тревога в
     # X сейчас», «была ли сегодня», «карта по районам» — все три слова
     # должны быть в заголовке.
@@ -846,15 +861,19 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
              if path_prefix == "region"
              else f"Тревога и БПЛА {where} сейчас — живая карта")
     count = stats["events"] if stats else 0
+    description_subject = (
+        f"Тревоги и БПЛА {where} ({', '.join(aliases)})"
+        if aliases else f"Воздушная обстановка {where}"
+    )
     if count:
         description = (
-            f"Воздушная обстановка {where}: {count} "
+            f"{description_subject}: {count} "
             f"{plural(count, 'событие', 'события', 'событий')} за 30 дней, "
             f"последнее — {moment(stats['last'])}. Тревоги, сообщения о "
             f"беспилотниках и отбои по районам, по открытым источникам.")
     else:
         description = (
-            f"Воздушная обстановка {where}: за 30 дней сообщений об опасности "
+            f"{description_subject}: за 30 дней сообщений об опасности "
             f"не было. Тревоги, сообщения о беспилотниках и отбои по районам, "
             f"по открытым источникам.")
     url = f"{SITE}/{path_prefix}/{slug}/"
@@ -894,9 +913,21 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
             f"к зоне «{escape(admin_name)}», включая входящие населённые "
             f"пункты. Это районная привязка источников, а не утверждение о "
             f"точном месте события.</p>")
+    alias_note = ""
+    if aliases:
+        alias_note = (
+            f"<p><strong>{escape(aliases[0])}</strong> и "
+            f"<strong>{escape(aliases[1])}</strong> — распространённые "
+            f"названия Санкт-Петербурга. Все варианты ведут к одной сводке "
+            f"по городу и районам.</p>"
+        )
     if parent:
         parent_name, parent_url = parent
-        crumb_nav = (f'<a href="/">Карта обстановки</a> → '
+        city_crumb = (
+            '<a href="/city/">Города</a> → '
+            if page_kind == "city" else ""
+        )
+        crumb_nav = (f'<a href="/">Карта обстановки</a> → {city_crumb}'
                      f'<a href="{parent_url}">{escape(parent_name)}</a> → '
                      f'{escape(name)}')
     else:
@@ -906,9 +937,15 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         {"@type": "ListItem", "position": 1, "name": "Карта обстановки",
          "item": f"{SITE}/"},
     ]
+    if page_kind == "city":
+        breadcrumbs.append({
+            "@type": "ListItem", "position": len(breadcrumbs) + 1,
+            "name": "Города", "item": f"{SITE}/city/",
+        })
     if parent:
         breadcrumbs.append({
-            "@type": "ListItem", "position": 2, "name": parent[0],
+            "@type": "ListItem", "position": len(breadcrumbs) + 1,
+            "name": parent[0],
             "item": parent[1],
         })
     breadcrumbs.append({
@@ -926,11 +963,14 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
             "url": parent[1],
             "containedInPlace": contained,
         }
+    place_ld = {"@type": "Place", "name": name,
+                "containedInPlace": contained}
+    if aliases:
+        place_ld["alternateName"] = list(aliases)
     webpage_ld = json.dumps({
         "@context": "https://schema.org", "@type": "WebPage", "url": url,
         "name": title,
-        "about": {"@type": "Place", "name": name,
-                  "containedInPlace": contained},
+        "about": place_ld,
         "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
                      "url": f"{SITE}/"},
     }, ensure_ascii=False)
@@ -985,6 +1025,8 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
       <h1>{escape(title)}</h1>
       <p>{escape(description)}</p>
 
+      {alias_note}
+
       <a class="map" href="{map_href}">Открыть карту — {escape(name)}</a>
 
       {summary_block(name, stats, page_kind)}
@@ -1015,11 +1057,115 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         публичным сообщениям, может опаздывать и ошибаться. Не принимайте по
         ней решения о личной безопасности — следуйте указаниям экстренных
         служб.
-        <br /><a href="/">Вся карта обстановки по России</a>
+        <br /><a href="/">Вся карта обстановки по России</a> ·
+        <a href="/city/">Сводки по городам</a>
       </footer>
     </main>
   </body>
 </html>
+"""
+
+
+def city_index_page(cities: list[dict], updated: str) -> str:
+    """HTML-каталог опубликованных городов — один crawl hub вместо 150 сирот."""
+    grouped: dict[str, dict] = {}
+    for city in cities:
+        region = grouped.setdefault(city["region_id"], {
+            "name": city["region_name"],
+            "slug": city["region_slug"],
+            "cities": [],
+        })
+        region["cities"].append(city)
+
+    sections = []
+    for region in sorted(grouped.values(), key=lambda item: item["name"]):
+        items = "".join(
+            f'<li><a href="/city/{city["slug"]}/">'
+            f'{escape(city["name"])}</a></li>'
+            for city in sorted(region["cities"], key=lambda item: item["name"])
+        )
+        sections.append(
+            '<section><h2><a href="/region/' + region["slug"] + '/">'
+            + escape(region["name"]) + '</a></h2><ul>' + items
+            + '</ul></section>'
+        )
+
+    title = "Тревога и БПЛА по городам России — карта и сводки"
+    description = (
+        f"Воздушная обстановка в {len(cities)} городах России: тревоги, "
+        "сообщения о БПЛА, последние события и ссылки на живую карту."
+    )
+    url = f"{SITE}/city/"
+    breadcrumb_ld = json.dumps({
+        "@context": "https://schema.org", "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1,
+             "name": "Карта обстановки", "item": f"{SITE}/"},
+            {"@type": "ListItem", "position": 2,
+             "name": "Города", "item": url},
+        ],
+    }, ensure_ascii=False)
+    collection_ld = json.dumps({
+        "@context": "https://schema.org", "@type": "CollectionPage",
+        "url": url, "name": title, "description": description,
+        "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
+                     "url": f"{SITE}/"},
+        "mainEntity": {
+            "@type": "ItemList", "numberOfItems": len(cities),
+            "itemListElement": [
+                {"@type": "ListItem", "position": index,
+                 "name": city["name"],
+                 "url": f'{SITE}/city/{city["slug"]}/'}
+                for index, city in enumerate(cities, start=1)
+            ],
+        },
+    }, ensure_ascii=False)
+
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{escape(title)} · Тихое небо</title>
+  <meta name="description" content="{escape(description)}" />
+  <link rel="canonical" href="{url}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Тихое небо" />
+  <meta property="og:locale" content="ru_RU" />
+  <meta property="og:url" content="{url}" />
+  <meta property="og:title" content="{escape(title)}" />
+  <meta property="og:description" content="{escape(description)}" />
+  <meta property="og:image" content="{SITE}/preview.png" />
+  <meta name="theme-color" content="#0e1211" />
+  <script type="application/ld+json">{breadcrumb_ld}</script>
+  <script type="application/ld+json">{collection_ld}</script>
+  <style>
+    body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
+           font:16px/1.6 Inter, system-ui, sans-serif; }}
+    main {{ max-width:960px; margin:0 auto; padding:40px 20px 80px; }}
+    h1 {{ max-width:760px; font-size:29px; line-height:1.25; margin:0 0 14px; }}
+    h2 {{ font-size:17px; margin:0 0 9px; }}
+    p, li {{ color:#aab4ad; }} a {{ color:#9fd4b0; }}
+    nav {{ font-size:13px; margin-bottom:18px; }}
+    a.map {{ display:inline-block; margin:18px 0 30px; padding:12px 18px;
+            background:#e93e4e; color:#fff; text-decoration:none;
+            border-radius:6px; font-weight:600; }}
+    .regions {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+                gap:28px 34px; margin-top:28px; }}
+    section {{ border-top:1px solid rgba(255,255,255,.12); padding-top:15px; }}
+    ul {{ margin:0; padding-left:20px; }} li {{ margin:4px 0; }}
+    footer {{ margin-top:46px; padding-top:18px; color:#7d8a83;
+             border-top:1px solid rgba(255,255,255,.08); font-size:13px; }}
+    @media (max-width:560px) {{ main {{ padding:28px 16px 64px; }}
+      .regions {{ grid-template-columns:1fr; gap:24px; }} }}
+  </style></head><body><main>
+  <nav><a href="/">Карта обстановки</a> → Города</nav>
+  <h1>Тревога и БПЛА по городам России</h1>
+  <p>{escape(description)}</p>
+  <a class="map" href="/">Открыть живую карту</a>
+  <div class="regions">{''.join(sections)}</div>
+  <footer>Каталог и сводки обновлены {escape(updated)}. Страницы отражают
+    сообщения открытых источников и могут опаздывать.
+    <a href="/">Карта по России</a></footer>
+</main></body></html>
 """
 
 
@@ -1190,13 +1336,14 @@ def digest_index(days: list[str], daily_stats: dict[str, dict],
 """
 
 
-def fill_prerender(named: list, stats: dict, updated: str) -> bool:
+def fill_prerender(named: list, stats: dict, updated: str,
+                   city_count: int) -> bool:
     """Вписать в главную то, что робот без JavaScript иначе не увидит.
 
     SPA для поисковика — пустой div: разметка ld+json есть, а текста и
     внутренних ссылок нет. Блок между маркерами в dist/index.html живёт
-    до монтирования React и виден роботу: сводка за окно и ссылки на
-    все посадочные регионов. Сами маркеры лежат в index.html репозитория.
+    до монтирования React и виден роботу: сводка за окно, ссылка на каталог
+    городов и все посадочные регионов. Маркеры лежат в index.html репозитория.
     """
     index = OUT / "index.html"
     if not index.exists():
@@ -1212,6 +1359,8 @@ def fill_prerender(named: list, stats: dict, updated: str) -> bool:
     lines = [
         f'<p style="margin:18px 0 6px;color:#9da8a0">За последние 30 дней — '
         f'{total} событий в {active} регионах. Обновлено {escape(updated)}.</p>',
+        f'<p style="margin:6px 0 12px"><a href="/city/" '
+        f'style="color:#9fd4b0">Сводки по {city_count} городам России</a></p>',
         '<nav aria-label="Регионы"><h2 style="margin:18px 0 8px;font-size:16px">'
         'Обстановка по регионам</h2>',
         '<ul style="margin:0;padding:0;list-style:none;display:flex;'
@@ -1305,8 +1454,11 @@ def main() -> int:
         cities_by_region.setdefault(city["region_id"], []).append(city)
 
     sitemap: list[tuple[str, str, str, str]] = [
-        (f"{SITE}/", lastmod, "hourly", "1.0")
+        (f"{SITE}/", lastmod, "hourly", "1.0"),
+        (f"{SITE}/city/", lastmod, "daily", "0.85"),
     ]
+    (OUT / "city" / "index.html").write_text(
+        city_index_page(cities, updated), encoding="utf-8")
     for index, (name, slug, source_id, zone_id) in enumerate(named):
         districts = sorted(by_region.get(source_id, []))
         # Соседи по алфавиту, кольцом: у последних регионов иначе не было бы
@@ -1418,7 +1570,7 @@ def main() -> int:
         f"{entries}\n</urlset>\n", encoding="utf-8")
 
     with_data = sum(1 for _, _, _, zone in named if stats.get(zone))
-    filled = fill_prerender(named, stats, updated)
+    filled = fill_prerender(named, stats, updated, len(cities))
     print(f"SEO: регионов {len(named)} ({with_data} со сводкой), "
           f"городов {len(cities)}, дней {len(day_keys)}, "
           f"в sitemap {len(sitemap)} адресов"

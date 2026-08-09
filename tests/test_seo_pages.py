@@ -238,8 +238,78 @@ def test_city_page_has_canonical_parent_and_valid_structured_data():
     assert "городской округ Краснодар" in html
     documents = _json_ld(html)
     assert documents[0]["@type"] == "BreadcrumbList"
+    assert documents[0]["itemListElement"][1]["item"].endswith("/city/")
+    assert [item["position"] for item in documents[0]["itemListElement"]] == [1, 2, 3, 4]
     assert documents[1]["about"]["containedInPlace"]["name"] == "Краснодарский край"
     assert documents[2]["@type"] == "FAQPage"
+
+
+def test_city_index_groups_regions_and_lists_every_city():
+    cities = [
+        {
+            "zone_id": "city-1", "name": "Краснодар",
+            "admin_name": "городской округ Краснодар",
+            "region_id": "region-1", "region_name": "Краснодарский край",
+            "region_slug": "krasnodarskiy-kray", "slug": "krasnodar",
+            "stats": {"events": 3},
+        },
+        {
+            "zone_id": "city-2", "name": "Анапа",
+            "admin_name": "городской округ Анапа",
+            "region_id": "region-1", "region_name": "Краснодарский край",
+            "region_slug": "krasnodarskiy-kray", "slug": "anapa",
+            "stats": {"events": 5},
+        },
+    ]
+
+    html = seo.city_index_page(cities, "9 августа, 18:30 МСК")
+
+    assert '<link rel="canonical" href="https://tihoenebo.com/city/"' in html
+    assert "Тревога и БПЛА по городам России" in html
+    assert '/region/krasnodarskiy-kray/' in html
+    assert '/city/anapa/' in html
+    assert '/city/krasnodar/' in html
+    documents = _json_ld(html)
+    assert documents[0]["@type"] == "BreadcrumbList"
+    assert documents[1]["@type"] == "CollectionPage"
+    assert documents[1]["mainEntity"]["numberOfItems"] == 2
+    assert len(documents[1]["mainEntity"]["itemListElement"]) == 2
+
+
+def test_saint_petersburg_page_uses_proven_search_aliases():
+    html = seo.page(
+        "Санкт-Петербург", "sankt-peterburg", ["Адмиралтейский район"], None,
+        neighbours=[("Ленинградская область", "leningradskaya-oblast")],
+        updated="9 августа, 18:30 МСК",
+    )
+
+    assert "СПб" in html
+    assert "Питер" in html
+    assert "Где смотреть тревогу в СПб и Питере?" in html
+    documents = _json_ld(html)
+    assert documents[1]["about"]["alternateName"] == ["СПб", "Питер"]
+    questions = documents[2]["mainEntity"]
+    assert any(item["name"] == "Где смотреть тревогу в СПб и Питере?"
+               for item in questions)
+
+
+def test_prerender_links_city_catalog_from_homepage(tmp_path, monkeypatch):
+    monkeypatch.setattr(seo, "OUT", tmp_path)
+    (tmp_path / "index.html").write_text(
+        "before<!-- prerender:start -->old<!-- prerender:end -->after",
+        encoding="utf-8",
+    )
+
+    filled = seo.fill_prerender(
+        [("Тестовая область", "test-region", "source", "region")],
+        {"region": {"events": 3}}, "9 августа, 18:30 МСК", 150,
+    )
+
+    assert filled is True
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert 'href="/city/"' in html
+    assert "Сводки по 150 городам России" in html
+    assert 'href="/region/test-region/"' in html
 
 
 def test_daily_digest_is_an_article_with_live_region_links():
