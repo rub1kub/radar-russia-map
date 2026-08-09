@@ -93,7 +93,14 @@ type GeoJsonFeatureCollection = {
   }>;
 };
 
-type CityLabel = { name: string; lat: number; lon: number; population: number };
+type CityLabel = {
+  name: string;
+  lat: number;
+  lon: number;
+  population: number;
+  /** Код GeoNames: PPLA — центр субъекта, PPLA2 — райцентр. */
+  code?: string;
+};
 
 type Dataset = {
   regions: GeoJsonFeatureCollection;
@@ -516,22 +523,29 @@ function createDistrictStyle(
   };
 }
 
-// Ярус появления подписи города: миллионники видны с обзора, дальше по
-// нарастанию. Числа согласованы с порогами карты: районы приходят на 5.0,
-// и сотни тысяч жителей раньше них на экране не нужны.
-function cityLabelMinZoom(population: number): number {
+// Ярус появления подписи: миллионники и столицы субъектов видны рано,
+// райцентры и десятитысячники приходят вместе с сеткой районов. Числа
+// согласованы с порогами карты: районы рисуются с 5.0, их заливка с 5.2.
+function cityLabelMinZoom(population: number, code: string): number {
   // Ниже обзорного зума (4.15/3.95): миллионники — ориентиры с первого кадра.
   if (population >= 1_000_000) return 3.6;
+  // Столица субъекта — ориентир при любом населении: Магадан и Анадырь
+  // важнее на обзоре, чем стотысячник Подмосковья.
+  if (code === "PPLA") return 4.6;
   if (population >= 500_000) return 5.0;
   if (population >= 250_000) return 5.6;
-  return 6.2;
+  if (population >= 100_000) return 6.2;
+  // Райцентр любого размера или город от двадцати тысяч.
+  if (code === "PPLA2" || population >= 20_000) return 6.8;
+  return 7.4;
 }
 
 function createCityLabelStyle(schemeRef: React.MutableRefObject<BasemapScheme>) {
   return (feature: FeatureLike, resolution: number) => {
     const zoom = resolutionToZoom(resolution);
     const population = asNumber(feature.get("population"), 0);
-    if (zoom < cityLabelMinZoom(population)) return undefined;
+    const code = asText(feature.get("code"), "");
+    if (zoom < cityLabelMinZoom(population, code)) return undefined;
     const major = population >= 1_000_000;
     // На светлой подложке светлый текст с тёмным ореолом превращается в
     // грязь — цвета меняются местами вместе со схемой.
@@ -1743,7 +1757,8 @@ export default function App() {
         const feature = new Feature({
           geometry: new Point(fromLonLat([city.lon, city.lat])),
           name: city.name,
-          population: city.population
+          population: city.population,
+          code: city.code ?? ""
         });
         return feature;
       })
