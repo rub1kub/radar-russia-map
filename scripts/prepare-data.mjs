@@ -11,6 +11,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { readShapefileFromZip } from "./shapefile.mjs";
+import {
+  buildGeoNamesAdminTerritoryMap,
+  buildOfficialPlaceRegistry,
+  buildRussianLanguageNameMap,
+  resolveOfficialPlaceName
+} from "./official-place-names.mjs";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const outData = join(root, "public", "data");
@@ -52,6 +58,7 @@ const latestInputMtime = () => {
   visit(join(root, "research", "data_sources"));
   visit(join(root, "research", "radarmap_reference", "data"));
   visit(join(root, "scripts", "prepare-data.mjs"));
+  visit(join(root, "scripts", "official-place-names.mjs"));
   visit(join(root, "scripts", "shapefile.mjs"));
   return Math.round(latest);
 };
@@ -772,6 +779,37 @@ const canonicalPlaceNameOverrides = new Map([
   ["Ленинскнй", "Ленинский"]
 ]);
 
+// Крупные городские части supplemental-территорий не входят в ОКТМО как
+// самостоятельные населённые пункты, поэтому официальный реестр не может
+// исправить их украинские формы. GeoNames ID стабилен и не создаёт коллизий
+// между одноимёнными районами разных городов.
+const canonicalPlaceNameOverridesById = new Map([
+  ["13580034", "Правый Берег"],
+  ["13607722", "Центральный"],
+  ["13561146", "Рутченковский"],
+  ["13561145", "Киевский"],
+  ["13607661", "Ольховский"],
+  ["13607724", "Левобережный"],
+  ["13607719", "Центрально-Городской"],
+  ["13607657", "Горняцкий"],
+  ["13561144", "Калининский"],
+  ["13561150", "Чумаковский"],
+  ["13645605", "Восточные кварталы"],
+  ["13607720", "Кондратьевский"],
+  ["13607723", "Кальмиусский"],
+  ["13561149", "Александровский"],
+  ["13607654", "Центрально-Городской"],
+  ["13561143", "Юзовский"],
+  ["13561142", "Богодуховский"],
+  ["13607659", "Шевченковский"],
+  ["13607662", "Каменнобродский"],
+  ["13607721", "Никитовский"],
+  ["706488", "Ханженково"],
+  ["693065", "Соцгород"],
+  ["713195", "Аршинцево"],
+  ["707071", "Каменка"]
+]);
+
 const transliterateLatinPhrase = (value, placeMode = false) => {
   const raw = String(value || "");
   const source = placeMode
@@ -877,6 +915,16 @@ const geonamesRaw = execFileSync("unzip", ["-p", join(root, "research/data_sourc
 });
 
 const districtNameLookup = buildDistrictNameLookup(geonamesRaw);
+const officialPlaceRegistry = buildOfficialPlaceRegistry(
+  readFileSync(join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"), "utf8")
+);
+const russianLanguagePlaceNames = buildRussianLanguageNameMap(
+  readFileSync(join(root, "research/data_sources/geonames_place_names_ru_20260809.tsv"), "utf8")
+);
+const geonamesAdminTerritories = buildGeoNamesAdminTerritoryMap(
+  geonamesRaw,
+  officialPlaceRegistry
+);
 
 // Канонические имена по ISO 3166-2. Имеют приоритет над reference-словарем.
 // RU-MOW — город Москва, RU-MOS — Московская область; в RadarMap reference
@@ -905,6 +953,31 @@ const preferredPlaceNameByCoord = new Map(
 );
 
 const supplementalPlaceAdmin1Codes = new Set(["05", "08", "11", "14", "20", "26"]);
+const supplementalAdminTerritories = new Map([
+  ["05", "21"], // Донецкая Народная Республика
+  ["08", "74"], // Херсонская область
+  ["11", "35"], // Республика Крым
+  ["14", "43"], // Луганская Народная Республика
+  ["20", "67"], // Севастополь
+  ["26", "23"]  // Запорожская область
+]);
+const supplementalOfficialPlaceRegistry = {
+  namesByTerritory: new Map(
+    [...officialPlaceRegistry.namesByTerritory.entries()].map(([territory, names]) => [
+      territory,
+      new Set([...names].map(normalizeSupplementalRussianPlaceName))
+    ])
+  )
+};
+const supplementalRussianLanguagePlaceNames = new Map(
+  [...russianLanguagePlaceNames.entries()].map(([id, names]) => [
+    id,
+    names.map((item) => ({
+      ...item,
+      name: normalizeSupplementalRussianPlaceName(item.name)
+    }))
+  ])
+);
 
 const geoBoundariesAdm1 = readJson("research/data_sources/geoboundaries_RUS_ADM1_simplified.geojson");
 const supplementalAdm1 = readJson("research/data_sources/supplemental_regions_admin1.geojson");
@@ -1272,7 +1345,13 @@ const geonamesUaRaw = execFileSync("unzip", ["-p", join(root, "research/data_sou
   maxBuffer: 24 * 1024 * 1024
 });
 
-const parseGeoNamesPlaces = (raw, shouldInclude, pickName = pickPlaceName) =>
+let officialPlaceCorrections = 0;
+const parseGeoNamesPlaces = (
+  raw,
+  shouldInclude,
+  pickName = pickPlaceName,
+  officialNameContext = null
+) =>
   raw
   .split(/\r?\n/)
   .filter(Boolean)
@@ -1293,7 +1372,23 @@ const parseGeoNamesPlaces = (raw, shouldInclude, pickName = pickPlaceName) =>
     const russianName = /[A-Za-z]/.test(pickedName)
       ? transliterateLatinPhrase(pickedName, true)
       : pickedName;
-    const name = canonicalPlaceNameOverrides.get(russianName) ?? russianName;
+    const canonicalName = canonicalPlaceNameOverridesById.get(cols[0])
+      ?? canonicalPlaceNameOverrides.get(russianName)
+      ?? russianName;
+    const name = officialNameContext
+      ? resolveOfficialPlaceName({
+          currentName: canonicalName,
+          sourceName: cols[1],
+          asciiName: cols[2],
+          alternates: cols[3],
+          adminCode: cols[10],
+          registry: officialNameContext.registry,
+          adminTerritories: officialNameContext.adminTerritories,
+          languageNames: officialNameContext.languageNamesById?.get(cols[0]) ?? [],
+          preferCurrentLanguageName: officialNameContext.preferCurrentLanguageName
+        })
+      : canonicalName;
+    if (name !== canonicalName) officialPlaceCorrections += 1;
     const asciiName = cols[2] && cols[2] !== name ? cols[2] : "";
     const featureCode = cols[7];
 
@@ -1312,8 +1407,22 @@ const parseGeoNamesPlaces = (raw, shouldInclude, pickName = pickPlaceName) =>
   });
 
 const places = [
-  ...parseGeoNamesPlaces(geonamesRaw, () => true),
-  ...parseGeoNamesPlaces(geonamesUaRaw, (cols) => supplementalPlaceAdmin1Codes.has(cols[10]), pickSupplementalRussianPlaceName)
+  ...parseGeoNamesPlaces(geonamesRaw, () => true, pickPlaceName, {
+    registry: officialPlaceRegistry,
+    adminTerritories: geonamesAdminTerritories,
+    languageNamesById: russianLanguagePlaceNames
+  }),
+  ...parseGeoNamesPlaces(
+    geonamesUaRaw,
+    (cols) => supplementalPlaceAdmin1Codes.has(cols[10]),
+    pickSupplementalRussianPlaceName,
+    {
+      registry: supplementalOfficialPlaceRegistry,
+      adminTerritories: supplementalAdminTerritories,
+      languageNamesById: supplementalRussianLanguagePlaceNames,
+      preferCurrentLanguageName: true
+    }
+  )
 ]
   // После населения достаточно стабильного кодового порядка. Locale
   // collation для 200 тысяч кириллических строк замедляла ETL на минуты,
@@ -1410,13 +1519,14 @@ const summary = {
   roads: roads.features.length,
   railways: railways.features.length,
   places: places.length,
+  officialPlaceCorrections,
   detailedPlaceLabels,
   oktmoRows
 };
 writeJson("summary.json", summary);
 
 console.log(
-  `Prepared map data: ${summary.regions} regions, ${summary.districts} districts, ${summary.places} places, ${summary.rivers} named rivers, ${summary.riverNetworkMajor + summary.riverNetworkDetail} river-network groups, ${summary.waterBodies} water bodies, ${summary.landCover} land-cover areas, ${summary.terrainRegions} terrain regions, ${summary.glaciers} glaciers, ${summary.urbanAreas} urban areas, ${summary.roads} roads, ${summary.railways} railways`
+  `Prepared map data: ${summary.regions} regions, ${summary.districts} districts, ${summary.places} places (${summary.officialPlaceCorrections} names corrected by OKTMO), ${summary.rivers} named rivers, ${summary.riverNetworkMajor + summary.riverNetworkDetail} river-network groups, ${summary.waterBodies} water bodies, ${summary.landCover} land-cover areas, ${summary.terrainRegions} terrain regions, ${summary.glaciers} glaciers, ${summary.urbanAreas} urban areas, ${summary.roads} roads, ${summary.railways} railways`
 );
 
 // Штамп пишется последним: упавшая на середине пересборка не должна

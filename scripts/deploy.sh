@@ -3,14 +3,16 @@
 #
 #     ./scripts/deploy.sh          # проверки, сборка, код и фронт
 #
-# База не трогается: сбор идёт на сервере, там она и живёт.
+# База не заменяется: сбор идёт на сервере, там она и живёт. Миграционный
+# шаг может только синхронизировать канонические имена по стабильным ID.
 #
 # Что происходит:
 #   1. Проверка (pytest + vitest + tsc) — на прод не уезжает сломанное.
 #   2. Фронт собирается ЗДЕСЬ: на сервере node 18, а нашему Vite нужен 20+.
 #      Готовый dist уезжает rsync-ом.
-#   2а. Посадочные регионов/городов и дневные сводки собираются НА СЕРВЕРЕ:
-#      в них данные боевой базы. Заодно уходит пинг IndexNow.
+#   2а. Имена НП синхронизируются в живой БД без смены zone ID, затем
+#      посадочные и дневные сводки собираются НА СЕРВЕРЕ. Заодно уходит
+#      пинг IndexNow.
 #   3. Код на сервере обновляется git pull из публичного репозитория —
 #      значит перед выкаткой изменения должны быть запушены.
 #   4. API перезапускается systemd-юнитом tihoenebo-api.
@@ -103,6 +105,8 @@ fi
 retry rsync -az --delete --exclude "region/" --exclude "city/" \
   --exclude "svodka/" --exclude "sitemap.xml" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
+retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
+  ./.venv/bin/python -m scripts.sync_place_names"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
   ./.venv/bin/python -m scripts.seo_pages --ping 2>&1 | tail -2"
 retry ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"

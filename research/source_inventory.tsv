@@ -11,6 +11,7 @@ research/data_sources/geofabrik_russia_page.html	   18661	HTML document text, AS
 research/data_sources/geonames_RU.zip	15216823	Zip archive data, at least v2.0 to extract, compression method=deflate
 research/data_sources/geonames_RU_populated_places_50k_or_admin.tsv	  161195	Unicode text, UTF-8 text
 research/data_sources/geonames_UA.zip	 2189211	Zip archive data, at least v2.0 to extract, compression method=deflate
+research/data_sources/geonames_place_names_ru_20260809.tsv	  193116	Unicode text, UTF-8 text
 research/data_sources/geonames_readme.txt	    8843	ASCII text, with very long lines (409)
 research/data_sources/hydrorivers_russia_network.geojson	62991991	ASCII text, with very long lines (65536), with no line terminators
 research/data_sources/naturalearth_admin1_page.html	   60354	HTML document text, Unicode text, UTF-8 text, with very long lines (8832)

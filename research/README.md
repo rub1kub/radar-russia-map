@@ -172,6 +172,7 @@ Production-основа должна быть такой:
 - `research/data_sources/geonames_UA.zip`
 - `research/data_sources/geonames_readme.txt`
 - `research/data_sources/geonames_RU_populated_places_50k_or_admin.tsv`
+- `research/data_sources/geonames_place_names_ru_20260809.tsv`
 
 Проверка:
 
@@ -179,6 +180,9 @@ Production-основа должна быть такой:
 - Feature class `P` populated places: 203217 объектов.
 - UA dump используется только как supplemental seed для admin1-кодов `05`, `08`, `11`, `14`, `20`, `26`.
 - Производная выборка: 2080 строк, населенные пункты `population >= 50000` или `PPLA*`.
+- Языковая выборка от 2026-08-09: 5896 строк `ru` из `alternateNamesV2` — все
+  preferred-имена наших GeoNames ID и все русские варианты supplemental ID;
+  сохранены признаки preferred/historic и интервалы действия.
 - Лицензия: CC BY 4.0.
 
 Пригодность:

@@ -790,6 +790,18 @@ class Geocoder:
         # «Алтай» это и Республика Алтай, и Алтайский край.
         if match.exact and len(regions) == 1:
             return set(self.chain(regions[0]))
+        # Однозначный заметный город не хуже района задаёт географию
+        # перечисления. Это особенно важно после исправления опечаток в
+        # справочнике: правильный «Тихорецк» находится как сам город, тогда
+        # как прежний «Тихоретск» случайно находил Тихорецкий район и только
+        # поэтому давал соседней Ленинградской кубанский контекст.
+        if match.exact and len(match.zone_ids) == 1:
+            zone_id = match.zone_ids[0]
+            zone = self.zones[zone_id]
+            if (zone["level"] == "place"
+                    and (zone["population"] or 0) >= PROMINENT_POPULATION
+                    and match.key not in AMBIGUOUS):
+                return set(self.chain(zone_id))
         if len(match.zone_ids) > 2:
             return set()
         return {ancestor for zone_id in match.zone_ids
