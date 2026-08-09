@@ -40,7 +40,10 @@ def _connection() -> sqlite3.Connection:
              "Тестоград", 120_000),
         ],
     )
-    for hour, signal in ((8, "danger"), (9, "alarm"), (10, "detection")):
+    for hour, signal in (
+        (8, "danger"), (9, "alarm"), (10, "detection"),
+        (11, "detection"), (12, "detection"),
+    ):
         connection.execute(
             "INSERT INTO events VALUES (?, ?, ?, ?, ?)",
             (json.dumps(["testograd", "gorodskoy_okrug_testograd_region",
@@ -66,10 +69,10 @@ def test_collects_region_city_and_daily_stats_in_one_pass(monkeypatch):
     )
     regions, cities, days = seo.collect_stats(_connection())
 
-    assert regions["region"]["events"] == 3
-    assert cities["gorodskoy_okrug_testograd_region"]["events"] == 3
-    assert days["2026-08-09"]["events"] == 3
-    assert days["2026-08-09"]["regions"] == Counter({"region": 3})
+    assert regions["region"]["events"] == 5
+    assert cities["gorodskoy_okrug_testograd_region"]["events"] == 5
+    assert days["2026-08-09"]["events"] == 5
+    assert days["2026-08-09"]["regions"] == Counter({"region": 5})
     assert days["2026-08-09"]["recent"][0][2] == "detection"
 
 
