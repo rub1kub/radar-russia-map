@@ -170,6 +170,8 @@ def test_city_manifest_applies_explicit_slug_migration(tmp_path):
     assert 'content="noindex,follow"' in redirect
     assert 'rel="canonical" href="https://tihoenebo.com/city/noginsk/"' in redirect
     assert 'content="noindex,follow"' in seo.city_retired_page()
+    assert "city/noginsk" in seo.city_legacy_page("noginsk", {"noginsk"})
+    assert "canonical" not in seo.city_legacy_page("noginsk", set())
 
 
 def test_legacy_city_manifest_is_rebuilt_instead_of_preserved(tmp_path):

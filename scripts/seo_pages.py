@@ -647,6 +647,13 @@ def city_retired_page() -> str:
 """
 
 
+def city_legacy_page(target_slug: str, active_slugs: set[str]) -> str:
+    """Не канонизировать старый URL на цель, снятую тем же порогом."""
+    if target_slug in active_slugs:
+        return city_redirect_page(target_slug)
+    return city_retired_page()
+
+
 def busiest_window(hours: Counter) -> str | None:
     """Самые шумные шесть часов подряд — «чаще всего с 22 до 4».
 
@@ -1354,7 +1361,7 @@ def main() -> int:
         directory = OUT / "city" / old_slug
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "index.html").write_text(
-            city_redirect_page(target_slug), encoding="utf-8")
+            city_legacy_page(target_slug, active_city_slugs), encoding="utf-8")
 
     retained_slugs = active_city_slugs | set(CITY_SLUG_REDIRECTS)
     for directory in (OUT / "city").iterdir():
