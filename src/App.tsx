@@ -1036,7 +1036,7 @@ export default function App() {
     landCover: false,
     waterBodies: false,
     rivers: false,
-    urbanAreas: true,
+    urbanAreas: false,
     roads: false,
     railways: false,
     regions: true,
