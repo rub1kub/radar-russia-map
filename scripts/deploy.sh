@@ -78,7 +78,19 @@ echo "=== 4/5 выкатка"
 # сервера обязан совпасть с тем, что мы только что запушили.
 retry ssh "$SERVER" "cd $REMOTE_DIR && git pull --ff-only"
 EXPECTED="$(git rev-parse origin/main)"
-DEPLOYED="$(ssh "$SERVER" "cd $REMOTE_DIR && git rev-parse HEAD")"
+DEPLOYED=""
+for attempt in 1 2 3; do
+  if DEPLOYED="$(ssh "$SERVER" "cd $REMOTE_DIR && git rev-parse HEAD")"; then
+    break
+  fi
+  [[ $attempt == 3 ]] && break
+  echo "  HEAD сервера не прочитан (попытка $attempt из 3), жду 5 секунд…"
+  sleep 5
+done
+if [[ -z "$DEPLOYED" ]]; then
+  echo "ОСТАНОВКА: не удалось прочитать HEAD сервера после трёх попыток."
+  exit 1
+fi
 if [[ "$DEPLOYED" != "$EXPECTED" ]]; then
   echo "ОСТАНОВКА: сервер на $DEPLOYED, ожидался $EXPECTED — pull не прошёл."
   exit 1
