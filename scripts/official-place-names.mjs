@@ -17,14 +17,14 @@ const ruToLatin = {
   ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya"
 };
 
-const normalizeLatin = (value) =>
+export const normalizeLatin = (value) =>
   String(value || "")
     .normalize("NFC")
     .toLowerCase()
     .replace(/[а-яё]/g, (char) => ruToLatin[char] ?? char)
     .replace(/[^a-z0-9]+/g, "");
 
-const levenshtein = (left, right) => {
+export const levenshtein = (left, right) => {
   if (left === right) return 0;
   if (!left) return right.length;
   if (!right) return left.length;

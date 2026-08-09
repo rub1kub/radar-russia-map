@@ -41,6 +41,9 @@ def test_bare_adjective_gets_its_unit():
 
 def test_same_place_ignores_unit_word():
     assert same_place("Бежаницкий район", "Бежаницкий округ")
+    assert same_place("ЗАТО Озёрный", "Озерный округ")
+    assert same_place("Тандинский кожуун", "Тандинский район")
+    assert same_place("Абыйский улус", "Абыйский район")
     # Обрезанное имя из чужого набора границ — не то же самое, что полное.
     assert not same_place("городской округ Новороссий", "Новороссийск")
 

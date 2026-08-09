@@ -37,6 +37,18 @@ def database() -> sqlite3.Connection:
     return connection
 
 
+def district_file(path, source_id="district-source", name="Грозный"):
+    path.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"id": source_id, "name": name},
+            "geometry": None,
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def test_sync_updates_name_without_changing_zone_or_event_links(tmp_path):
     places = tmp_path / "places.json"
     places.write_text(json.dumps({
@@ -72,3 +84,64 @@ def test_sync_is_idempotent(tmp_path):
     sync_place_names(connection, places)
 
     assert sync_place_names(connection, places)["changed"] == 0
+
+
+def test_sync_updates_district_without_changing_event_links(tmp_path):
+    places = tmp_path / "places.json"
+    places.write_text(json.dumps({"rows": []}), encoding="utf-8")
+    districts = district_file(tmp_path / "districts.json")
+    connection = database()
+    connection.execute(
+        "INSERT INTO zones VALUES (?, 'district', ?, ?)",
+        ("grozny_chechnya", "Грозны", "district-source"),
+    )
+    connection.execute(
+        "INSERT INTO zone_names VALUES (?, ?, 'primary')",
+        ("грозны", "grozny_chechnya"),
+    )
+    connection.execute(
+        "INSERT INTO events VALUES ('event-district', 'grozny_chechnya')"
+    )
+    connection.commit()
+
+    stats = sync_place_names(connection, places, districts)
+
+    assert stats == {"canonical": 1, "zones": 2, "changed": 1}
+    assert connection.execute(
+        "SELECT name_ru FROM zones WHERE id = 'grozny_chechnya'"
+    ).fetchone()["name_ru"] == "Грозный"
+    assert connection.execute(
+        "SELECT zone_id FROM events WHERE id = 'event-district'"
+    ).fetchone()["zone_id"] == "grozny_chechnya"
+    assert {
+        tuple(row) for row in connection.execute(
+            "SELECT norm, kind FROM zone_names WHERE zone_id = 'grozny_chechnya'"
+        )
+    } == {("грозны", "variant"), ("грозный", "primary")}
+
+
+def test_sync_updates_region_from_same_polygon_format(tmp_path):
+    places = tmp_path / "places.json"
+    places.write_text(json.dumps({"rows": []}), encoding="utf-8")
+    regions = district_file(
+        tmp_path / "regions.json", "region-source", "Чеченская Республика"
+    )
+    connection = database()
+    connection.execute(
+        "INSERT INTO zones VALUES (?, 'region', ?, ?)",
+        ("chechnya", "Chechnya", "region-source"),
+    )
+    connection.execute(
+        "INSERT INTO zone_names VALUES (?, ?, 'primary')",
+        ("chechnya", "chechnya"),
+    )
+    connection.commit()
+
+    stats = sync_place_names(
+        connection, places, districts_path=None, regions_path=regions
+    )
+
+    assert stats == {"canonical": 1, "zones": 2, "changed": 1}
+    assert connection.execute(
+        "SELECT name_ru FROM zones WHERE id = 'chechnya'"
+    ).fetchone()["name_ru"] == "Чеченская Республика"

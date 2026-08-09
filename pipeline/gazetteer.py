@@ -37,6 +37,7 @@ def load_polygons(path: Path) -> list[dict]:
         rows.append({
             "source_id": str(feature["properties"].get("id") or ""),
             "name": str(feature["properties"].get("name") or "").strip(),
+            "name_locked": bool(feature["properties"].get("nameLocked")),
             # Акваторию отличаем по метке из исходных данных: она зона, но
             # не родитель — см. build().
             "kind": feature["properties"].get("kind"),
@@ -251,6 +252,8 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
     )
     renamed = 0
     for index in order:
+        if districts[index].get("name_locked"):
+            continue
         entry, _score = matched[index]
         if entry.code in claimed:
             continue

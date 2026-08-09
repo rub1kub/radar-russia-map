@@ -1,9 +1,10 @@
-"""Синхронизировать канонические имена НП с существующим справочником зон.
+"""Синхронизировать канонические имена зон с существующим справочником.
 
 Полная пересборка gazetteer удаляет зоны и меняет slug-и, поэтому для живой
 базы она неприемлема: события уже ссылаются на эти идентификаторы. Здесь
-меняется только name_ru по стабильному GeoNames source_id. Старое имя остаётся
-алиасом, новое становится primary — старые формулировки источников не ломаются.
+меняется только name_ru по стабильному source_id GeoNames/geoBoundaries.
+Старое имя остаётся алиасом, новое становится primary — старые формулировки
+источников не ломаются.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from pipeline.db import ROOT, connect
 from pipeline.textnorm import name_variants, norm_key
 
 PLACES_PATH = ROOT / "public" / "data" / "places.json"
+DISTRICTS_PATH = ROOT / "public" / "data" / "districts.json"
+REGIONS_PATH = ROOT / "public" / "data" / "regions.json"
 
 
 def canonical_names(path: Path = PLACES_PATH) -> dict[str, str]:
@@ -34,28 +37,64 @@ def canonical_names(path: Path = PLACES_PATH) -> dict[str, str]:
     return names
 
 
+def canonical_polygon_names(path: Path) -> dict[str, str]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise ValueError(f"В {path} нет массива features")
+
+    names: dict[str, str] = {}
+    for feature in features:
+        properties = feature.get("properties") if isinstance(feature, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        source_id = str(properties.get("id") or "").strip()
+        name = str(properties.get("name") or "").strip()
+        if source_id and name:
+            names[source_id] = name
+    return names
+
+
+def canonical_district_names(path: Path = DISTRICTS_PATH) -> dict[str, str]:
+    return canonical_polygon_names(path)
+
+
 def sync_place_names(
     connection: sqlite3.Connection,
     path: Path = PLACES_PATH,
+    districts_path: Path | None = None,
+    regions_path: Path | None = None,
 ) -> dict[str, int]:
-    names = canonical_names(path)
+    names_by_level = {"place": canonical_names(path)}
+    if districts_path is not None:
+        names_by_level["district"] = canonical_district_names(districts_path)
+    if regions_path is not None:
+        names_by_level["region"] = canonical_polygon_names(regions_path)
+
+    placeholders = ",".join("?" for _level in names_by_level)
     zones = connection.execute(
-        "SELECT id, source_id, name_ru FROM zones "
-        "WHERE level = 'place' AND source_id IS NOT NULL"
+        "SELECT id, level, source_id, name_ru FROM zones "
+        f"WHERE level IN ({placeholders}) AND source_id IS NOT NULL",
+        tuple(names_by_level),
     ).fetchall()
     changes = [
-        (row["id"], row["name_ru"], names.get(str(row["source_id"])))
+        (
+            row["id"],
+            row["level"],
+            row["name_ru"],
+            names_by_level[row["level"]].get(str(row["source_id"])),
+        )
         for row in zones
-        if names.get(str(row["source_id"]))
-        and names[str(row["source_id"])] != row["name_ru"]
+        if names_by_level[row["level"]].get(str(row["source_id"]))
+        and names_by_level[row["level"]][str(row["source_id"])] != row["name_ru"]
     ]
 
     aliases = []
-    for zone_id, _old_name, new_name in changes:
+    for zone_id, level, _old_name, new_name in changes:
         primary = norm_key(new_name)
         aliases.extend(
             (variant, zone_id, "primary" if variant == primary else "variant")
-            for variant in name_variants(new_name, "place")
+            for variant in name_variants(new_name, level)
         )
 
     with connection:
@@ -65,7 +104,7 @@ def sync_place_names(
         )
         connection.executemany(
             "INSERT INTO place_name_updates VALUES (?, ?)",
-            ((zone_id, new_name) for zone_id, _old_name, new_name in changes),
+            ((zone_id, new_name) for zone_id, _level, _old_name, new_name in changes),
         )
         connection.execute("""
             UPDATE zones
@@ -92,16 +131,18 @@ def sync_place_names(
         connection.execute("DROP TABLE place_name_updates")
 
     return {
-        "canonical": len(names),
+        "canonical": sum(len(names) for names in names_by_level.values()),
         "zones": len(zones),
         "changed": len(changes),
     }
 
 
 def main() -> int:
-    stats = sync_place_names(connect())
+    stats = sync_place_names(
+        connect(), PLACES_PATH, DISTRICTS_PATH, REGIONS_PATH
+    )
     print(
-        "Имена НП: "
+        "Имена зон: "
         f"{stats['changed']} исправлено, "
         f"{stats['zones']} зон сверено с {stats['canonical']} каноническими"
     )

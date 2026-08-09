@@ -17,6 +17,12 @@ import {
   buildRussianLanguageNameMap,
   resolveOfficialPlaceName
 } from "./official-place-names.mjs";
+import {
+  buildOfficialDistrictRegistry,
+  officialTerritoryForRegion,
+  resolveOfficialDistrictName,
+  supplementalDistrictNames
+} from "./official-district-names.mjs";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const outData = join(root, "public", "data");
@@ -58,8 +64,13 @@ const latestInputMtime = () => {
   visit(join(root, "research", "data_sources"));
   visit(join(root, "research", "radarmap_reference", "data"));
   visit(join(root, "scripts", "prepare-data.mjs"));
+  visit(join(root, "scripts", "official-district-names.mjs"));
   visit(join(root, "scripts", "official-place-names.mjs"));
   visit(join(root, "scripts", "shapefile.mjs"));
+  visit(join(root, "scripts", "finalize_map_names.py"));
+  visit(join(root, "pipeline", "gazetteer.py"));
+  visit(join(root, "pipeline", "oktmo.py"));
+  visit(join(root, "pipeline", "textnorm.py"));
   return Math.round(latest);
 };
 
@@ -215,6 +226,40 @@ const geometryContainsPoint = (geometry, point) =>
     return pointInRing(point, exterior) && !polygon.slice(1).some((hole) => pointInRing(point, hole));
   });
 
+const createDistrictTerritoryResolver = (regionCollection) => {
+  const regions = regionCollection.features
+    .map((feature) => ({
+      geometry: feature.geometry,
+      bounds: geometryBounds(feature.geometry),
+      territory: officialTerritoryForRegion(feature.properties ?? {})
+    }))
+    .filter((region) => region.territory);
+
+  return (feature) => {
+    const bounds = geometryBounds(feature.geometry);
+    const points = getCoordinatePoints(feature.geometry?.coordinates);
+    if (!points.length) return null;
+
+    const step = Math.max(1, Math.floor(points.length / 8));
+    const probes = [[
+      (bounds[0] + bounds[2]) / 2,
+      (bounds[1] + bounds[3]) / 2
+    ]];
+    for (let index = 0; index < points.length; index += step) probes.push(points[index]);
+
+    let best = null;
+    for (const region of regions) {
+      if (!boundsTouch(bounds, region.bounds)) continue;
+      let score = 0;
+      for (const point of probes) {
+        if (geometryContainsPoint(region.geometry, point)) score += 1;
+      }
+      if (!best || score > best.score) best = { territory: region.territory, score };
+    }
+    return best?.score ? best.territory : null;
+  };
+};
+
 const geometryBounds = (geometry) => {
   const bounds = [Infinity, Infinity, -Infinity, -Infinity];
   for (const [lon, lat] of getCoordinatePoints(geometry?.coordinates)) {
@@ -293,8 +338,21 @@ const levenshtein = (left, right) => {
   return previous[right.length];
 };
 
+const normalizeLegacyLatinLetters = (value) => String(value || "")
+  .replace(/Ë/g, "Ё")
+  .replace(/ë/g, "ё")
+  .replace(/ẞ/g, "СС")
+  .replace(/ß/g, "сс")
+  .replace(/Ø/g, "Ё")
+  .replace(/ø/g, "ё");
+
+const hasNonCyrillicLetter = (value) => [...String(value || "")].some((character) =>
+  /\p{Letter}/u.test(character) && !/\p{Script=Cyrillic}/u.test(character)
+);
+
 const pickPlaceName = (name, asciiName, alternates) => {
-  if (hasCyrillic(name) && !/[A-Za-z]/.test(name)) return name;
+  const normalizedName = normalizeLegacyLatinLetters(name);
+  if (hasCyrillic(normalizedName) && !hasNonCyrillicLetter(normalizedName)) return normalizedName;
   const cyrillic = alternates
     .split(",")
     .map((item) => item.trim())
@@ -446,7 +504,9 @@ const placeTypeLabel = (featureCode) => {
   return "Населенный пункт";
 };
 
-const removeTextMarks = (value) => value.normalize("NFC").replace(/[\u0300-\u036f]/g, "");
+const removeTextMarks = (value) => normalizeLegacyLatinLetters(
+  value.normalize("NFC").replace(/[\u0300-\u036f]/g, "")
+);
 
 const normalizeAdminTypeCase = (value) =>
   removeTextMarks(value)
@@ -467,6 +527,9 @@ const districtNameOverrides = new Map([
   ["городской округ Нижний Таг", "городской округ Нижний Тагил"],
   ["Verkhny Ufaley", "Верхний Уфалей"],
   ["Верхнй Уфалей", "Верхний Уфалей"],
+  ["Äänisenranta District", "Прионежский район"],
+  ["Kostamus City District", "городской округ Костомукша"],
+  ["Star City", "ЗАТО Звёздный"],
   ["городской округ Верхняя Пы", "городской округ Верхняя Пышма"],
   ["городской округ Верхняя Ту", "городской округ Верхняя Тура"],
   ["Нижнетуринский городской о", "Нижнетуринский городской округ"],
@@ -639,34 +702,39 @@ const addDistrictNameLookup = (lookup, sourceName, russianName, exactPriority, d
   }
 };
 
-const buildDistrictNameLookup = (geonamesRaw) => {
+const buildDistrictNameLookup = (...geonamesSources) => {
   const lookup = new Map();
   const adminCodes = new Set(["ADM2", "ADM3", "ADM4", "ADMD"]);
 
-  for (const line of geonamesRaw.split(/\r?\n/)) {
-    if (!line) continue;
+  for (const geonamesRaw of geonamesSources) {
+    for (const line of geonamesRaw.split(/\r?\n/)) {
+      if (!line) continue;
 
-    const cols = line.split("\t");
-    if (cols.length < 19) continue;
+      const cols = line.split("\t");
+      if (cols.length < 19) continue;
 
-    const [name, asciiName, alternates, featureClass, featureCode] = [cols[1], cols[2], cols[3], cols[6], cols[7]];
-    if (featureClass === "A" && adminCodes.has(featureCode)) {
-      const russianName = pickRussianAdminName(name, asciiName, alternates);
-      if (!russianName) continue;
+      const [name, asciiName, alternates, featureClass, featureCode] = [cols[1], cols[2], cols[3], cols[6], cols[7]];
+      if (featureClass === "A" && adminCodes.has(featureCode)) {
+        const russianName = pickRussianAdminName(name, asciiName, alternates);
+        if (!russianName) continue;
 
-      addDistrictNameLookup(lookup, name, russianName, 0, 18);
-      addDistrictNameLookup(lookup, asciiName, russianName, 0, 18);
-      for (const alternate of splitAlternates(alternates)) addDistrictNameLookup(lookup, alternate, russianName, 0, 18);
-      addDistrictNameLookup(lookup, russianName, russianName, 0, 18);
-    }
+        addDistrictNameLookup(lookup, name, russianName, 0, 18);
+        addDistrictNameLookup(lookup, asciiName, russianName, 0, 18);
+        for (const alternate of splitAlternates(alternates)) addDistrictNameLookup(lookup, alternate, russianName, 0, 18);
+        addDistrictNameLookup(lookup, russianName, russianName, 0, 18);
+      }
 
-    if (featureClass === "P") {
-      const russianName = pickPlaceName(name, asciiName, alternates);
-      if (!russianName || !hasCyrillic(russianName) || /[A-Za-z]/.test(russianName)) continue;
+      if (featureClass === "P") {
+        const russianName = pickPlaceName(name, asciiName, alternates);
+        if (!russianName || !hasCyrillic(russianName) || /[A-Za-z]/.test(russianName)) continue;
 
-      addDistrictNameLookup(lookup, name, russianName, 8, 40);
-      addDistrictNameLookup(lookup, asciiName, russianName, 8, 40);
-      for (const alternate of splitAlternates(alternates)) addDistrictNameLookup(lookup, alternate, russianName, 8, 40);
+        // Название административной единицы имеет приоритет даже при
+        // производном совпадении. Иначе bare-name городского округа (Grozny,
+        // Sochi и т. п.) перехватывал одноимённый населённый пункт.
+        addDistrictNameLookup(lookup, name, russianName, 8, 40);
+        addDistrictNameLookup(lookup, asciiName, russianName, 8, 40);
+        for (const alternate of splitAlternates(alternates)) addDistrictNameLookup(lookup, alternate, russianName, 8, 40);
+      }
     }
   }
 
@@ -892,11 +960,20 @@ const districtResultTypePenalty = (sourceName, resultName) => {
   return 0;
 };
 
-const resolveDistrictName = (name, lookup) => {
+const resolveDistrictName = (
+  name,
+  lookup,
+  officialRegistry,
+  supplemental = false,
+  territory = null
+) => {
+  if (supplemental) {
+    const supplementalName = supplementalDistrictNames.get(String(name || "").trim());
+    if (supplementalName) return supplementalName;
+  }
+
   const directOverride = districtNameOverrides.get(name);
   if (directOverride) return directOverride;
-
-  if (hasCyrillic(name) && !/[A-Za-z]/.test(name)) return applyDistrictNameOverride(normalizeAdminTypeCase(name));
 
   const matches = districtLookupEntries(name)
     .map((entry) => {
@@ -906,18 +983,35 @@ const resolveDistrictName = (name, lookup) => {
     .filter(Boolean)
     .sort((a, b) => a.score - b.score);
 
-  return applyDistrictNameOverride(matches[0]?.name ?? fallbackRussianDistrictName(name));
+  const sourceFallback = fallbackRussianDistrictName(name);
+
+  const currentName = applyDistrictNameOverride(
+    hasCyrillic(name) && !/[A-Za-z]/.test(name)
+      ? normalizeAdminTypeCase(name)
+      : (matches[0]?.name ?? sourceFallback)
+  );
+  return resolveOfficialDistrictName({
+    sourceName: name,
+    currentName,
+    fallbackName: sourceFallback,
+    registry: officialRegistry,
+    territory
+  });
 };
 
 const geonamesRaw = execFileSync("unzip", ["-p", join(root, "research/data_sources/geonames_RU.zip"), "RU.txt"], {
   encoding: "utf8",
   maxBuffer: 120 * 1024 * 1024
 });
+const geonamesUaRaw = execFileSync("unzip", ["-p", join(root, "research/data_sources/geonames_UA.zip"), "UA.txt"], {
+  encoding: "utf8",
+  maxBuffer: 24 * 1024 * 1024
+});
 
 const districtNameLookup = buildDistrictNameLookup(geonamesRaw);
-const officialPlaceRegistry = buildOfficialPlaceRegistry(
-  readFileSync(join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"), "utf8")
-);
+const oktmoRaw = readFileSync(join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"), "utf8");
+const officialPlaceRegistry = buildOfficialPlaceRegistry(oktmoRaw);
+const officialDistrictRegistry = buildOfficialDistrictRegistry(oktmoRaw);
 const russianLanguagePlaceNames = buildRussianLanguageNameMap(
   readFileSync(join(root, "research/data_sources/geonames_place_names_ru_20260809.tsv"), "utf8")
 );
@@ -1325,25 +1419,38 @@ const insideSupplementalRegions = (feature) => {
 
 const geoBoundariesUkrAdm2 = readJson("research/data_sources/geoboundaries_UKR_ADM2_simplified.geojson");
 const supplementalAdm2 = geoBoundariesUkrAdm2.features.filter(insideSupplementalRegions);
+const resolveDistrictTerritory = createDistrictTerritoryResolver(regions);
+let districtTerritoriesResolved = 0;
 
 const districts = compactFeatureCollection(
   {
     type: "FeatureCollection",
     features: [...geoBoundariesAdm2.features, ...supplementalAdm2]
   },
-  (props, index) => ({
-    id: props.shapeID ?? `district-${index}`,
-    name: resolveDistrictName(props.shapeName, districtNameLookup),
-    iso: props.shapeISO || null
-  }),
+  (props, index) => {
+    const sourceFeature = index < geoBoundariesAdm2.features.length
+      ? geoBoundariesAdm2.features[index]
+      : supplementalAdm2[index - geoBoundariesAdm2.features.length];
+    const territory = props.shapeGroup === "UKR"
+      ? null
+      : resolveDistrictTerritory(sourceFeature);
+    if (territory) districtTerritoriesResolved += 1;
+    return {
+      id: props.shapeID ?? `district-${index}`,
+      name: resolveDistrictName(
+        props.shapeName,
+        districtNameLookup,
+        officialDistrictRegistry,
+        props.shapeGroup === "UKR",
+        territory
+      ),
+      iso: props.shapeISO || null,
+      nameLocked: props.shapeGroup === "UKR" || undefined
+    };
+  },
   3
 );
 writeJson("districts.json", districts);
-
-const geonamesUaRaw = execFileSync("unzip", ["-p", join(root, "research/data_sources/geonames_UA.zip"), "UA.txt"], {
-  encoding: "utf8",
-  maxBuffer: 24 * 1024 * 1024
-});
 
 let officialPlaceCorrections = 0;
 const parseGeoNamesPlaces = (
@@ -1375,7 +1482,7 @@ const parseGeoNamesPlaces = (
     const canonicalName = canonicalPlaceNameOverridesById.get(cols[0])
       ?? canonicalPlaceNameOverrides.get(russianName)
       ?? russianName;
-    const name = officialNameContext
+    const resolvedName = officialNameContext
       ? resolveOfficialPlaceName({
           currentName: canonicalName,
           sourceName: cols[1],
@@ -1388,6 +1495,7 @@ const parseGeoNamesPlaces = (
           preferCurrentLanguageName: officialNameContext.preferCurrentLanguageName
         })
       : canonicalName;
+    const name = normalizeLegacyLatinLetters(resolvedName);
     if (name !== canonicalName) officialPlaceCorrections += 1;
     const asciiName = cols[2] && cols[2] !== name ? cols[2] : "";
     const featureCode = cols[7];
@@ -1433,7 +1541,9 @@ const places = [
     return a[1] === b[1] ? 0 : a[1] < b[1] ? -1 : 1;
   });
 
-const malformedPlaceNames = places.filter((row) => /[A-Za-z]|йй|нй|ьь/.test(row[1]));
+const malformedPlaceNames = places.filter((row) =>
+  hasNonCyrillicLetter(row[1]) || /йй|нй|ьь/.test(row[1])
+);
 if (malformedPlaceNames.length > 0) {
   const examples = malformedPlaceNames.slice(0, 5).map((row) => row[1]).join(", ");
   throw new Error(`Нерусские имена населённых пунктов: ${examples}`);
@@ -1498,6 +1608,20 @@ writeFileSync(join(placeLabelsDir, "manifest.json"), JSON.stringify({
   cells: placeLabelCellKeys
 }));
 
+const pythonCandidates = [
+  process.env.RADAR_PYTHON,
+  join(root, "ingest", ".venv", "bin", "python"),
+  join(root, ".venv", "bin", "python"),
+  "python3"
+].filter(Boolean);
+const python = pythonCandidates.find((candidate) => candidate === "python3" || existsSync(candidate));
+if (!python) throw new Error("Python не найден: невозможно проверить имена районов по ОКТМО");
+execFileSync(python, ["-m", "scripts.finalize_map_names"], {
+  cwd: root,
+  env: { ...process.env, PYTHONPATH: root },
+  stdio: "inherit"
+});
+
 const oktmoCsv = readFileSync(
   join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"),
   "utf8"
@@ -1508,6 +1632,7 @@ const summary = {
   generatedAt: new Date().toISOString(),
   regions: regions.features.length,
   districts: districts.features.length,
+  districtTerritoriesResolved,
   rivers: rivers.features.length,
   riverNetworkMajor: riverNetworkMajor.features.length,
   riverNetworkDetail: riverNetworkDetail.features.length,
@@ -1532,8 +1657,3 @@ console.log(
 // Штамп пишется последним: упавшая на середине пересборка не должна
 // прикидываться выполненной.
 writeFileSync(stampPath, JSON.stringify({ inputs: inputsStamp }));
-
-// После пересборки полигоны стоят без имён и родителей из справочника —
-// их дописывает pipeline.gazetteer. Напоминание, а не автоматика: скрипту
-// данных нечего лезть в чужую базу.
-console.log("Не забудьте: ingest/.venv/bin/python -m pipeline.gazetteer — вернуть полигонам имена справочника.");
