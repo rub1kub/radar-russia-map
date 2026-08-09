@@ -9,8 +9,8 @@
 #   1. Проверка (pytest + vitest + tsc) — на прод не уезжает сломанное.
 #   2. Фронт собирается ЗДЕСЬ: на сервере node 18, а нашему Vite нужен 20+.
 #      Готовый dist уезжает rsync-ом.
-#   2а. Посадочные страницы регионов собираются НА СЕРВЕРЕ: в них сводка из
-#      базы, а база живёт там. Заодно уходит пинг IndexNow.
+#   2а. Посадочные регионов/городов и дневные сводки собираются НА СЕРВЕРЕ:
+#      в них данные боевой базы. Заодно уходит пинг IndexNow.
 #   3. Код на сервере обновляется git pull из публичного репозитория —
 #      значит перед выкаткой изменения должны быть запушены.
 #   4. API перезапускается systemd-юнитом tihoenebo-api.
@@ -83,11 +83,13 @@ if [[ "$DEPLOYED" != "$EXPECTED" ]]; then
   echo "ОСТАНОВКА: сервер на $DEPLOYED, ожидался $EXPECTED — pull не прошёл."
   exit 1
 fi
-# Страницы регионов и sitemap собираются на сервере: в них идёт сводка из
-# базы, а база живёт только там. Из синхронизации они исключены, иначе
+# Страницы регионов, городов, ежедневные сводки и sitemap собираются на
+# сервере: в них идёт сводка из базы, а база живёт только там. Из
+# синхронизации они исключены, иначе
 # --delete снёс бы их до того, как соберётся новая версия, и всё это время
 # посадочные отдавали бы 404.
-retry rsync -az --delete --exclude "region/" --exclude "sitemap.xml" \
+retry rsync -az --delete --exclude "region/" --exclude "city/" \
+  --exclude "svodka/" --exclude "sitemap.xml" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
   ./.venv/bin/python -m scripts.seo_pages --ping 2>&1 | tail -2"
@@ -97,7 +99,8 @@ echo "=== 5/5 проверка боевого"
 sleep 4
 # Пути в кавычках и с noglob: zsh иначе раскрывает «/» как шаблон и
 # подставляет вместо него содержимое корня.
-for path in "" "/api/v1/state" "/robots.txt"; do
+for path in "" "/api/v1/state" "/robots.txt" "/city/krasnodar/" \
+  "/svodka/$(date +%F)/"; do
   printf "  %-16s " "${path:-/}"
   "$CURL" -s -o /dev/null -w "%{http_code}\n" --max-time 20 "$SITE$path"
 done
