@@ -97,6 +97,10 @@ def test_city_names_are_inflected_for_search_titles():
     assert seo.inflect_city("Рязань") == "Рязани"
     assert seo.inflect_city("Жуковский") == "Жуковском"
     assert seo.inflect_city("Раменское") == "Раменском"
+    assert seo.inflect_city("Алёшки") == "Алёшках"
+    assert seo.inflect_city("Луховицы") == "Луховицах"
+    assert seo.inflect_city("Елец") == "Ельце"
+    assert seo.inflect_city("Малоярославец") == "Малоярославце"
 
 
 def test_city_name_comes_from_matching_place_not_district_adjective():
@@ -105,12 +109,25 @@ def test_city_name_comes_from_matching_place_not_district_adjective():
     assert seo.city_name_for_area(
         "Можайский", [("Можайск", 31_557)]) == "Можайск"
     assert seo.city_name_for_area(
-        "Льговский", [("Льговский", 23_500), ("Льгов", 0)]) == "Льгов"
+        "Льговский", [("Льговский", 23_500), ("Льгов", 0)],
+        "lgovskiy_kurskaya_oblast") == "Льгов"
     assert seo.city_name_for_area(
         "городской округ Лесосибирс", [("Лесосибирск", 65_945)]) == "Лесосибирск"
+    assert seo.city_name_for_area(
+        "городской округ Тюмень", [("Тюмен", 847_488)]) == "Тюмень"
+    assert seo.city_name_for_area(
+        "Богородский городской округ", [("Богородск", 34_000),
+                                          ("Ногинск", 103_000)],
+        "bogorodskiy_gorodskoy_okrug_moskovskaya_oblast") == "Ногинск"
+    assert seo.city_name_for_area(
+        "Артемовский округ", [("Бахмут", 80_500),
+                               ("Артемовский", 0)],
+        "artemovskiy_okrug_donetskaya_narodnaya_respublika") == "Бахмут"
     assert seo.city_slug("Лесосибирск") == "lesosibirsk"
     assert seo.canonical_city_name("г. Солнечногорск") == "Солнечногорск"
     assert seo.canonical_city_name("Озеры") == "Озёры"
+    assert seo.canonical_city_name("Ликино-Дулево") == "Ликино-Дулёво"
+    assert seo.canonical_city_name("Малоярославетс") == "Малоярославец"
 
 
 def test_city_manifest_keeps_published_url_when_activity_expires(tmp_path):
@@ -128,6 +145,45 @@ def test_city_manifest_keeps_published_url_when_activity_expires(tmp_path):
     assert first[0]["slug"] == "testograd"
     assert second[0]["slug"] == "testograd"
     assert second[0]["stats"] is None
+
+
+def test_city_manifest_applies_explicit_slug_migration(tmp_path):
+    manifest = tmp_path / "city" / "manifest.json"
+    old = [{
+        "zone_id": "bogorodskiy_gorodskoy_okrug_moskovskaya_oblast",
+        "name": "Богородск", "admin_name": "Богородский городской округ",
+        "region_id": "moskovskaya_oblast", "region_name": "Московская область",
+        "region_slug": "moskovskaya-oblast", "slug": "bogorodsk",
+    }]
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    current = [dict(old[0], name="Ногинск", slug="noginsk", stats={"events": 3})]
+
+    catalog = seo.persistent_city_catalog(current, {}, manifest)
+
+    assert catalog[0]["name"] == "Ногинск"
+    assert catalog[0]["slug"] == "noginsk"
+    redirect = seo.city_redirect_page("noginsk")
+    assert 'content="noindex,follow"' in redirect
+    assert 'rel="canonical" href="https://tihoenebo.com/city/noginsk/"' in redirect
+    assert 'content="noindex,follow"' in seo.city_retired_page()
+
+
+def test_legacy_city_manifest_is_rebuilt_instead_of_preserved(tmp_path):
+    manifest = tmp_path / "city" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps([{
+        "zone_id": "stale", "name": "Ошибочный",
+        "admin_name": "Ошибочный округ", "region_id": "region",
+        "region_name": "Тестовая область", "region_slug": "test-region",
+        "slug": "oshibochnyy",
+    }], ensure_ascii=False), encoding="utf-8")
+
+    catalog = seo.persistent_city_catalog([], {}, manifest)
+
+    assert catalog == []
+    saved = json.loads(manifest.read_text(encoding="utf-8"))
+    assert saved == {"version": seo.CITY_MANIFEST_VERSION, "cities": []}
 
 
 def test_digest_manifest_keeps_older_published_days(tmp_path):

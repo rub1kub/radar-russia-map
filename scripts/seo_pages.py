@@ -58,6 +58,7 @@ CITY_MIN_EVENTS = 3
 CITY_MIN_POPULATION = 20_000
 DIGEST_DAYS = 30
 DIGEST_RECENT_EVENTS = 20
+CITY_MANIFEST_VERSION = 2
 # Сколько соседей по алфавиту показать в перелинковке. Робот ходит по
 # ссылкам, и без них посадочные висят каждая сама по себе.
 NEIGHBOURS = 6
@@ -160,10 +161,32 @@ def normalized_name(name: str) -> str:
 
 
 CITY_NAME_CORRECTIONS = {
+    "Алешки": "Алёшки",
     "Артем": "Артём",
     "Артемовский": "Артёмовский",
+    "Белозерка": "Белозёрка",
+    "Ликино-Дулево": "Ликино-Дулёво",
+    "Малоярославетс": "Малоярославец",
     "Орел": "Орёл",
     "Озеры": "Озёры",
+    "Тюмен": "Тюмень",
+}
+
+CITY_ZONE_NAME_OVERRIDES = {
+    "artemovskiy_okrug_donetskaya_narodnaya_respublika": "Бахмут",
+    "bogorodskiy_gorodskoy_okrug_moskovskaya_oblast": "Ногинск",
+    "lgovskiy_kurskaya_oblast": "Льгов",
+}
+
+# Два неверных URL успели попасть в первый IndexNow-пакет. Генератор меняет
+# slug этих зон и оставляет на старых адресах noindex/canonical-переходы.
+CITY_ZONE_SLUG_OVERRIDES = {
+    "artemovskiy_okrug_donetskaya_narodnaya_respublika": "bakhmut",
+    "bogorodskiy_gorodskoy_okrug_moskovskaya_oblast": "noginsk",
+}
+CITY_SLUG_REDIRECTS = {
+    "artemovskiy": "bakhmut",
+    "bogorodsk": "noginsk",
 }
 
 
@@ -189,6 +212,8 @@ def matching_city_name(admin_name: str,
 
     matches: list[tuple[int, int, int, str]] = []
     for place_name, population in places:
+        if population < CITY_MIN_POPULATION:
+            continue
         candidate = normalized_name(re.sub(r"^г\.\s*", "", place_name,
                                            flags=re.IGNORECASE))
         if candidate in derived_stems:
@@ -209,7 +234,8 @@ def matching_city_name(admin_name: str,
 
 
 def city_name_for_area(admin_name: str,
-                       places: list[tuple[str, int]]) -> str | None:
+                       places: list[tuple[str, int]],
+                       zone_id: str | None = None) -> str | None:
     """Название города для городской/окружной зоны.
 
     Геометрия и события привязаны к ADM2, а запрос формулируют названием
@@ -222,6 +248,8 @@ def city_name_for_area(admin_name: str,
                 if population >= CITY_MIN_POPULATION]
     if not eligible:
         return None
+    if zone_id in CITY_ZONE_NAME_OVERRIDES:
+        return CITY_ZONE_NAME_OVERRIDES[zone_id]
 
     lowered = admin_name.lower()
     if re.search(r"\b(?:район|улус|кожуун)\b", lowered):
@@ -232,12 +260,14 @@ def city_name_for_area(admin_name: str,
     if explicit != admin_name:
         # В исходнике встречалось усечённое «городской округ Лесосибирс»;
         # дочерний Лесосибирск надёжнее технического имени ADM2.
-        return (matching_city_name(explicit, places)
-                or canonical_city_name(explicit))
+        matched = matching_city_name(explicit, places)
+        if (matched and len(normalized_name(matched))
+                >= len(normalized_name(explicit))):
+            return matched
+        return canonical_city_name(explicit)
 
     if "городской округ" in lowered:
-        return (matching_city_name(admin_name, places)
-                or canonical_city_name(max(eligible, key=lambda item: item[1])[0]))
+        return canonical_city_name(max(eligible, key=lambda item: item[1])[0])
 
     # В части справочника слово «район» опущено: «Бугульминский» и
     # «Можайский». Возвращать прилагательное как город нельзя — принимаем
@@ -251,13 +281,15 @@ def city_slug(name: str) -> str:
 
 
 CITY_LOCATIVE = {
+    "Алёшки": "Алёшках",
     "Астрахань": "Астрахани", "Казань": "Казани", "Керчь": "Керчи",
     "Пермь": "Перми", "Рязань": "Рязани", "Сызрань": "Сызрани",
     "Тверь": "Твери", "Тюмень": "Тюмени", "Сочи": "Сочи",
     "Тольятти": "Тольятти", "Мытищи": "Мытищах",
     "Набережные Челны": "Набережных Челнах", "Шахты": "Шахтах",
     "Грязи": "Грязях", "Клинцы": "Клинцах", "Ливны": "Ливнах",
-    "Люберцы": "Люберцах", "Озёры": "Озёрах", "Чашкинцы": "Чашкинцах",
+    "Луховицы": "Луховицах", "Люберцы": "Люберцах",
+    "Озёры": "Озёрах", "Чашкинцы": "Чашкинцах",
     "Чебоксары": "Чебоксарах", "Великие Луки": "Великих Луках",
     "Нижний Новгород": "Нижнем Новгороде",
     "Великий Новгород": "Великом Новгороде",
@@ -267,6 +299,7 @@ CITY_LOCATIVE = {
     "Славянск-на-Кубани": "Славянске-на-Кубани",
     "Каменск-Шахтинский": "Каменске-Шахтинском",
     "Гусь-Хрустальный": "Гусь-Хрустальном",
+    "Елец": "Ельце", "Малоярославец": "Малоярославце",
     "Орел": "Орле", "Орёл": "Орле",
 }
 
@@ -458,7 +491,8 @@ def build_city_catalog(connection: sqlite3.Connection, city_stats: dict[str, dic
         region = regions.get(row["parent_id"])
         if not stats or stats["events"] < CITY_MIN_EVENTS or not region:
             continue
-        name = city_name_for_area(row["name_ru"], places.get(row["id"], []))
+        name = city_name_for_area(
+            row["name_ru"], places.get(row["id"], []), row["id"])
         if not name:
             continue
         region_name, region_slug = region
@@ -499,17 +533,26 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
     if manifest_path.exists():
         try:
             loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                previous = [item for item in loaded
+            items = (loaded.get("cities")
+                     if isinstance(loaded, dict)
+                     and loaded.get("version") == CITY_MANIFEST_VERSION
+                     else None)
+            if isinstance(items, list):
+                previous = [item for item in items
                             if isinstance(item, dict) and required <= item.keys()]
+            elif isinstance(loaded, list):
+                print("SEO: обновляю старый манифест городов")
         except (OSError, json.JSONDecodeError):
             print("SEO: манифест городов повреждён, собираю его заново")
 
     merged = {item["zone_id"]: dict(item) for item in previous}
     for item in current:
         fresh = dict(item)
-        # URL уже опубликованной зоны не меняем при правке справочника имён.
-        if item["zone_id"] in merged:
+        forced_slug = CITY_ZONE_SLUG_OVERRIDES.get(item["zone_id"])
+        if forced_slug:
+            fresh["slug"] = forced_slug
+        # URL уже опубликованной зоны не меняем при обычной правке имени.
+        elif item["zone_id"] in merged:
             fresh["slug"] = merged[item["zone_id"]]["slug"]
         merged[item["zone_id"]] = fresh
 
@@ -535,10 +578,13 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
-        json.dumps([
-            {key: item[key] for key in fields}
-            for item in result
-        ], ensure_ascii=False, indent=2) + "\n",
+        json.dumps({
+            "version": CITY_MANIFEST_VERSION,
+            "cities": [
+                {key: item[key] for key in fields}
+                for item in result
+            ],
+        }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     return result
@@ -577,6 +623,28 @@ def digest_history(current_days: list[str], daily_stats: dict[str, dict],
         encoding="utf-8",
     )
     return history
+
+
+def city_redirect_page(target_slug: str) -> str:
+    target = f"{SITE}/city/{target_slug}/"
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="UTF-8" />
+  <meta name="robots" content="noindex,follow" />
+  <link rel="canonical" href="{target}" />
+  <meta http-equiv="refresh" content="0;url={target}" />
+  <title>Страница перенесена · Тихое небо</title>
+</head><body><p><a href="{target}">Открыть актуальную страницу</a></p></body></html>
+"""
+
+
+def city_retired_page() -> str:
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="UTF-8" />
+  <meta name="robots" content="noindex,follow" />
+  <title>Страница больше не публикуется · Тихое небо</title>
+</head><body><p>Актуальные данные доступны на
+  <a href="{SITE}/">живой карте «Тихое небо»</a>.</p></body></html>
+"""
 
 
 def busiest_window(hours: Counter) -> str | None:
@@ -1278,6 +1346,21 @@ def main() -> int:
         )
         sitemap.append((f'{SITE}/city/{city["slug"]}/', lastmod,
                         "hourly", "0.75"))
+
+    active_city_slugs = {city["slug"] for city in cities}
+    for old_slug, target_slug in CITY_SLUG_REDIRECTS.items():
+        if old_slug in active_city_slugs:
+            continue
+        directory = OUT / "city" / old_slug
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "index.html").write_text(
+            city_redirect_page(target_slug), encoding="utf-8")
+
+    retained_slugs = active_city_slugs | set(CITY_SLUG_REDIRECTS)
+    for directory in (OUT / "city").iterdir():
+        if directory.is_dir() and directory.name not in retained_slugs:
+            (directory / "index.html").write_text(
+                city_retired_page(), encoding="utf-8")
 
     current_day_keys = [
         (today.date() - timedelta(days=offset)).isoformat()
