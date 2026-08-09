@@ -93,10 +93,13 @@ type GeoJsonFeatureCollection = {
   }>;
 };
 
+type CityLabel = { name: string; lat: number; lon: number; population: number };
+
 type Dataset = {
   regions: GeoJsonFeatureCollection;
   districts: GeoJsonFeatureCollection;
   featuredPlaces: GeoJsonFeatureCollection;
+  cityLabels: CityLabel[];
 };
 
 type SelectedObject = {
@@ -136,7 +139,7 @@ const DISTRICT_SELECTION_ZOOM = 5.4;
 const FEATURED_PLACES_ZOOM = 7.1;
 const FEATURED_PLACE_LABEL_ZOOM = 7.75;
 const BASEMAP_URL =
-  import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+  import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
 const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© OpenStreetMap contributors, © CARTO";
 
 // Подложки на выбор. Тёмная — родная и остаётся по умолчанию: весь
@@ -161,7 +164,7 @@ const BASEMAP_SCHEMES: Record<
   },
   light: {
     label: "Светлая",
-    url: "https://{a-d}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    url: "https://{a-d}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
     attributions: BASEMAP_ATTRIBUTION,
     maxZoom: 20,
     hillshade: true,
@@ -513,6 +516,42 @@ function createDistrictStyle(
   };
 }
 
+// Ярус появления подписи города: миллионники видны с обзора, дальше по
+// нарастанию. Числа согласованы с порогами карты: районы приходят на 5.0,
+// и сотни тысяч жителей раньше них на экране не нужны.
+function cityLabelMinZoom(population: number): number {
+  // Ниже обзорного зума (4.15/3.95): миллионники — ориентиры с первого кадра.
+  if (population >= 1_000_000) return 3.6;
+  if (population >= 500_000) return 5.0;
+  if (population >= 250_000) return 5.6;
+  return 6.2;
+}
+
+function createCityLabelStyle(schemeRef: React.MutableRefObject<BasemapScheme>) {
+  return (feature: FeatureLike, resolution: number) => {
+    const zoom = resolutionToZoom(resolution);
+    const population = asNumber(feature.get("population"), 0);
+    if (zoom < cityLabelMinZoom(population)) return undefined;
+    const major = population >= 1_000_000;
+    // На светлой подложке светлый текст с тёмным ореолом превращается в
+    // грязь — цвета меняются местами вместе со схемой.
+    const light = schemeRef.current === "light";
+    return new Style({
+      text: new Text({
+        text: asText(feature.get("name"), ""),
+        font: `${major ? 600 : 500} ${major ? 12.5 : 11}px Inter, system-ui, sans-serif`,
+        fill: new Fill({
+          color: light ? "rgba(52, 62, 58, 0.9)" : "rgba(225, 232, 228, 0.88)"
+        }),
+        stroke: new Stroke({
+          color: light ? "rgba(255, 255, 255, 0.85)" : "rgba(8, 11, 11, 0.85)",
+          width: 2.4
+        })
+      })
+    });
+  };
+}
+
 function createFeaturedPlaceStyle(
   selectedKeyRef: React.MutableRefObject<string | null>
 ) {
@@ -780,20 +819,26 @@ async function loadDataset(signal?: AbortSignal): Promise<Dataset> {
   // находила бы регион из адреса. Меняется вместе с набором полей — и вместе
   // с геометрией: версия 3 отдаёт прорежённые контуры.
   const GEO_FORMAT = 3;
-  const [regions, featuredPlaces] = await Promise.all([
+  const [regions, featuredPlaces, cityLabels] = await Promise.all([
     read(`${API_BASE}/api/v1/geo/regions.geojson?v=${GEO_FORMAT}`).catch(() =>
       read("/data/regions.json")
     ),
     read("/data/featured-places.json").catch(() => ({
       type: "FeatureCollection",
       features: []
-    }))
+    })),
+    // Русские имена крупных городов: подложка своих подписей не несёт —
+    // латиница CARTO на русской карте обстановки выглядела чужой.
+    read("/data/city-labels.json")
+      .then((data) => (data.cities ?? []) as CityLabel[])
+      .catch(() => [] as CityLabel[])
   ]);
 
   return {
     regions,
     districts: { type: "FeatureCollection", features: [] },
-    featuredPlaces
+    featuredPlaces,
+    cityLabels
   };
 }
 
@@ -855,6 +900,7 @@ export default function App() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
   const basemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
+  const cityLabelLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const hillshadeLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const landCoverLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const waterBodyLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
@@ -919,6 +965,7 @@ export default function App() {
   const [radarState, setRadarState] = useState<RadarState | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [basemapScheme, setBasemapScheme] = useState<BasemapScheme>(loadBasemapScheme);
+  const basemapSchemeRef = useRef<BasemapScheme>(basemapScheme);
   const [layers, setLayers] = useState<LayerState>({
     basemap: true,
     landCover: false,
@@ -1691,6 +1738,24 @@ export default function App() {
       style: createFeaturedPlaceStyle(selectedKeyRef)
     });
 
+    const cityLabelSource = new VectorSource({
+      features: dataset.cityLabels.map((city) => {
+        const feature = new Feature({
+          geometry: new Point(fromLonLat([city.lon, city.lat])),
+          name: city.name,
+          population: city.population
+        });
+        return feature;
+      })
+    });
+    const cityLabelLayer = new VectorLayer({
+      source: cityLabelSource,
+      zIndex: 9,
+      declutter: true,
+      style: createCityLabelStyle(basemapSchemeRef)
+    });
+    cityLabelLayerRef.current = cityLabelLayer;
+
     basemapLayerRef.current = basemapLayer;
     hillshadeLayerRef.current = hillshadeLayer;
     landCoverLayerRef.current = landCoverLayer;
@@ -1725,6 +1790,7 @@ export default function App() {
         roadLayer,
         railwayLayer,
         regionLayer,
+        cityLabelLayer,
         districtLayer,
         featuredPlaceLayer,
         fireLayer,
@@ -2067,6 +2133,7 @@ export default function App() {
       mapRef.current = null;
       basemapLayerRef.current = null;
       hillshadeLayerRef.current = null;
+      cityLabelLayerRef.current = null;
       landCoverLayerRef.current = null;
       waterBodyLayerRef.current = null;
       riverLayerRef.current = null;
@@ -2153,6 +2220,8 @@ export default function App() {
       })
     );
     basemapLayerRef.current?.setOpacity(scheme.opacity);
+    basemapSchemeRef.current = basemapScheme;
+    cityLabelLayerRef.current?.changed();
     try {
       localStorage.setItem(BASEMAP_STORE_KEY, basemapScheme);
     } catch {

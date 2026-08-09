@@ -1276,6 +1276,16 @@ writeJson("places.json", {
   rows: places
 });
 
+// Русские подписи крупных городов для карты. Подложка используется без
+// собственных подписей (латиница CARTO на русской карте обстановки
+// выглядела чужой), поэтому ориентиры даёт этот слой: имя, точка и
+// население — ярусы появления считает клиент. Сотня тысяч жителей —
+// порог, ниже которого город на обзорной карте страны не ориентир.
+const cityLabels = places
+  .filter((row) => (row[5] ?? 0) >= 100_000)
+  .map((row) => ({ name: row[1], lat: row[3], lon: row[4], population: row[5] }));
+writeJson("city-labels.json", { cities: cityLabels });
+
 const oktmoCsv = readFileSync(
   join(root, "research/data_sources/rosstat_oktmo_data_20260601T1406.csv"),
   "utf8"
