@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import backfill
 from config import Source
 from backfill import read_window
 from pipeline.db import connect
@@ -91,3 +94,65 @@ def test_backfill_respects_both_window_bounds():
 
     assert [row.id for row in rows] == [2]
     assert scanned == 2
+
+
+# --- Защита от запуска догрузки при живом сборщике ---
+#
+# Telegram-сессия одна на аккаунт: второй клиент разрывает первый, и сбор
+# встаёт молча. Признаков живого сборщика три, и каждый порознь ошибается —
+# проверяем, что вместе они срабатывают и что честный простой не блокируют.
+
+def corpus(tmp_path, received_at: str | None):
+    connection = connect(tmp_path / "radar.db")
+    if received_at:
+        connection.execute(
+            "INSERT INTO raw_messages"
+            " (source_key, chat_id, message_id, posted_at, received_at, text)"
+            " VALUES (?,?,?,?,?,?)",
+            ("astra", -100, 1, received_at, received_at, "Опасность по БПЛА"))
+        connection.commit()
+    return connection
+
+
+def test_fresh_corpus_row_means_collector_alive(tmp_path, monkeypatch):
+    just_now = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+    connection = corpus(tmp_path, just_now)
+    monkeypatch.setattr(backfill, "systemd_poll_active", lambda: False)
+    monkeypatch.setattr(backfill, "poll_processes", list)
+
+    assert backfill.fresh_corpus_row(connection) == just_now
+    assert "сборщик жив" in backfill.collector_reason(connection)
+
+
+def test_stale_corpus_is_not_a_running_collector(tmp_path, monkeypatch):
+    long_ago = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    connection = corpus(tmp_path, long_ago)
+    monkeypatch.setattr(backfill, "systemd_poll_active", lambda: False)
+    monkeypatch.setattr(backfill, "poll_processes", list)
+
+    assert backfill.fresh_corpus_row(connection) is None
+    assert backfill.collector_reason(connection) is None
+
+
+def test_service_wins_over_quiet_corpus(tmp_path, monkeypatch):
+    """Тихий час на каналах не повод считать, что сборщик остановлен."""
+    long_ago = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    connection = corpus(tmp_path, long_ago)
+    monkeypatch.setattr(backfill, "systemd_poll_active", lambda: True)
+    monkeypatch.setattr(backfill, "poll_processes", list)
+
+    assert backfill.collector_reason(connection) == "служба tihoenebo-poll активна"
+
+
+def test_gap_window_steps_back_from_newest_message(tmp_path):
+    """Сборщик мог оборваться посреди прохода — окно берётся с нахлёстом."""
+    newest = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+    connection = corpus(tmp_path, newest.isoformat())
+
+    assert backfill.gap_start(connection) == newest - backfill.GAP_OVERLAP
+
+
+def test_gap_needs_a_corpus_to_count_from(tmp_path):
+    connection = corpus(tmp_path, None)
+    with pytest.raises(SystemExit):
+        backfill.gap_start(connection)

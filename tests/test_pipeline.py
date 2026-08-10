@@ -24,6 +24,8 @@ from pipeline.textnorm import (expand_units, form_gender, name_gender, norm_key,
                                slugify, stem_key, stem_word, strip_unit)
 from pipeline.timeutil import MSK, parse_utc, to_utc
 
+from conftest import bare_name
+
 
 # --- Нормализация -----------------------------------------------------------
 
@@ -600,6 +602,11 @@ def geocoder():
     return Geocoder(connection)
 
 
+def bare_names(resolved) -> set[str]:
+    """Имена зон без типового слова — почему так, см. tests/conftest.py."""
+    return {bare_name(item.name) for item in resolved}
+
+
 def test_geocoder_finds_place_inside_noise(geocoder):
     resolved = geocoder.resolve(["🔴Краснодар и ближайшие"])
     assert any("краснодар" in item.name.lower() for item in resolved)
@@ -625,7 +632,7 @@ def test_geocoder_ignores_event_vocabulary(geocoder):
 ])
 def test_geocoder_resolves_oblique_case(geocoder, phrase, expected):
     """Справочник в именительном падеже, сводки — в косвенном."""
-    assert expected in {item.name for item in geocoder.resolve([phrase])}
+    assert expected in bare_names(geocoder.resolve([phrase]))
 
 
 def test_lowercase_common_word_is_not_a_village(geocoder):
@@ -653,7 +660,7 @@ def test_threat_level_field_is_not_a_place(geocoder):
             "В городском округе Кашира Московской области зафиксирован "
             "беспилотный летательный аппарат.\n"
             "📍 Регион: Московская область\n⚡ Уровень: Высокий")
-    names = {item.name for item in geocoder.resolve(candidate_phrases(text))}
+    names = bare_names(geocoder.resolve(candidate_phrases(text)))
     assert "Кашира" in names
     assert "Московская область" in names
     assert "Высокий" not in names
@@ -797,7 +804,7 @@ def test_unit_marker_keeps_the_okrug_that_contains_the_city(geocoder):
 
 
 @pytest.mark.parametrize("phrase,expected", [
-    ("над Краснодаром", "городской округ Краснодар"),
+    ("над Краснодаром", "Краснодар"),
     ("в сторону Новороссийска", "Новороссийск"),
     ("в Лисичанске", "Лисичанск"),
 ])
@@ -807,13 +814,13 @@ def test_noun_in_oblique_case_survives_junk_homonyms(geocoder, phrase, expected)
     Заодно проверяется запасной стеммированный проход: в справочнике есть
     хутор с именем «Лисичанске», и он перехватывал точный проход.
     """
-    assert expected in {item.name for item in geocoder.resolve([phrase])}
+    assert expected in bare_names(geocoder.resolve([phrase]))
 
 
 def test_gender_separates_homonyms_of_different_gender(geocoder):
     """«в станице Раевской» — не посёлок Раевский в Башкортостане."""
-    names = {item.name for item in geocoder.resolve(
-        ["Обломки упали в станице Раевской под Новороссийском"])}
+    names = bare_names(geocoder.resolve(
+        ["Обломки упали в станице Раевской под Новороссийском"]))
     assert "Раевский" not in names
     assert "Новороссийск" in names
 

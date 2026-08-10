@@ -26,6 +26,8 @@ import pytest
 from pipeline.db import DB_PATH
 from pipeline.geocode import Geocoder
 
+from conftest import bare_name
+
 
 @pytest.fixture(scope="module")
 def geocoder():
@@ -44,7 +46,8 @@ def region_of(geocoder: Geocoder, zone_id: str) -> str:
 
 
 def names(resolved) -> list[str]:
-    return [item.name for item in resolved]
+    """Имена зон без типового слова — почему так, см. tests/conftest.py."""
+    return [bare_name(item.name) for item in resolved]
 
 
 def names_of(geocoder: Geocoder, text: str, home: str | None = None) -> list[str]:
@@ -215,7 +218,10 @@ def test_priazovye_means_a_different_thing_in_each_region(geocoder):
     assert not any(name.startswith("Ейск") for name in rostov)
 
     zaporozhye = names_of(geocoder, "Запорожская область Приазовье опасность БПЛА")
-    assert "Приазовский округ" in zaporozhye
+    # По корню, а не по полному имени: типовое слово зоны справочник менял
+    # уже дважды (округ -> район), а проверяется здесь не оно, а то, что
+    # запорожское Приазовье развернулось в свои районы, а не в кубанские.
+    assert any(name.startswith("Приазовский") for name in zaporozhye), zaporozhye
 
 
 def test_group_without_a_region_is_not_guessed(geocoder):
@@ -374,7 +380,7 @@ def test_district_of_named_place_matches_it(geocoder):
         resolved = geocoder.resolve([place])
         assert resolved, place
         chain = geocoder.chain(resolved[0].zone_id)
-        names = [geocoder.zones[zid]["name_ru"] for zid in chain]
+        names = [bare_name(geocoder.zones[zid]["name_ru"]) for zid in chain]
         assert district in names, f"{place}: {names}"
 
 

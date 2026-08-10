@@ -60,6 +60,11 @@ import { playAlert, playAllClear, setSoundEnabled, soundEnabled } from "./lib/so
 import { disablePush, enablePush, pushEnabled, pushSupported, syncPushZones } from "./lib/push";
 import { telegramWatch } from "./lib/telegram";
 import { buildSlots, eventsAt, SLOT_MS, zoneCountsAt } from "./lib/history";
+import {
+  loadHomeRegion,
+  pickStartRegion,
+  rememberHomeRegion
+} from "./lib/homeRegion";
 import { REGION_NEAR_WASH, regionWeight, zoneFillAlpha } from "./lib/paint";
 import type { Slot } from "./lib/history";
 import type { History, HistoryDay } from "./lib/api";
@@ -999,6 +1004,9 @@ export default function App() {
   const firesLoadedRef = useRef(false);
   const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
+  // Пока стартовый вид не применён, выбора ещё нет — и пустой выбор не
+  // должен стереть запомненный регион на первой же отрисовке.
+  const homeRegionReadyRef = useRef(false);
   const selectedKeyRef = useRef<string | null>(null);
   const layersRef = useRef<LayerState | null>(null);
   const loadLazyLayersRef = useRef<(() => void) | null>(null);
@@ -1578,9 +1586,15 @@ export default function App() {
           new Style({
             fill: new Fill({ color: severityColor(event.severity, 0.045 * fresh) }),
             stroke: new Stroke({
-              color: severityColor(event.severity, 0.4 * fresh),
-              width: 1.1,
-              lineDash: [5, 7]
+              // Круг всегда лежит на закрашенном районе — том самом, где
+              // фиксация. Тонкая красная пунктирная линия по красной
+              // заливке давала 9% контраста: замер показал, что круг
+              // рисуется верно, но увидеть его нельзя. Ширина и
+              // непрозрачность подняты до порога различимости и не выше:
+              // это подсказка, а не утверждение о положении борта.
+              color: severityColor(event.severity, 0.62 * fresh),
+              width: 1.7,
+              lineDash: [6, 8]
             })
           })
         );
@@ -1628,14 +1642,20 @@ export default function App() {
 
     // С посадочной страницы региона («/region/kurskaya-oblast/») человек
     // приходит с ?region= в адресе и должен сразу увидеть свой субъект
-    // выбранным, а не общий вид страны.
+    // выбранным, а не общий вид страны. Без параметра открывается регион,
+    // выбранный в прошлый раз: адрес важнее памяти — по ссылке из ленты
+    // или с посадочной ждут именно названный регион.
     const wantedRegion = new URLSearchParams(window.location.search).get("region");
-    /** true, если регион из адреса найден и карта на него наведена. */
+    /** true, если регион найден и карта на него наведена. */
     const openWantedRegion = (): boolean => {
-      if (!wantedRegion) return false;
-      const zone = wantedRegion.replace(/-/g, "_");
-      const target = regionFeatures.find((feature) => feature.get("zone") === zone);
-      if (!target) return false;
+      const asked = pickStartRegion(wantedRegion, loadHomeRegion());
+      if (!asked) return false;
+      const target = regionFeatures.find((feature) => feature.get("zone") === asked);
+      // Забытый регион мог исчезнуть из справочника — не держим мёртвый ключ.
+      if (!target) {
+        if (!wantedRegion) rememberHomeRegion(null);
+        return false;
+      }
       applySelectedFeature(target);
       fitFeature(map, target, 5.2);
       return true;
@@ -1880,12 +1900,14 @@ export default function App() {
     // нарисует. Стартовый вид тоже нельзя задавать раньше: выбор десктопного
     // или мобильного масштаба зависит от фактической ширины.
     let viewApplied = false;
-    // Стартовый вид: обзор страны или регион из адреса, если человек
-    // пришёл с посадочной страницы. Обе ветки идут здесь, а не раньше:
-    // до появления размера карта не умеет ни центрироваться, ни
-    // подлетать к границам, и вид молча оставался бы обзорным.
+    // Стартовый вид: обзор страны или регион — из адреса, если человек
+    // пришёл с посадочной страницы, иначе запомненный свой. Обе ветки идут
+    // здесь, а не раньше: до появления размера карта не умеет ни
+    // центрироваться, ни подлетать к границам, и вид молча оставался бы
+    // обзорным.
     const applyStartView = () => {
       if (!openWantedRegion()) setOverviewView(map, 0);
+      homeRegionReadyRef.current = true;
     };
     const resizeObserver = new ResizeObserver(() => {
       map.updateSize();
@@ -2497,6 +2519,21 @@ export default function App() {
     const zoneId = polygonToZoneRef.current.get(selectedRegionPolygon);
     return zoneId ? paintedZones[zoneId]?.name ?? null : null;
   }, [selectedRegionPolygon, paintedZones]);
+
+  // Свой регион запоминается сам: специально ничего отмечать не надо, а
+  // чтобы забыть — достаточно снять выделение нажатием мимо. Зона берётся
+  // из полигона, а не из счётчиков обстановки: у тихого региона счётчика
+  // нет, и запоминалась бы только область, где что-то происходит.
+  useEffect(() => {
+    if (!homeRegionReadyRef.current) return;
+    if (!selectedRegionPolygon) {
+      rememberHomeRegion(null);
+      return;
+    }
+    const zone = featureIndexRef.current
+      .get(`region:${selectedRegionPolygon}`)?.get("zone");
+    if (zone) rememberHomeRegion(String(zone));
+  }, [selectedRegionPolygon]);
 
   // Зона выбранного места. Соответствие полигонов зонам строится из
   // счётчиков обстановки и потому знает только шумные места; в самом

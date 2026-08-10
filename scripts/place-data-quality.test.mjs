@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { supplementalDistrictNames } from "./official-district-names.mjs";
@@ -92,5 +93,37 @@ describe("prepared region names", () => {
       expect(hasNonCyrillicLetter(name)).toBe(false);
       expect(name).not.toMatch(/[ІіЇїЄєҐґ]/);
     }
+  });
+});
+
+// Справочник строится из полного дампа GeoNames, а не из выборки крупных
+// городов. Проверка держит это свойство: когда ETL питался урезанным
+// набором, посёлок Ильский (23 тысячи жителей, НПЗ) отсутствовал целиком —
+// сообщения о нём молча теряли место и падали на регион источника.
+describe("покрытие населённых пунктов", () => {
+  const dumpIds = new Set(
+    execFileSync("unzip", [
+      "-p",
+      new URL("../research/data_sources/geonames_RU.zip", import.meta.url).pathname,
+      "RU.txt"
+    ], { encoding: "utf8", maxBuffer: 1024 * 1024 * 512 })
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => line.split("\t"))
+      .filter((cols) => cols[6] === "P" && Number(cols[14]) >= 5000)
+      .map((cols) => cols[0])
+  );
+
+  it("не теряет ни одного населённого пункта от пяти тысяч жителей", () => {
+    const present = new Set(payload.rows.map((row) => String(row[0])));
+    const missing = [...dumpIds].filter((id) => !present.has(id));
+    expect(missing).toEqual([]);
+  });
+
+  it("посёлок Ильский на месте с координатами из данных", () => {
+    const ilsky = payload.rows.find((row) => String(row[0]) === "556951");
+    expect(ilsky?.[1]).toBe("Ильский");
+    expect(ilsky?.[3]).toBeCloseTo(44.84222, 4);
+    expect(ilsky?.[4]).toBeCloseTo(38.56686, 4);
   });
 });
