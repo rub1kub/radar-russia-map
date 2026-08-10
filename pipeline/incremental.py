@@ -42,7 +42,7 @@ from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
-from .source_region import build_fallback  # noqa: E402
+from .source_region import build_fallback, explicit_home_region  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
@@ -466,8 +466,13 @@ def run_once(
             continue
 
         home = fallback.get(row["source_key"])
-        resolved = geocoder.drop_covered(
-            geocoder.resolve(observation.place_phrases, home=home))
+        candidates = geocoder.resolve(observation.place_phrases, home=home)
+        regional_clear = explicit_home_region(observation, candidates, home)
+        resolved = (
+            [regional_clear]
+            if regional_clear is not None
+            else geocoder.drop_covered(candidates)
+        )
         # Каталог городов, а не оповещение: реклама сети «Город 24/7»
         # разошлась на 168 ложных тревог одним сообщением.
         if len(resolved) > MAX_RESOLVED_ZONES:

@@ -26,7 +26,7 @@ from .parse import MAX_RESOLVED_ZONES, parse  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
-from .source_region import build_fallback  # noqa: E402
+from .source_region import build_fallback, explicit_home_region  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
@@ -101,8 +101,13 @@ def rebuild(connection) -> dict:
         # Регион источника передаётся и в сам разбор: он разводит тёзок,
         # когда сообщение своего региона не назвало.
         home = fallback.get(row["source_key"])
-        resolved = geocoder.drop_covered(
-            geocoder.resolve(observation.place_phrases, home=home))
+        candidates = geocoder.resolve(observation.place_phrases, home=home)
+        regional_clear = explicit_home_region(observation, candidates, home)
+        resolved = (
+            [regional_clear]
+            if regional_clear is not None
+            else geocoder.drop_covered(candidates)
+        )
         # Каталог городов, а не оповещение — см. такой же страж в incremental.
         if len(resolved) > MAX_RESOLVED_ZONES:
             stats["catalog"] = stats.get("catalog", 0) + 1

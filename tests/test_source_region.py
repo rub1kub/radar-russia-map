@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
@@ -20,7 +21,12 @@ import pytest
 
 from config import sources_from_env
 from pipeline.db import DB_PATH
-from pipeline.source_region import REGION_NAMES, build_fallback
+from pipeline.parse import parse
+from pipeline.source_region import (
+    REGION_NAMES,
+    build_fallback,
+    explicit_home_region,
+)
 
 
 def test_every_config_region_is_mapped():
@@ -54,3 +60,27 @@ def test_fallback_reaches_a_real_zone():
         assert source.key in fallback, (
             f"{source.key}: region={source.region!r} не дал зоны"
         )
+
+
+def test_region_wide_allclear_wins_over_airport_and_city():
+    region = SimpleNamespace(zone_id="udmurtiya", level="region")
+    city = SimpleNamespace(zone_id="izhevsk", level="district")
+    airport = SimpleNamespace(zone_id="airport_izhevsk", level="place")
+    observation = parse(
+        "На территории Удмуртской Республики введен отбой сигнала "
+        "«Беспилотная опасность». В аэропорту Ижевска снят режим «Ковер»."
+    )
+
+    assert explicit_home_region(
+        observation, [region, city, airport], "udmurtiya"
+    ) is region
+
+
+def test_local_allclear_does_not_expand_to_source_region():
+    region = SimpleNamespace(zone_id="krasnodarskiy_kray", level="region")
+    city = SimpleNamespace(zone_id="sochi", level="place")
+    observation = parse("Сочи, Краснодарский край — отбой опасности по БПЛА")
+
+    assert explicit_home_region(
+        observation, [region, city], "krasnodarskiy_kray"
+    ) is None

@@ -13,7 +13,14 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+
+
+REGION_WIDE_RE = re.compile(
+    r"\b(?:на|по\s+всей)\s+территори\w*\b",
+    re.IGNORECASE,
+)
 
 # Ключ региона из ingest/config.py -> название в справочнике зон.
 REGION_NAMES: dict[str, str] = {
@@ -79,6 +86,31 @@ REGION_NAMES: dict[str, str] = {
     # молча оставался без фолбэка.
     "zaporozhye": "Запорожская область",
 }
+
+
+def explicit_home_region(observation, resolved, home: str | None):
+    """Регион источника, когда отбой явно объявлен на всей его территории.
+
+    В одном сообщении РСЧС могут снять и региональную тревогу, и режим
+    «Ковёр» в аэропорту. Обычный ``drop_covered`` оставляет аэропорт как
+    более точную зону и выбрасывает регион, поэтому общий отбой не закрывает
+    областное событие. Локальная формулировка без «на территории» сюда не
+    попадает и по-прежнему гасит только названный город или район.
+    """
+    if (
+        not home
+        or observation.signal_type not in {"allclear", "retracted"}
+        or not REGION_WIDE_RE.search(observation.body)
+    ):
+        return None
+    return next(
+        (
+            item
+            for item in resolved
+            if item.zone_id == home and item.level == "region"
+        ),
+        None,
+    )
 
 
 def build_fallback(connection: sqlite3.Connection, sources) -> dict[str, str]:
