@@ -36,7 +36,7 @@ import requests
 from fastapi import APIRouter, Header, Request, Response
 
 from pipeline.db import DB_PATH
-from pipeline.textnorm import norm_key
+from pipeline.textnorm import norm_key, short_name
 from pipeline.timeutil import MSK, now_utc
 
 SITE = "https://tihoenebo.com"
@@ -225,7 +225,7 @@ def zone_name(zone_id: str) -> str:
     with closing(_connect()) as connection:
         row = connection.execute(
             "SELECT name_ru FROM zones WHERE id = ?", (zone_id,)).fetchone()
-    return row["name_ru"] if row else zone_id
+    return short_name(row["name_ru"]) if row else zone_id
 
 
 # --- Тексты ответов ---------------------------------------------------------
@@ -324,17 +324,20 @@ def region_text(zone: sqlite3.Row) -> str:
     snapshot = _snapshot_fn() if _snapshot_fn else {}
     events = [e for e in (snapshot.get("events") or [])
               if zone["id"] in (e.get("zone_path") or [])]
-    head = f"<b>{zone['name_ru']}</b>"
+    # Официальное «городской округ Белгород» человеку не показываем — ни
+    # в заголовке, ни в подсказке команды: /watch он наберёт руками.
+    name = short_name(zone["name_ru"])
+    head = f"<b>{name}</b>"
     if not events:
         return (f"{head}\n\nСейчас тихо: активных сообщений по этому месту "
-                f"нет.\n\nЧтобы получать уведомления: /watch {zone['name_ru']}")
+                f"нет.\n\nЧтобы получать уведомления: /watch {name}")
     lines = [head, ""]
     for event in events[:LIST_LIMIT]:
         lines.append(f"{_dot(event)} " + _event_line(event))
     if len(events) > LIST_LIMIT:
         lines.append(f"…и ещё {len(events) - LIST_LIMIT}")
     lines.append("")
-    lines.append(f"Уведомления по этому месту: /watch {zone['name_ru']}")
+    lines.append(f"Уведомления по этому месту: /watch {name}")
     return "\n".join(lines)
 
 

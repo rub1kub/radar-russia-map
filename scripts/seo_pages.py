@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.db import DB_PATH, ROOT
-from pipeline.textnorm import slugify
+from pipeline.textnorm import short_name, slugify
 from pipeline.timeutil import MSK, now_utc
 
 SITE = "https://tihoenebo.com"
@@ -428,10 +428,13 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
         # Название района берём у самой мелкой зоны события, но саму область
         # в список не пишем: «чаще всего называют Ростовскую область» на
         # странице Ростовской области — не информация.
-        if row["level"] in ("district", "place") and row["name_ru"]:
-            entry["districts"][row["name_ru"]] += 1
+        # Имя — короткое: «Белгород», а не «городской округ Белгород».
+        # Страницу читает человек, а не реестр.
+        place_name = short_name(row["name_ru"] or "")
+        if row["level"] in ("district", "place") and place_name:
+            entry["districts"][place_name] += 1
         entry["recent"].append(
-            (row["first_seen_at"], row["name_ru"] or "", row["signal_type"],
+            (row["first_seen_at"], place_name, row["signal_type"],
              row["threat_type"] or "unknown"))
         # Тот же учёт — каждой районной зоне пути: у города и района своя
         # страница со своей сводкой, а не пересказ областной.
@@ -451,9 +454,9 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
             centry["signals"][row["signal_type"]] += 1
             if row["threat_type"] and row["threat_type"] != "unknown":
                 centry["threats"][row["threat_type"]] += 1
-            if (row["level"] == "place" and row["name_ru"]
+            if (row["level"] == "place" and place_name
                     and row["zone_id"] != zone_id):
-                centry["districts"][row["name_ru"]] += 1
+                centry["districts"][place_name] += 1
 
         day_key = stamp.date().isoformat()
         dentry = daily_stats.setdefault(day_key, blank())
@@ -467,7 +470,7 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
             dentry["threats"][row["threat_type"]] += 1
         dentry["regions"][region_id] += 1
         dentry["recent"].append(
-            (row["first_seen_at"], row["name_ru"] or "", row["signal_type"],
+            (row["first_seen_at"], place_name, row["signal_type"],
              row["threat_type"] or "unknown"))
     # Свежие сверху; страница показывает несколько последних — это и есть
     # то, что отличает её от вчерашней копии и от соседнего региона.

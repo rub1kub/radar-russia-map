@@ -21,7 +21,8 @@ from pipeline.fuse import Fuser
 from pipeline.geocode import Geocoder
 from pipeline.parse import candidate_phrases, foreign_side, parse, strip_footer
 from pipeline.textnorm import (expand_units, form_gender, name_gender, norm_key,
-                               slugify, stem_key, stem_word, strip_unit)
+                               short_name, slugify, stem_key, stem_word,
+                               strip_unit)
 from pipeline.timeutil import MSK, parse_utc, to_utc
 
 from conftest import bare_name
@@ -42,6 +43,41 @@ def test_norm_key_folds_yo_and_punctuation():
 def test_strip_unit_removes_type_word():
     assert strip_unit("Азовский район") == "азовский"
     assert strip_unit("городской округ Краснодар") == "краснодар"
+
+
+@pytest.mark.parametrize("official,shown", [
+    ("городской округ Белгород", "Белгород"),
+    ("городской округ город Чкаловск", "Чкаловск"),
+    ("муниципальный округ город Чкаловск", "Чкаловск"),
+    ("городской округ Горячий Ключ", "Горячий Ключ"),
+    ("рабочий поселок Кольцово", "Кольцово"),
+    ("ЗАТО Северск", "Северск"),
+])
+def test_short_name_drops_the_type_word_in_front(official, shown):
+    """Человеку показывается «Белгород», реестровая форма живёт в справочнике."""
+    assert short_name(official) == shown
+
+
+@pytest.mark.parametrize("name", [
+    # Типовое слово сзади: без него имя разваливается — «Тимашёвский» какой?
+    "Тимашёвский район",
+    "Приазовский район",
+    "Одинцовский городской округ",
+    "Сеймский округ",
+    # Здесь «район» — часть самого имени, а не тип.
+    "район имени Лазо",
+    "район имени Полины Осипенко",
+    "Белгородская область",
+    "Краснодарский край",
+])
+def test_short_name_keeps_names_that_need_their_type_word(name):
+    assert short_name(name) == name
+
+
+def test_short_name_survives_empty_and_bare_type_word():
+    assert short_name("") == ""
+    # Целиком типовое слово показывать нечем — отдаём как есть.
+    assert short_name("городской округ ") == "городской округ "
 
 
 def test_stem_key_folds_case_endings():

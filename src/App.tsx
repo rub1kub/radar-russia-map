@@ -43,6 +43,7 @@ import {
   numberFormat,
   plural,
   severityColor,
+  shortZoneName,
   signalLabel,
   signalWord,
   threatLabel
@@ -304,7 +305,8 @@ function asText(value: unknown, fallback = "—"): string {
 function selectedFromFeature(feature: FeatureLike): SelectedObject {
   const kind = asText(feature.get("kind"), "region") as SelectedObject["kind"];
   const id = asText(feature.get("id"), asText(feature.get("name")));
-  const name = asText(feature.get("name"));
+  // Полигоны приходят мимо API и несут официальное имя зоны целиком.
+  const name = shortZoneName(asText(feature.get("name")));
   const zone = feature.get("zone") ? String(feature.get("zone")) : null;
 
   if (kind === "place") {
@@ -2288,7 +2290,7 @@ export default function App() {
       }
       const found = region as FeatureLike;
       const sourceId = String(found.get("id") ?? "");
-      const name = asText(found.get("name"));
+      const name = shortZoneName(asText(found.get("name")));
       const zoneId = polygonToZoneRef.current.get(sourceId) ?? null;
       // Пока курсор ходит по тому же региону, менять нечего: новый объект
       // состояния перерисовывал бы всё приложение — вместе с лентой из
@@ -2515,7 +2517,7 @@ export default function App() {
     // обязана называть регион всегда, не только когда в нём что-то горит.
     const feature = featureIndexRef.current.get(`region:${selectedRegionPolygon}`);
     const name = feature?.get("name");
-    if (name) return String(name);
+    if (name) return shortZoneName(String(name));
     const zoneId = polygonToZoneRef.current.get(selectedRegionPolygon);
     return zoneId ? paintedZones[zoneId]?.name ?? null : null;
   }, [selectedRegionPolygon, paintedZones]);

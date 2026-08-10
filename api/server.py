@@ -51,6 +51,7 @@ from pipeline.db import DB_PATH
 from pipeline.fuse import Fuser
 from pipeline.incremental import resolve_networks
 from pipeline.provenance import counted, walk
+from pipeline.textnorm import short_name
 from ingest.config import sources_from_env
 from pipeline.parse import strip_footer
 from pipeline.timeutil import MSK, now_utc, parse_utc
@@ -322,6 +323,12 @@ def event_rows(since: datetime, limit: int = 400,
     )
     for row in rows:
         row["zone_path"] = json.loads(row["zone_path"] or "[]")
+        # Справочник хранит официальное имя, человеку показывается короткое:
+        # «Белгород», а не «городской округ Белгород». Отсюда оно расходится
+        # по всему продукту — карточка, лента, всплывающее предупреждение,
+        # бот и push берут place_name именно здесь.
+        row["place_name"] = short_name(row["place_name"])
+        row["parent_name"] = short_name(row["parent_name"])
     return rows
 
 
@@ -466,7 +473,7 @@ def build_state() -> dict:
             bucket = zone_counts[row["id"]]
             bucket["level"] = row["level"]
             bucket["source_id"] = row["source_id"]
-            bucket["name"] = row["name_ru"]
+            bucket["name"] = short_name(row["name_ru"])
 
     return {
         "generated_at": now.isoformat(),
@@ -603,7 +610,7 @@ def zone_meta(rows: list[dict]) -> dict[str, dict]:
     marks = ",".join("?" * len(ids))
     return {
         row["id"]: {"level": row["level"], "source_id": row["source_id"],
-                    "name": row["name_ru"]}
+                    "name": short_name(row["name_ru"])}
         for row in query(
             f"SELECT id, level, source_id, name_ru FROM zones WHERE id IN ({marks})",
             tuple(ids))
@@ -773,9 +780,16 @@ def search(q: str = Query(..., min_length=2), limit: int = Query(12, ge=1, le=40
     for row in rows:
         # Одноимённых районов больше сотни — показываем родителя,
         # иначе выбрать нужный невозможно.
-        context = row["parent_name"] if row["level"] != "region" else None
+        #
+        # Здесь — и только здесь — имя остаётся официальным. По всему
+        # остальному продукту место названо коротко («Белгород»), но в
+        # выпадашке человек выбирает между зонами, и городской округ
+        # Белгород от города Белгорода отличает ровно типовое слово.
+        # Укоротив, мы бы дали две одинаковые строки подряд.
+        parent = row["parent_name"] or ""
+        context = parent if row["level"] != "region" else None
         if row["level"] == "place" and row["grandparent_name"]:
-            context = f"{row['parent_name']} · {row['grandparent_name']}"
+            context = f"{parent} · {row['grandparent_name']}"
         items.append({
             "zone_id": row["id"],
             "name": row["name_ru"],

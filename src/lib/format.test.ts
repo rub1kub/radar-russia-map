@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAgo } from "./format";
+import { formatAgo, shortZoneName } from "./format";
 
 describe("formatAgo", () => {
   const now = "2026-07-29T19:30:00Z";
@@ -141,5 +141,28 @@ describe("подписи аэропортов", () => {
     expect(signalLabel("infra", "infra")).toBe("Инфраструктура");
     // Обычный отбой аэропортом не притворяется.
     expect(signalLabel("allclear")).toBe("Отбой");
+  });
+});
+
+describe("короткое имя зоны", () => {
+  it("убирает типовое слово перед именем", () => {
+    expect(shortZoneName("городской округ Белгород")).toBe("Белгород");
+    expect(shortZoneName("городской округ город Чкаловск")).toBe("Чкаловск");
+    expect(shortZoneName("городской округ Горячий Ключ")).toBe("Горячий Ключ");
+    expect(shortZoneName("ЗАТО Северск")).toBe("Северск");
+  });
+
+  it("не трогает имена, которым типовое слово нужно", () => {
+    // Сзади типовое слово несёт смысл: «Тимашёвский» — это какой?
+    expect(shortZoneName("Тимашёвский район")).toBe("Тимашёвский район");
+    expect(shortZoneName("Одинцовский городской округ")).toBe("Одинцовский городской округ");
+    // Здесь «район» — часть самого имени.
+    expect(shortZoneName("район имени Лазо")).toBe("район имени Лазо");
+    expect(shortZoneName("Белгородская область")).toBe("Белгородская область");
+  });
+
+  it("правило то же, что в pipeline/textnorm.py — расхождение видно сразу", () => {
+    expect(shortZoneName("")).toBe("");
+    expect(shortZoneName("муниципальный округ город Чкаловск")).toBe("Чкаловск");
   });
 });
