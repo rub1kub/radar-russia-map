@@ -41,11 +41,13 @@ from .geocode import Geocoder, Resolved, destination_zone_ids  # noqa: E402
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
+from .source_policy import accepts_observation  # noqa: E402
 from .source_region import build_fallback  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
+STRICT_ALERTS = {source.key for source in sources_from_env() if source.strict_alerts}
 
 
 def resolve_networks(connection) -> dict[str, str | None]:
@@ -457,7 +459,9 @@ def run_once(
 
     for row in rows:
         observation = parse(row["text"])
-        if not observation.relevant:
+        if not accepts_observation(
+            observation, strict=row["source_key"] in STRICT_ALERTS
+        ):
             stats["irrelevant"] += 1
             continue
 

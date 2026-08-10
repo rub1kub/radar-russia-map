@@ -40,6 +40,9 @@ class Source:
     # "Радар.ру | X область" на десяток регионов ведёт один оператор, и при
     # расчёте достоверности вся сеть должна считаться за один голос.
     network: str | None = None
+    # Общеновостные каналы могут случайно совпасть со словами парсера.
+    # Для них в события проходят только явные оперативные сообщения.
+    strict_alerts: bool = False
 
 
 # Все 12 каналов папки "Радары", проверены через folders.py 27.07.2026.
@@ -345,6 +348,52 @@ SOURCES: list[Source] = [
     Source(
         "bplagroza", "bplagroza", "БПЛА ПРОЛЕТЫ ОПАСНОСТЬ / ГРОЗА",
         "regional", 1071, region="krasnodar", network=None,
+    ),
+
+    # --- Новые региональные источники, проверены 10.08.2026 ----------------
+    # Выборка последних 200 публикаций проверена через Telegram API. Каналы
+    # властей и СМИ общеновостные, поэтому для них включён строгий фильтр.
+    # «Радар. Москва и область» и «Рупор России» ведёт одна редакция — это
+    # один голос при расчёте достоверности, несмотря на разные каналы.
+    Source(
+        "drozdenko_lo", "drozdenko_au_lo", "Александр Дрозденко",
+        "official", 80_775, region="leningrad", strict_alerts=True,
+    ),
+    Source(
+        "sitnikov_kostroma", "sk_sitnikov", "Сергей Ситников",
+        "official", 7_366, region="kostroma", strict_alerts=True,
+    ),
+    Source(
+        "evraev_yaroslavl", "evraevmikhail", "Михаил Евраев",
+        "official", 17_879, region="yaroslavl", strict_alerts=True,
+    ),
+    Source(
+        "shutkin_udmurtia", "AAShutkin", "Шуткин без шуток",
+        "official", 9_896, region="udmurtia", strict_alerts=True,
+    ),
+    Source(
+        "kirov_region", "kirovreg43", "Кировская область",
+        "official", 5_474, region="kirov", strict_alerts=True,
+    ),
+    Source(
+        "marpravda", "marpravda", "Марийская правда",
+        "mixed", 2_551, region="mari_el", strict_alerts=True,
+    ),
+    Source(
+        "regionvn53", "regionvn53", "ЧП53 Великий Новгород",
+        "mixed", 44_484, region="novgorod", strict_alerts=True,
+    ),
+    Source(
+        "nn52signal", "nn52signal", "ОПОВЕЩЕНИЕ 52",
+        "regional", 122_162, region="nnovgorod",
+    ),
+    Source(
+        "radar_moscow_99", "Radar_Moscow_99", "Радар. Москва и область",
+        "regional", 43_174, region="moscow_oblast", network="rupor",
+    ),
+    Source(
+        "ruporruss", "ruporruss", "Рупор России",
+        "federal", 22_005, region="other", network="rupor",
     ),
 ]
 
