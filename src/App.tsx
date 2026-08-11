@@ -1009,6 +1009,10 @@ export default function App() {
   // Пока стартовый вид не применён, выбора ещё нет — и пустой выбор не
   // должен стереть запомненный регион на первой же отрисовке.
   const homeRegionReadyRef = useRef(false);
+  // Обработчик клика по карте создаётся один раз, а состояние листов
+  // живёт в React — ref передаёт ему свежее значение. Возвращает true,
+  // если лист был открыт и закрыт этим нажатием.
+  const sheetGuardRef = useRef<() => boolean>(() => false);
   const selectedKeyRef = useRef<string | null>(null);
   const layersRef = useRef<LayerState | null>(null);
   const loadLazyLayersRef = useRef<(() => void) | null>(null);
@@ -1659,6 +1663,10 @@ export default function App() {
         return false;
       }
       applySelectedFeature(target);
+      // На телефоне выбор не открывает ленту: человек открыл карту и
+      // должен увидеть карту своего региона, а не лист поверх неё.
+      // Лента — по вкладке «Эфир» или нажатием на зону, когда сам решит.
+      if (window.matchMedia(MOBILE_QUERY).matches) setRightOpen(false);
       fitFeature(map, target, 5.2);
       return true;
     };
@@ -2305,6 +2313,13 @@ export default function App() {
     });
 
     map.on("singleclick", (event) => {
+      // Открытый лист на телефоне закрывается нажатием на карту — так
+      // тянется рука: «убери это меню». Без гварда тап по карте выбирал
+      // регион под пальцем, а выбор снова открывал ленту — из листа
+      // нельзя было выйти нажатием туда, куда смотришь. Выбор места этим
+      // нажатием не делается: сначала вернуть карту, потом выбирать.
+      // История — не лист, а плеер: ею пользуются вместе с картой.
+      if (narrowScreen.matches && sheetGuardRef.current()) return;
       const zoom = map.getView().getZoom() ?? 0;
       let regionFeature: FeatureLike | null = null;
       let districtFeature: FeatureLike | null = null;
@@ -2551,6 +2566,11 @@ export default function App() {
       const map = mapRef.current;
       if (!map) return;
 
+      // На телефоне выбранная подсказка закрывает лист поиска: карта
+      // летит к месту, и человек должен это видеть. Раньше ветка НП без
+      // полигона оставляла лист открытым — полёт происходил за ним.
+      if (window.matchMedia(MOBILE_QUERY).matches) setLeftOpen(false);
+
       // Для объектов с загруженным контуром подлетаем к границам, а не к
       // условной центральной точке. Большинство населённых пунктов остаются
       // точечными; точные контуры пока есть у приоритетных объектов.
@@ -2707,6 +2727,14 @@ export default function App() {
     applySelectedFeature(null);
     setQuery("");
   }, [applySelectedFeature]);
+
+  // Свежая версия для обработчика клика карты (он создан один раз).
+  sheetGuardRef.current = () => {
+    if (!leftOpen && !rightOpen) return false;
+    setLeftOpen(false);
+    setRightOpen(false);
+    return true;
+  };
 
   // Какая вкладка подсвечена внизу на телефоне. Панель открыта ровно одна,
   // поэтому вкладка выводится из состояния панелей, а не хранится отдельно:

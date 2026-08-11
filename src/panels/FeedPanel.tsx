@@ -85,6 +85,10 @@ export function FeedPanel({
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sources, setSources] = useState<Record<string, EventSource[]>>({});
+  // Откуда начался свайп по ручке листа. Жест обрабатывается только на
+  // самой ручке: у списка ниже палец занят прокруткой, и перехватывать
+  // его было бы дороже, чем стоит жест.
+  const gripTouchY = useRef<number | null>(null);
   // Порядок карточек, замороженный на время чтения. Лента пересобирается
   // каждые несколько секунд, и список успевал переехать между взглядом и
   // нажатием: человек метил в одно событие, раскрывалось другое.
@@ -149,6 +153,34 @@ export function FeedPanel({
       aria-label="Обстановка"
       aria-hidden={collapsed}
     >
+      {/* Ручка полулиста на телефоне: тап или свайп вниз закрывают. Это
+          общепринятый знак шторки — без него лист выглядел стеной, у
+          которой нет выхода (крестик на телефоне скрыт, его работу делает
+          таб-бар, но об этом ещё надо догадаться). */}
+      <button
+        type="button"
+        className="sheet-grip"
+        aria-label="Свернуть ленту"
+        onClick={onCollapse}
+        onTouchStart={(touch) => {
+          gripTouchY.current = touch.touches[0]?.clientY ?? null;
+        }}
+        onTouchMove={(touch) => {
+          const startY = gripTouchY.current;
+          const y = touch.touches[0]?.clientY;
+          if (startY === null || y === undefined) return;
+          if (y - startY > 36) {
+            gripTouchY.current = null;
+            onCollapse();
+          }
+        }}
+        onTouchEnd={() => {
+          gripTouchY.current = null;
+        }}
+      >
+        <i aria-hidden="true" />
+      </button>
+
       <div className="feed-top">
         <button
           className="panel-collapse"

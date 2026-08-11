@@ -37,7 +37,10 @@ export function MobileTabs({ active, count, onPick }: Props) {
           key={tab.id}
           type="button"
           className={`mobile-tab ${active === tab.id ? "is-active" : ""}`}
-          onClick={() => onPick(tab.id)}
+          // Повторное нажатие на открытую вкладку закрывает её панель и
+          // возвращает карту: палец уже там, а «выключи то, что включил
+          // этой же кнопкой» — ожидание сильнее любой подписи.
+          onClick={() => onPick(active === tab.id && tab.id !== "map" ? "map" : tab.id)}
           aria-current={active === tab.id ? "page" : undefined}
         >
           <span className="mobile-tab-icon">

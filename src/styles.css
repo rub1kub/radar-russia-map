@@ -2580,6 +2580,9 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
  * Блок стоит в конце файла намеренно: выше есть более ранние медиазапросы
  * с той же шириной, и правила должны перекрывать их по каскаду.
  */
+/* Вне телефона ручка листа не существует: панель — колонка, не шторка. */
+.sheet-grip { display: none; }
+
 @media (max-width: 760px) {
   /* Страница не должна прокручиваться: скроллится содержимое панелей, а
      карта остаётся на месте. Иначе тянущийся вниз экран уводит карту. */
@@ -2637,6 +2640,39 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .sidebar.is-collapsed,
   .details-panel.is-collapsed { display: none; }
 
+  /* Лента — нижний ПОЛУлист, а не полноэкранная плита. Человек нажал на
+     район и должен видеть одновременно и карту с этим районом, и ответ
+     «что там происходит». Раньше лист накрывал карту целиком, и каждое
+     нажатие по зоне отбирало у человека то, на что он смотрел. Поиску,
+     наоборот, нужен рост: клавиатура снизу плюс подсказки. */
+  .details-panel {
+    top: auto;
+    max-height: 46dvh;
+  }
+
+  /* Ручка полулиста — знак «это шторка, её можно убрать». Тап и свайп
+     вниз закрывают. На десктопе не нужна: там панель — колонка сбоку. */
+  .sheet-grip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 22px;
+    margin: -6px 0 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    /* Свайп по ручке обрабатываем сами — браузеру тут скроллить нечего. */
+    touch-action: none;
+  }
+  .sheet-grip i {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.22);
+  }
+
   /* Плеер истории тоже лист, а не полоска у нижнего края. */
   .history-panel {
     left: 8px;
@@ -2674,6 +2710,42 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   /* Карте на телефоне и так тесно — подсказка при наведении там лишняя:
      пальцем «наводить» нельзя, а место она занимает. */
   .icon-hint, .region-hint { display: none; }
+
+  /* Меньше 16px в поле ввода — и Safari на iOS принудительно зумит всю
+     страницу при фокусе, а обратно сам не отъезжает. */
+  .search-box input { font-size: 16px; }
+
+  /* Крестик «снять выбор» и колокольчик в карточке зоны были мишенью
+     ~20 px — пальцем на улице в такую не попасть. */
+  .zone-card-head button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin-top: -10px;
+    margin-bottom: -10px;
+  }
+
+  /* Плеер истории должен стоять над остальными листами того же экрана:
+     базовый z-index 7 оставлял его под лентой. */
+  .history-panel.is-open { z-index: 20; }
+
+  /* Фильтры — одна прокручиваемая строка. В два ряда они съедали
+     полулиста треть, и из событий было видно полтора. */
+  .feed-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* Панель — flex-колонка, а прокручиваемый ребёнок в ней по умолчанию
+       сжимаем до нуля: строка схлопывалась до 11px, обрезая чипы. */
+    flex-shrink: 0;
+    min-height: 44px;
+  }
+  .feed-filters::-webkit-scrollbar { display: none; }
+  .filter-chip { flex: 0 0 auto; white-space: nowrap; }
 
   /* Кнопки аналитики и истории на телефоне заменил таб-бар, и компас
      переезжает на их место — над ним, у правого края. */
@@ -2949,8 +3021,9 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
     margin: 0;
     z-index: 6;
   }
+  /* Лента здесь не участвует: она нижний полулист, её top: auto, и
+     навязанный сверху отступ растягивал бы её на весь экран. */
   .in-telegram .sidebar,
-  .in-telegram .details-panel,
   .in-telegram .analytics-card,
   .in-telegram .panel-handle { top: calc(var(--tg-top) + 54px); }
 }
