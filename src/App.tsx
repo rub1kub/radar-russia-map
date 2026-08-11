@@ -1873,7 +1873,10 @@ export default function App() {
 
     const map = new OlMap({
       target: mapNodeRef.current,
-      controls: defaultControls({ attribution: false, zoom: false }).extend([
+      // rotate: false — иначе при повороте карты OpenLayers сам рисует
+      // свою кнопку «на север» в правом верхнем углу, чужую по стилю.
+      // Наш компас делает то же и появляется там, где его ждёт палец.
+      controls: defaultControls({ attribution: false, zoom: false, rotate: false }).extend([
         new Attribution({ collapsed: true, collapsible: true }),
         new ScaleLine({ minWidth: 90 })
       ]),
@@ -2807,13 +2810,20 @@ export default function App() {
           </div>
         </div>
 
-        <TopbarStats
-          events={radarState ? shownEvents : null}
-          zones={Object.keys(paintedZones).length}
-          quietRegions={quietRegions}
-          historyLabel={historyAt ? formatDayTime(historyAt) : null}
-          moment={radarState?.generated_at ?? null}
-        />
+        {/* На телефоне счётчики из шапки убраны: сколько событий в эфире,
+            говорит бейдж вкладки «Эфир», а разбивка по типам живёт в
+            «Сводке». В Telegram стрип вдобавок толкался с кнопками самого
+            мессенджера и выглядел сломанным. Исключение — архив: пометку
+            «показана история» карта обязана нести всегда. */}
+        {!isMobile || historyAt ? (
+          <TopbarStats
+            events={radarState ? shownEvents : null}
+            zones={Object.keys(paintedZones).length}
+            quietRegions={quietRegions}
+            historyLabel={historyAt ? formatDayTime(historyAt) : null}
+            moment={radarState?.generated_at ?? null}
+          />
+        ) : null}
 
       </header>
 

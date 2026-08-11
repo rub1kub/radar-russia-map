@@ -2622,23 +2622,44 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .stat-date { display: none; }
   .stat-chip { padding: 3px 7px; gap: 5px; font-size: 13px; }
 
-  /* Панели — листы поверх карты, во всю ширину, до таб-бара. */
+  /* Панели — листы поверх карты: во всю ширину и ВПЛОТНУЮ к таб-бару.
+     Зазор в 8 px со скруглёнными нижними углами читался не «шторка», а
+     «плитка криво повисла над меню» — лист обязан прирастать к тому краю,
+     из которого выезжает. Скругление только сверху по той же причине.
+     В Telegram нижняя полоса выше на var(--tg-bottom) — без неё лист
+     уходил под таб-бар мессенджера. */
   .sidebar,
   .details-panel {
     position: fixed;
-    left: 8px;
-    right: 8px;
-    bottom: calc(var(--tabbar-height) + 8px);
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-height) + var(--tg-bottom, 0px));
     top: 62px;
     width: auto;
     max-width: none;
     max-height: none;
     overflow-y: auto;
     z-index: 20;
-    border-radius: 14px;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+    /* Шторка выезжает и уезжает, а не мигает: transform дешёв и не
+       трогает раскладку. Visibility выключается по концу движения. */
+    transform: translateY(0);
+    transition:
+      transform 300ms cubic-bezier(0.32, 0.72, 0.24, 1),
+      max-height 300ms cubic-bezier(0.32, 0.72, 0.24, 1),
+      visibility 0s 0s;
+    visibility: visible;
   }
   .sidebar.is-collapsed,
-  .details-panel.is-collapsed { display: none; }
+  .details-panel.is-collapsed {
+    transform: translateY(calc(100% + var(--tabbar-height) + var(--tg-bottom, 0px)));
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform 300ms cubic-bezier(0.32, 0.72, 0.24, 1),
+      visibility 0s 300ms;
+  }
 
   /* Лента — нижний ПОЛУлист, а не полноэкранная плита. Человек нажал на
      район и должен видеть одновременно и карту с этим районом, и ответ
@@ -2648,6 +2669,12 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .details-panel {
     top: auto;
     max-height: 46dvh;
+  }
+
+  /* Полный рост по свайпу вверх за ручку. Верхняя граница — та же, что у
+     листа поиска: до шапки, не под неё. */
+  .details-panel.is-tall {
+    max-height: calc(100dvh - 62px - var(--tabbar-height) - var(--tg-bottom, 0px));
   }
 
   /* Ручка полулиста — знак «это шторка, её можно убрать». Тап и свайп
@@ -2675,12 +2702,15 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 
   /* Плеер истории тоже лист, а не полоска у нижнего края. */
   .history-panel {
-    left: 8px;
-    right: 8px;
-    bottom: calc(var(--tabbar-height) + 8px);
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-height) + var(--tg-bottom, 0px));
     width: auto;
     max-width: none;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
   }
+  .history-panel.is-open { animation: sheet-in 280ms cubic-bezier(0.32, 0.72, 0.24, 1); }
   /* Кнопка-тогл на телефоне скрыта — её работу делает вкладка «История».
      Закрытая панель без неё — пустой контейнер: 2 пикселя рамки,
      растянутые на всю ширину, читались загадочной полоской над таббаром. */
@@ -2688,22 +2718,48 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .history-panel.is-open .history-body { max-height: 52dvh; overflow-y: auto; }
 
   /* Всплывающие уведомления не должны прятаться за навигацией. */
-  .alert-toast { bottom: calc(var(--tabbar-height) + 12px); }
+  .alert-toast { bottom: calc(var(--tabbar-height) + var(--tg-bottom, 0px) + 12px); }
+
+  /* Появление листов, которые монтируются с нуля (история, аналитика):
+     transition им не помочь — анимируем сам вход. */
+  @keyframes sheet-in {
+    from { transform: translateY(24px); opacity: 0.4; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  /* Микроотклики нажатий: палец должен чувствовать, что кнопка живая.
+     Только transform — он не трогает раскладку и не будит перерисовку. */
+  .filter-chip,
+  .event-row,
+  .suggestions button,
+  .ghost-button,
+  .mobile-tab-icon,
+  .zone-card-head button {
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .filter-chip:active,
+  .suggestions button:active,
+  .ghost-button:active,
+  .zone-card-head button:active { transform: scale(0.96); }
+  .event-row:active { transform: scale(0.99); }
+  .mobile-tab:active .mobile-tab-icon { transform: scale(0.86); }
 
   /* Аналитика — такой же лист: без этого её низ уходил под таб-бар, а
      крестик наезжал на шапку. Крестик и не нужен — есть вкладка «Карта». */
   .analytics-overlay { padding: 0; align-items: stretch; }
   .analytics-card {
     position: fixed;
-    left: 8px;
-    right: 8px;
+    left: 0;
+    right: 0;
     top: 62px;
-    bottom: calc(var(--tabbar-height) + 8px);
+    bottom: calc(var(--tabbar-height) + var(--tg-bottom, 0px));
     width: auto;
     max-width: none;
     max-height: none;
     overflow-y: auto;
-    border-radius: 14px;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+    animation: sheet-in 280ms cubic-bezier(0.32, 0.72, 0.24, 1);
   }
   .analytics-close { display: none; }
 
@@ -3026,6 +3082,13 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .in-telegram .sidebar,
   .in-telegram .analytics-card,
   .in-telegram .panel-handle { top: calc(var(--tg-top) + 54px); }
+
+  /* Полный рост ленты в мессенджере считается от его панели с кнопками,
+     а не от нашей шапки — иначе лист упирался в «Закрыть» и крестик. */
+  .in-telegram .details-panel.is-tall {
+    max-height: calc(100dvh - var(--tg-top) - 54px
+                     - var(--tabbar-height) - var(--tg-bottom));
+  }
 }
 
 /* Нижняя навигация поднимается над системной полосой мессенджера. */

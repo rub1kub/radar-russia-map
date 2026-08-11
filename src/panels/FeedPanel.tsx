@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell, BellRing, Building2, ChevronDown, ChevronRight, Crosshair } from "lucide-react";
 import { api } from "../lib/api";
 import type { EventSource, RadarEvent, RadarState } from "../lib/api";
@@ -85,10 +85,23 @@ export function FeedPanel({
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sources, setSources] = useState<Record<string, EventSource[]>>({});
+  // Полулист или лист в полный рост. Ручка обещает «потяни» — обещание
+  // надо держать: свайп вверх раскрывает, вниз возвращает полулист, ещё
+  // раз вниз — закрывает. Тап переключает высоту.
+  const [tall, setTall] = useState(false);
   // Откуда начался свайп по ручке листа. Жест обрабатывается только на
   // самой ручке: у списка ниже палец занят прокруткой, и перехватывать
   // его было бы дороже, чем стоит жест.
   const gripTouchY = useRef<number | null>(null);
+  // Свайп уже сработал — синтетический click вслед за ним гасим, иначе
+  // одно движение пальца срабатывало бы дважды.
+  const gripSwiped = useRef(false);
+
+  // Закрытый лист всегда открывается полулистом: полный рост — явный
+  // выбор на этот раз, а не залипшее состояние с прошлого.
+  useEffect(() => {
+    if (collapsed) setTall(false);
+  }, [collapsed]);
   // Порядок карточек, замороженный на время чтения. Лента пересобирается
   // каждые несколько секунд, и список успевал переехать между взглядом и
   // нажатием: человек метил в одно событие, раскрывалось другое.
@@ -149,29 +162,43 @@ export function FeedPanel({
 
   return (
     <aside
-      className={`details-panel ${collapsed ? "is-collapsed" : ""}`}
+      className={`details-panel ${collapsed ? "is-collapsed" : ""} ${tall ? "is-tall" : ""}`}
       aria-label="Обстановка"
       aria-hidden={collapsed}
     >
-      {/* Ручка полулиста на телефоне: тап или свайп вниз закрывают. Это
-          общепринятый знак шторки — без него лист выглядел стеной, у
-          которой нет выхода (крестик на телефоне скрыт, его работу делает
-          таб-бар, но об этом ещё надо догадаться). */}
+      {/* Ручка листа на телефоне — общепринятый знак шторки. Свайп вверх
+          раскрывает в полный рост, свайп вниз возвращает полулист, из
+          полулиста — закрывает. Тап переключает высоту. Без ручки лист
+          выглядел стеной, у которой нет выхода. */}
       <button
         type="button"
         className="sheet-grip"
-        aria-label="Свернуть ленту"
-        onClick={onCollapse}
+        aria-label={tall ? "Свернуть ленту до половины" : "Развернуть ленту"}
+        aria-expanded={tall}
+        onClick={() => {
+          if (gripSwiped.current) {
+            gripSwiped.current = false;
+            return;
+          }
+          setTall((value) => !value);
+        }}
         onTouchStart={(touch) => {
           gripTouchY.current = touch.touches[0]?.clientY ?? null;
+          gripSwiped.current = false;
         }}
         onTouchMove={(touch) => {
           const startY = gripTouchY.current;
           const y = touch.touches[0]?.clientY;
           if (startY === null || y === undefined) return;
-          if (y - startY > 36) {
+          if (y - startY < -36) {
             gripTouchY.current = null;
-            onCollapse();
+            gripSwiped.current = true;
+            setTall(true);
+          } else if (y - startY > 36) {
+            gripTouchY.current = null;
+            gripSwiped.current = true;
+            if (tall) setTall(false);
+            else onCollapse();
           }
         }}
         onTouchEnd={() => {
