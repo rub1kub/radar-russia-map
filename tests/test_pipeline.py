@@ -1884,3 +1884,30 @@ def test_bare_direction_splits_observation_from_target(text, observed, target):
 ])
 def test_bare_direction_does_not_invent_targets(text):
     assert split_directions([text])[1] == []
+
+
+# --- «К вам» — борт идёт сюда, а видят его не здесь -------------------------
+#
+# Второй слой той же жалобы про Краснодар: событие осталось «Фиксацией»
+# даже после починки «на Краснодар», потому что одно из сообщений было
+# «Краснодар. Предварительно к вам БПЛА». Зоны-получателя в тексте нет —
+# адресат сам канал, — поэтому split_directions тут бессилен, и правило
+# работает понижением класса.
+
+@pytest.mark.parametrize("text", [
+    "Краснодар\nПредварительно к вам БПЛА",
+    "Фиксации 2 БПЛА к вам",
+    "Геленджик\nна вас БПЛА в обход Новороссийска",
+    "Скворцово, в вашу сторону БПЛА",
+    "Сочи, Туапсе\nБолее 3 фиксаций к вам",
+])
+def test_approach_to_the_reader_is_a_warning(text):
+    assert parse(text).signal_type == "danger"
+
+
+@pytest.mark.parametrize("text", [
+    "Фиксация БПЛА над Ейском",
+    "Бобров, Воронежская область - в небе БПЛА",
+])
+def test_sighting_here_stays_a_sighting(text):
+    assert parse(text).signal_type == "detection"
