@@ -86,3 +86,28 @@ def test_link_is_absent_when_channel_is_unknown():
     rows = [{"source_key": "ghost", "role": "first", "contributed_at": "2026-07-28T21:00:00Z",
              "text": "Опасность по БПЛА", "message_id": 5}]
     assert walk(rows, {}, {})[0].link is None
+
+
+# Типовая строка кубанских лент: 95 символов, четырнадцать каналов слово в
+# слово. При пороге в 120 символов она не считалась перепечаткой, и событие
+# над Сочи показывало «18 источников» там, где независимых голосов четыре.
+KUBAN_BOILERPLATE = (
+    "От Тамани до Сочи\nтревога по БПЛА сохраняется\n"
+    "Соблюдайте меры безопасности\nПри сбитиях БПЛА\nКраснодарский край"
+)
+
+
+def test_short_boilerplate_repeated_verbatim_is_one_voice():
+    rows = [row("a", "first", KUBAN_BOILERPLATE),
+            row("b", "confirm", KUBAN_BOILERPLATE),
+            row("c", "confirm", KUBAN_BOILERPLATE)]
+    marked = walk(rows, {})
+    assert [item.counted for item in marked] == [True, False, False]
+    assert counted(rows, {}) == 1
+
+
+def test_two_lines_saying_the_same_short_thing_are_still_two_voices():
+    """«Опасность БПЛА» иначе и не напишешь — это не перепечатка."""
+    rows = [row("a", "first", "Анапа опасность БПЛА"),
+            row("b", "confirm", "Анапа опасность БПЛА")]
+    assert counted(rows, {}) == 2
