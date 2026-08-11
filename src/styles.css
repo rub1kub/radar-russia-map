@@ -2643,8 +2643,14 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
     border-radius: 16px 16px 0 0;
     border-bottom: 0;
     /* Шторка выезжает и уезжает, а не мигает: transform дешёв и не
-       трогает раскладку. Visibility выключается по концу движения. */
+       трогает раскладку. Visibility выключается по концу движения.
+       Opacity — явно 1: десктопный .is-collapsed (строка 168) гасит
+       панель прозрачностью без перехода, а здесь transition её не
+       перечисляет — без явного сброса opacity прыгал 1→0 мгновенно,
+       и 300 мс сдвига transform уезжали уже невидимыми. Само выцветание
+       десктопу и не нужно: на телефоне лист просто уезжает за край. */
     transform: translateY(0);
+    opacity: 1;
     transition:
       transform 300ms cubic-bezier(0.32, 0.72, 0.24, 1),
       max-height 300ms cubic-bezier(0.32, 0.72, 0.24, 1),
@@ -2654,6 +2660,7 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   .sidebar.is-collapsed,
   .details-panel.is-collapsed {
     transform: translateY(calc(100% + var(--tabbar-height) + var(--tg-bottom, 0px)));
+    opacity: 1;
     visibility: hidden;
     pointer-events: none;
     transition:
@@ -2710,7 +2717,23 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
     border-radius: 16px 16px 0 0;
     border-bottom: 0;
   }
-  .history-panel.is-open { animation: sheet-in 280ms cubic-bezier(0.32, 0.72, 0.24, 1); }
+  /* Два старых мобильных правила бьют мимо цели новее этого блока:
+     .history-panel.is-open со строки 2325 задаёт width под десктопный
+     раскрытый плеер, а версия со строки 2387 (из давно нерабочего
+     дизайна с плавающими ярлыками) держит left/right на var(--edge)
+     вместо 0. Обе — на класс точнее, чем базовый .history-panel этого
+     блока, и потому побеждают его несмотря на то, что этот блок ниже
+     по файлу. Открытая история из-за этого не доставала до края, пока
+     свёрнутая и остальные листы уже доставали. Сбрасываем той же парой
+     классов, чтобы победить по специфичности, а не только по порядку. */
+  .history-panel.is-open {
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-height) + var(--tg-bottom, 0px));
+    width: auto;
+    max-width: none;
+    animation: sheet-in 280ms cubic-bezier(0.32, 0.72, 0.24, 1);
+  }
   /* Кнопка-тогл на телефоне скрыта — её работу делает вкладка «История».
      Закрытая панель без неё — пустой контейнер: 2 пикселя рамки,
      растянутые на всю ширину, читались загадочной полоской над таббаром. */
