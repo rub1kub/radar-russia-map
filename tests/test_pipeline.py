@@ -1911,3 +1911,24 @@ def test_approach_to_the_reader_is_a_warning(text):
 ])
 def test_sighting_here_stays_a_sighting(text):
     assert parse(text).signal_type == "detection"
+
+
+# --- Вопрос читателю — не сообщение об обстановке ---------------------------
+#
+# «Краснодар слышали взрывы? Да 👍 Нет 👎» — опрос: канал спрашивает, а не
+# утверждает, и вешал на Краснодар удар девятого уровня.
+
+@pytest.mark.parametrize("text", [
+    "Краснодар слышали взрывы? Да - 👍 Нет - 👎 Подписаться в Мах",
+    "❗️Услышали пролет?\n\n🚨Есть информация для населения?\n\n"
+    "✅Хотите поделиться новостью?",
+])
+def test_poll_is_not_an_event(text):
+    assert parse(text).relevant is False
+
+
+def test_statement_before_the_question_survives():
+    """Вопрос снимается по предложениям, а не вместе с сообщением."""
+    observation = parse("Долгоруково - сообщают о пролетах БПЛА.\n\nВы слышали? 👍/👎")
+    assert observation.relevant
+    assert observation.signal_type == "detection"
