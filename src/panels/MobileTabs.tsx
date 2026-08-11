@@ -4,8 +4,6 @@ export type MobileTab = "map" | "feed" | "search" | "history" | "analytics";
 
 type Props = {
   active: MobileTab;
-  /** Сколько событий в эфире — бейдж на вкладке ленты. */
-  count: number;
   onPick: (tab: MobileTab) => void;
 };
 
@@ -21,7 +19,7 @@ type Props = {
  * Высота считается с safe-area: на айфонах внизу живёт системная полоса,
  * и без отступа она перекрывала бы последнюю кнопку.
  */
-export function MobileTabs({ active, count, onPick }: Props) {
+export function MobileTabs({ active, onPick }: Props) {
   const tabs: Array<{ id: MobileTab; label: string; icon: JSX.Element }> = [
     { id: "map", label: "Карта", icon: <MapIcon size={19} aria-hidden="true" /> },
     { id: "feed", label: "Эфир", icon: <Radio size={19} aria-hidden="true" /> },
@@ -43,12 +41,7 @@ export function MobileTabs({ active, count, onPick }: Props) {
           onClick={() => onPick(active === tab.id && tab.id !== "map" ? "map" : tab.id)}
           aria-current={active === tab.id ? "page" : undefined}
         >
-          <span className="mobile-tab-icon">
-            {tab.icon}
-            {tab.id === "feed" && count > 0 ? (
-              <span className="mobile-tab-badge">{count > 99 ? "99+" : count}</span>
-            ) : null}
-          </span>
+          <span className="mobile-tab-icon">{tab.icon}</span>
           <span className="mobile-tab-label">{tab.label}</span>
         </button>
       ))}
