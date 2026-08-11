@@ -19,7 +19,8 @@ import pytest
 
 from pipeline.fuse import Fuser
 from pipeline.geocode import Geocoder
-from pipeline.parse import candidate_phrases, foreign_side, parse, strip_footer
+from pipeline.parse import (candidate_phrases, foreign_side, parse,
+                            split_directions, strip_footer)
 from pipeline.textnorm import (expand_units, form_gender, name_gender, norm_key,
                                short_name, slugify, stem_key, stem_word,
                                strip_unit)
@@ -1851,3 +1852,35 @@ def test_extinguished_fire_is_not_an_intercept():
 
 def test_liquidated_drone_is_still_an_intercept():
     assert parse("Ликвидировано 6 БПЛА над Рязанской областью").signal_type == "intercept"
+
+
+# --- Голое «на Город» — это адресат, а не наблюдение ------------------------
+#
+# Владелец: «почему мы вешаем на Краснодар фиксацию, если все пишут лишь о
+# том, что в сторону Краснодара с разных сторон». Ленты пишут телеграфом,
+# без глагола — «Калининский район на Краснодар БПЛА», «и близлежащих к
+# Краснодару». MOVING_TO_RE знал только обороты с глаголом, и город
+# назначения получал ту же «Фиксацию», что и место, где борт видели.
+
+@pytest.mark.parametrize("text,observed,target", [
+    ("Калининский район на Краснодар БПЛА", "Калининский район", "Краснодар"),
+    ("Заходят БПЛА на Славянск на Кубани", "Заходят БПЛА", "Славянск на Кубани"),
+    ("и близлежащих к Краснодару Тревога по БПЛА", "и близлежащих", "Краснодару"),
+])
+def test_bare_direction_splits_observation_from_target(text, observed, target):
+    head, tail = split_directions([text])
+    assert head and observed in head[0]
+    assert tail and target in tail[0]
+
+
+@pytest.mark.parametrize("text", [
+    # Компасный курс: борт на трассе уже видят, юг — не адресат.
+    "По трассе Новоайдар-Счастье на юг БПЛА Хорнет",
+    # Способ связи, а не направление.
+    "Суземка фпв на оптоволокне по жд",
+    # «на Кубани» — часть имени города, а не движение к реке.
+    "Славянск на Кубани тревога по БПЛА",
+    "Ростов-на-Дону тревога по БПЛА",
+])
+def test_bare_direction_does_not_invent_targets(text):
+    assert split_directions([text])[1] == []
