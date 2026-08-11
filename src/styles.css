@@ -3112,7 +3112,11 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
 .in-telegram .compass-button { bottom: calc(var(--edge) + var(--tg-bottom)); }
 
 @media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
-  .in-telegram .history-panel,
+  /* Круглая кнопка компаса — не лист, ей нужен зазор от таб-бара, как
+     у карты снаружи Telegram. Плеер истории сюда больше не входит: он
+     теперь такой же лист, прижатый вплотную, как лента и поиск, — эта
+     строка была написана до того редизайна и tащила его назад в щель
+     в 12 px, которую он один и показывал. */
   .in-telegram .compass-button {
     bottom: calc(var(--tabbar-height) + var(--tg-bottom) + 12px);
   }
