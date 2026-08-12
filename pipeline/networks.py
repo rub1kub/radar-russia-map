@@ -34,6 +34,15 @@ REPOST_WINDOW_SEC = 600
 # короткие сообщения вроде «Отбой» совпадают у кого угодно.
 MIN_MATCHES = 5
 
+# Доля совпадений от объёма МЕНЬШЕГО канала в паре. Одного счёта мало:
+# за три месяца пять дословных совпадений набирается и у честных каналов,
+# цитирующих одну сводку РСЧС, — транзитивное замыкание через такие рёбра
+# склеивало 162 канала в одну сеть вместе с губернатором Севастополя и
+# Росавиацией. Клоны выдаёт пропорция: у ферм («lpr1_*», «radar_<регион>»
+# с двойными буквами) меньший канал совпадает с парой на 20–92%, у
+# независимых — на 2–5%. Порог между этими облаками.
+MIN_SHARE = 0.2
+
 # Короткие тексты выкидываем: «Отбой», «Опасность БПЛА» совпадают дословно
 # у независимых каналов просто потому, что иначе это не написать.
 MIN_TEXT_LEN = 25
@@ -85,11 +94,45 @@ def collect_pairs(connection: sqlite3.Connection) -> dict[tuple[str, str], int]:
     return dict(pairs)
 
 
-def components(pairs: dict[tuple[str, str], int]) -> list[set[str]]:
-    """Компоненты связности графа перепечаток."""
+def official_keys() -> set[str]:
+    """Каналы с tier=official — губернаторы, МЧС, Росавиация, РСЧС.
+
+    Они в сети не входят никогда: официальный канал пишет своими словами,
+    а совпадения с ним — это ленты, цитирующие официальное сообщение.
+    Склейка тянула губернатора Севастополя в ферму клонов, и его голос
+    переставал считаться отдельным свидетельством.
+    """
+    try:
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
+        from config import sources_from_env
+        return {s.key for s in sources_from_env() if s.tier == "official"}
+    except Exception:
+        # Без конфига (тесты, чужая машина) — просто без белого списка.
+        return set()
+
+
+def components(pairs: dict[tuple[str, str], int],
+               totals: dict[str, int] | None = None,
+               official: set[str] | None = None) -> list[set[str]]:
+    """Компоненты связности графа перепечаток.
+
+    Ребро — только пара, где совпадений и много (MIN_MATCHES), и они
+    составляют заметную долю меньшего канала (MIN_SHARE). Замыкание по
+    таким рёбрам безопасно: у настоящих клонов доля 20–92%, и цепочка
+    ведёт по одной редакции, а не через случайно совпавшую сводку.
+    """
+    totals = totals or {}
+    official = official if official is not None else set()
     adjacency: dict[str, set[str]] = defaultdict(set)
     for (left, right), count in pairs.items():
         if count < MIN_MATCHES:
+            continue
+        if left in official or right in official:
+            continue
+        smaller = min(totals.get(left, 0), totals.get(right, 0))
+        if smaller and count / smaller < MIN_SHARE:
             continue
         adjacency[left].add(right)
         adjacency[right].add(left)
@@ -114,7 +157,12 @@ def components(pairs: dict[tuple[str, str], int]) -> list[set[str]]:
 def rebuild_networks(connection: sqlite3.Connection) -> dict:
     connection.executescript(SCHEMA)
     pairs = collect_pairs(connection)
-    groups = components(pairs)
+    totals = {
+        row["source_key"]: row["n"]
+        for row in connection.execute(
+            "SELECT source_key, COUNT(*) n FROM raw_messages GROUP BY source_key")
+    }
+    groups = components(pairs, totals, official_keys())
 
     strength: dict[str, int] = defaultdict(int)
     for (left, right), count in pairs.items():

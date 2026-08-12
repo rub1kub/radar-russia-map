@@ -111,3 +111,28 @@ def test_rebuild_is_idempotent(db):
     second = rebuild_networks(db)
     assert first == second
     assert db.execute("SELECT COUNT(*) n FROM source_networks").fetchone()["n"] == 2
+
+
+def test_low_share_pair_is_not_a_network():
+    """Пять совпадений за три месяца — случайность, если каналы большие.
+
+    Через такие рёбра транзитивное замыкание склеивало 162 канала в одну
+    сеть. Клоны выдаёт доля: у ферм меньший канал совпадает на 20–92%.
+    """
+    pairs = {("a", "b"): 10}
+    totals = {"a": 1000, "b": 1000}   # 10/1000 = 1% — совпадение, не сеть
+    assert components(pairs, totals) == []
+
+
+def test_high_share_pair_is_a_network():
+    pairs = {("a", "b"): 10}
+    totals = {"a": 1000, "b": 20}     # 10/20 = 50% — половина канала
+    assert {frozenset(g) for g in components(pairs, totals)} == {frozenset({"a", "b"})}
+
+
+def test_official_channel_never_joins_a_network():
+    """Совпадение с губернатором — это цитата его сообщения, а не клон."""
+    pairs = {("gov", "lenta"): 50, ("lenta", "lenta2"): 50}
+    totals = {"gov": 60, "lenta": 60, "lenta2": 60}
+    groups = components(pairs, totals, official={"gov"})
+    assert {frozenset(g) for g in groups} == {frozenset({"lenta", "lenta2"})}
