@@ -53,22 +53,37 @@ def suspicious(connection) -> list[dict]:
         (MAX_SOURCES, LIMIT),
     ).fetchall()
 
+    # Импорт здесь: parse тянет весь словарь разбора, а suspicious()
+    # зовут и тесты, которым он не нужен... нужен — но пусть грузится
+    # один раз на запуск, а не на импорт модуля.
+    from pipeline.parse import parse
+
     out = []
     for row in rows:
-        first = connection.execute(
+        texts = connection.execute(
             """
             SELECT m.text FROM event_sources es
             JOIN raw_messages m ON m.id = es.raw_message_id
-            WHERE es.event_id = ? ORDER BY es.contributed_at LIMIT 1
+            WHERE es.event_id = ? ORDER BY es.contributed_at
             """,
             (row["id"],),
-        ).fetchone()
+        ).fetchall()
+        # Показываем сообщение, ДАВШЕЕ значок, а не первое по времени.
+        # Событие Алчевска открылось «тревогой», удар в него принесло
+        # пятое сообщение «сбито более пяти БПЛА» — и отчёт с первым
+        # текстом выглядел ложным срабатыванием, хотя событие честное.
+        chosen = (texts[0]["text"] if texts else "") or ""
+        for item in texts:
+            observation = parse(item["text"] or "")
+            if observation.relevant and observation.signal_type == row["signal_type"]:
+                chosen = item["text"] or ""
+                break
         out.append({
             "zone": row["name_ru"],
             "signal": row["signal_type"],
             "at": row["first_seen_at"][11:16],
             "sources": row["source_count"],
-            "text": " ".join(((first["text"] if first else "") or "").split())[:160],
+            "text": " ".join(chosen.split())[:160],
         })
     return out
 

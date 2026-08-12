@@ -2017,3 +2017,25 @@ def test_governor_recap_of_repelled_attack_is_filtered():
         "БПЛА. Она была успешно отражена силами ПВО и РЭБ. Было уничтожено "
         "11 беспилотников.")
     assert observation.relevant is False
+
+
+def test_planned_navy_drill_announcement_is_not_a_strike():
+    """«Запланированы стрельбы… будут слышны взрывы» — анонс своих работ."""
+    observation = parse(
+        "Ориентировочно до 22:00 в районе бухт флот будет проводить "
+        "профилактические мероприятия по борьбе с ПДСС.\n\n"
+        "Запланированы стрельбы и гранатометание.\n\n"
+        "Будут слышны неоднократные взрывы, поэтому предупреждаю заранее.")
+    assert observation.relevant is False
+
+
+def test_paintball_is_not_shelling():
+    """«Обстрелял два авто из пейнтбольного ружья» — хроника, не прилёт."""
+    observation = parse(
+        "Со слов местных жителей, в Ямном кто-то обстрелял два авто "
+        "из пейнтбольного ружья.")
+    assert observation.relevant is False
+
+
+def test_real_shelling_still_reads_as_impact():
+    assert parse("Белгород под обстрелом").signal_type == "impact"

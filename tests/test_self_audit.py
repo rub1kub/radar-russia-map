@@ -77,3 +77,22 @@ def test_report_mentions_zone_and_text(db):
     event(db, "e1", "impact", 2)
     text = report(suspicious(db))
     assert "Тестовск" in text and "Удар" in text and "сбитие БПЛА" in text
+
+
+def test_report_shows_the_message_that_set_the_signal(db):
+    """Событие открылось тревогой, удар принесло второе сообщение — в
+    отчёте должен стоять его текст, иначе честное событие выглядит фейком
+    (так случилось с Алчевском: «тревога БПЛА» при значке «Удар»)."""
+    event(db, "e1", "impact", 2)
+    db.execute(
+        "INSERT INTO raw_messages (source_key, message_id, posted_at, text)"
+        " VALUES ('ch2', 2, datetime('now'), 'Тестовск слышны взрывы')")
+    raw_id = db.execute("SELECT MAX(id) m FROM raw_messages").fetchone()["m"]
+    db.execute(
+        "INSERT INTO event_sources (event_id, raw_message_id, source_key,"
+        " contributed_at, role) VALUES ('e1',?,?,datetime('now','+1 minute'),'confirm')",
+        (raw_id, "ch2"))
+    db.commit()
+
+    items = suspicious(db)
+    assert "взрывы" in items[0]["text"]
