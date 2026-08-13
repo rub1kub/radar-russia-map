@@ -1459,6 +1459,11 @@ def main() -> int:
     sitemap: list[tuple[str, str, str, str]] = [
         (f"{SITE}/", lastmod, "hourly", "1.0"),
         (f"{SITE}/city/", lastmod, "daily", "0.85"),
+        # Правовые страницы генерирует scripts/legal_pages при выкатке —
+        # содержимое от данных не зависит. В карту сайта их всё же
+        # включаем: страница, которой нет в индексе, не работает.
+        (f"{SITE}/privacy/", lastmod, "yearly", "0.2"),
+        (f"{SITE}/terms/", lastmod, "yearly", "0.2"),
     ]
     (OUT / "city" / "index.html").write_text(
         city_index_page(cities, updated), encoding="utf-8")

@@ -228,6 +228,19 @@ def zone_name(zone_id: str) -> str:
     return short_name(row["name_ru"]) if row else zone_id
 
 
+def forget(chat_id: int) -> str:
+    """Удалить всё, что сервис хранит об этом человеке."""
+    with closing(_connect()) as connection:
+        connection.execute("DELETE FROM tg_chats WHERE chat_id = ?", (chat_id,))
+        connection.execute("DELETE FROM tg_sent WHERE chat_id = ?", (chat_id,))
+        connection.execute("DELETE FROM tg_activity WHERE chat_id = ?", (chat_id,))
+        connection.commit()
+    return ("Готово: подписки и все связанные с вами данные удалены.\n\n"
+            "Картой можно пользоваться и без бота — она ничего о вас не "
+            "хранит. Чтобы снова получать уведомления, напишите /watch и "
+            "название места.")
+
+
 # --- Тексты ответов ---------------------------------------------------------
 
 def plural(count: int, one: str, few: str, many: str) -> str:
@@ -348,6 +361,7 @@ HELP = (
     "/watch Белгородская область — уведомлять об этом месте\n"
     "/unwatch Белгородская область — перестать\n"
     "/my — мои подписки\n"
+    "/stop — удалить все мои данные\n"
     "/help — эта справка\n\n"
     "Карта показывает только то, что сообщили ленты мониторинга. Это не "
     "официальное оповещение: следуйте указаниям экстренных служб."
@@ -510,6 +524,13 @@ def handle_text(chat_id: int, text: str,
 
     if command in ("/my", "/мои"):
         send(chat_id, my_text(chat_id))
+        return
+
+    # Право на удаление, обещанное политикой конфиденциальности. Сносим всё,
+    # что о человеке известно: подписки, состояние чата, журнал обращений и
+    # отметки об отправленных уведомлениях.
+    if command in ("/stop", "/удалить"):
+        send(chat_id, forget(chat_id))
         return
 
     # Не команда — считаем, что человек назвал место: так проще, чем

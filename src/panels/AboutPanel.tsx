@@ -86,15 +86,17 @@ export function AboutPanel({ open, onClose }: Props) {
           принимайте по указаниям экстренных служб.
         </p>
 
+        <h3>Чего на карте нет намеренно</h3>
+        <p>
+          Карта не публикует места попаданий и их последствия, а работу ПВО
+          показывает не точнее муниципального района. Назначение сервиса —
+          предупредить человека, а не описать результат удара.
+        </p>
+
         <p className="about-foot">
-          Код и данные открыты:{" "}
-          <a
-            href="https://github.com/rub1kub/radar-russia-map"
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            github.com/rub1kub/radar-russia-map
-          </a>
+          <a href="/privacy/">Политика конфиденциальности</a>
+          {" · "}
+          <a href="/terms/">Условия использования</a>
         </p>
       </div>
     </div>

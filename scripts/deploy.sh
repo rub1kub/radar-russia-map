@@ -105,9 +105,14 @@ fi
 # посадочные отдавали бы 404.
 retry rsync -az --delete --exclude "region/" --exclude "city/" \
   --exclude "svodka/" --exclude "sitemap.xml" \
+  --exclude "privacy/" --exclude "terms/" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
   ./.venv/bin/python -m scripts.sync_place_names"
+# Правовые страницы: содержимое от данных не зависит, поэтому не в
+# почасовом таймере SEO, а здесь — один раз за выкатку.
+retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
+  ./.venv/bin/python -m scripts.legal_pages"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
   ./.venv/bin/python -m scripts.seo_pages --ping 2>&1 | tail -2"
 retry ssh "$SERVER" "chmod -R o+rX $REMOTE_DIR/dist && systemctl restart tihoenebo-api"

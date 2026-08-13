@@ -2962,6 +2962,13 @@ export default function App() {
             >
               Как это работает
             </button>
+            {/* Правовые страницы: обычными ссылками, а не кнопками — это
+                статические страницы вне приложения. */}
+            <p className="legal-links">
+              <a href="/privacy/">Конфиденциальность</a>
+              {" · "}
+              <a href="/terms/">Условия</a>
+            </p>
           </details>
         </aside>
 
