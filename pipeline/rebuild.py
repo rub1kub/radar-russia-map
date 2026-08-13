@@ -21,7 +21,7 @@ from config import sources_from_env  # noqa: E402
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
 from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
-                      destination_zone_ids)
+                      destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -138,6 +138,11 @@ def rebuild(connection) -> dict:
         # ей достаётся «опасность», а не сигнал сообщения.
         targets = (destination_zone_ids(geocoder, observation.place_phrases, home)
                    if observation.severity > 5 else set())
+        # Места из оговорки о возможном («в случае прорыва ожидаются цели
+        # от…») — тоже адресаты предупреждения, но по другому признаку:
+        # там речь про условие, а не про направление.
+        ahead = (forecast_zone_ids(geocoder, observation.place_phrases, home)
+                 if observation.severity > 5 else set())
 
         # Сообщение может называть несколько независимых мест — каждое
         # становится отдельным наблюдением в своей зоне.
@@ -146,7 +151,14 @@ def rebuild(connection) -> dict:
             # Работа ПВО публикуется районом, не точкой — см. coarsen_intercept.
             if observation.signal_type == "intercept":
                 item = coarsen_intercept(geocoder, item)
-            if item.zone_id in targets:
+            # Место, названное только внутри оговорки о возможном, получает
+            # предупреждение, а не сигнал сообщения: «уничтожена группа над
+            # Сочи… в случае прорыва ожидаются цели от Анапы» — над Анапой
+            # ничего не сбивали.
+            if item.zone_id in ahead:
+                local = replace(observation, signal_type="danger", severity=5)
+                stats["as_forecast"] = stats.get("as_forecast", 0) + 1
+            elif item.zone_id in targets:
                 local = replace(observation, signal_type="danger", severity=5)
                 stats["as_destination"] = stats.get("as_destination", 0) + 1
             fuser.add(

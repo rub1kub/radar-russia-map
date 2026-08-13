@@ -159,3 +159,16 @@ describe("значок значит «здесь»", () => {
     expect(isPointEvent("alarm", "district")).toBe(false);
   });
 });
+
+describe("круг возможного положения идёт за значком", () => {
+  it("у областного оповещения значка нет — значит и круга быть не должно", () => {
+    // На карте висели пунктирные окружности вокруг пустого места: значок
+    // фильтровался по isPointEvent, круг — нет.
+    expect(isPointEvent("detection", "region")).toBe(false);
+  });
+
+  it("у района и посёлка значок есть, и круг вокруг него уместен", () => {
+    expect(isPointEvent("detection", "district")).toBe(true);
+    expect(isPointEvent("detection", "place")).toBe(true);
+  });
+});

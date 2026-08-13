@@ -659,9 +659,24 @@ class Geocoder:
         целиком строчными встречаются в сводках постоянно, и там заглавная
         буква ничего не различает.
         """
+        def first_letter(word: str) -> str:
+            """Первая БУКВА слова, а не первый символ.
+
+            Ленты лепят эмодзи вплотную к названию: «🚨Адлер», «❗️Керчь»,
+            «⚡Владимирская область». По первому символу такое слово не
+            попадало ни в заглавные, ни в строчные — и когда соседние слова
+            были с заглавной, город отбрасывался как «обычное слово со
+            строчной». «🚨Адлер Сбития Меры безопасности» не находило Адлера
+            вовсе, и событие уезжало на регион канала.
+            """
+            for char in word:
+                if char.isalpha():
+                    return char
+            return ""
+
         raw = expand_units(phrase).split()
-        upper = {norm_key(word) for word in raw if word[:1].isupper()}
-        lower = {norm_key(word) for word in raw if word[:1].islower()}
+        upper = {norm_key(word) for word in raw if first_letter(word).isupper()}
+        lower = {norm_key(word) for word in raw if first_letter(word).islower()}
         return upper if upper and lower else None
 
     def _lowercase_common_word(self, match: Match, word: str,
@@ -1087,6 +1102,29 @@ def coarsen_intercept(geocoder, item: Resolved) -> Resolved:
         lon=parent["lon"],
         phrase=item.phrase,
     )
+
+
+def forecast_zone_ids(geocoder: Geocoder, phrases: list[str],
+                      home: str | None) -> set[str]:
+    """Зоны, названные только внутри оговорки о возможном.
+
+    Тот же приём, что у адресатов движения: место, упомянутое в «в случае
+    прорыва ожидаются ещё цели от Анапского района», получает «опасность»,
+    а не перехват, объявленный в начале сообщения для другого города.
+
+    Зона, названная и наблюдением, и прогнозом, остаётся наблюдением.
+    """
+    from .parse import forecast_phrases
+
+    ahead = forecast_phrases(phrases)
+    if not ahead:
+        return set()
+    ahead_ids = {item.zone_id for item in geocoder.resolve(ahead, home=home)}
+    if not ahead_ids:
+        return set()
+    rest = [phrase for phrase in phrases if phrase not in ahead]
+    seen_ids = {item.zone_id for item in geocoder.resolve(rest, home=home)}
+    return ahead_ids - seen_ids
 
 
 def destination_zone_ids(geocoder: Geocoder, phrases: list[str],

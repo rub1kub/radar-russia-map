@@ -38,7 +38,7 @@ from config import sources_from_env  # noqa: E402
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
 from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
-                      destination_zone_ids)
+                      destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -502,13 +502,24 @@ def run_once(
         # ей достаётся «опасность», а не сигнал сообщения.
         targets = (destination_zone_ids(geocoder, observation.place_phrases, home)
                    if observation.severity > 5 else set())
+        # Места из оговорки о возможном («в случае прорыва ожидаются цели
+        # от…») — тоже адресаты предупреждения, но по другому признаку:
+        # там речь про условие, а не про направление.
+        ahead = (forecast_zone_ids(geocoder, observation.place_phrases, home)
+                 if observation.severity > 5 else set())
 
         for item in resolved:
             local = observation
             # Работа ПВО публикуется районом, не точкой — см. coarsen_intercept.
             if observation.signal_type == "intercept":
                 item = coarsen_intercept(geocoder, item)
-            if item.zone_id in targets:
+            # Место, названное только внутри оговорки о возможном, получает
+            # предупреждение, а не сигнал сообщения: «уничтожена группа над
+            # Сочи… в случае прорыва ожидаются цели от Анапы» — над Анапой
+            # ничего не сбивали.
+            if item.zone_id in ahead:
+                local = replace(observation, signal_type="danger", severity=5)
+            elif item.zone_id in targets:
                 local = replace(observation, signal_type="danger", severity=5)
             fuser.add(
                 raw_id=row["id"],

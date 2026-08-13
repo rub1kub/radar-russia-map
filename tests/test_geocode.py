@@ -486,3 +486,54 @@ def test_city_district_rises_to_the_city_itself(geocoder):
     if not resolved:
         pytest.skip("Зеленограда нет в справочнике")
     assert coarsen_intercept(geocoder, resolved[0]).name == "Москва"
+
+
+# --- Эмодзи вплотную к названию не прячет заглавную букву -------------------
+#
+# Ленты пишут «🚨Адлер», «❗️Керчь», «⚡Владимирская область». Регистр
+# определялся по первому СИМВОЛУ слова, и такое слово не попадало ни в
+# заглавные, ни в строчные. Когда соседние слова были с заглавной, город
+# отбрасывался как «обычное слово со строчной», сообщение оставалось без
+# места и уезжало на регион канала.
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("🚨Адлер Сбития Меры безопасности", "Адлер"),
+    ("🚨Керчь Сбития Меры безопасности", "Керчь"),
+    ("⚡Владимирская область внимание по БПЛА", "Владимирская область"),
+])
+def test_emoji_glued_to_a_place_name(geocoder, phrase, expected):
+    assert expected in names(geocoder.resolve([phrase]))
+
+
+def test_lowercase_common_word_guard_survives(geocoder):
+    """Защита от «Мы видим ваши сообщения» держится на том же регистре."""
+    assert geocoder.resolve(["Мы видим ваши сообщения"]) == []
+
+
+# --- Оговорка о возможном: место названо, но борта там нет -------------------
+
+def test_forecast_tail_does_not_spread_the_signal(geocoder):
+    """«Уничтожена группа над Сочи… в случае прорыва ожидаются цели от
+    Анапского района, Новороссийска, Геленджика» — над этими тремя ничего
+    не сбивали, и перехват им доставаться не должен.
+
+    Перечисление рвётся на фразы по запятым, поэтому правило липкое: от
+    первой оговорки и до конца сообщения.
+    """
+    from pipeline.geocode import forecast_zone_ids
+    from pipeline.parse import parse
+
+    text = ("Сочи\nУничтожена группа БПЛА в акватории Чёрного моря напротив "
+            "городского округа.\nТакже в случае прорыва БПЛА ожидаются ещё "
+            "цели от напротив Анапского района, Новороссийска, Геленджика "
+            "к Туапсе/Сочи по морю")
+    observation = parse(text)
+    ahead = forecast_zone_ids(geocoder, observation.place_phrases, None)
+    resolved = {bare_name(item.name): item.zone_id
+                for item in geocoder.drop_covered(
+                    geocoder.resolve(observation.place_phrases))}
+
+    for city in ("Анапа", "Новороссийск", "Геленджик"):
+        assert resolved[city] in ahead, city
+    # Сочи названо и наблюдением, и в хвосте — наблюдение сильнее.
+    assert resolved["Сочи"] not in ahead

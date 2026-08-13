@@ -1573,6 +1573,12 @@ export default function App() {
     if (!inHistory) {
       for (const event of shownEvents) {
         if (event.signal_type !== "detection") continue;
+        // Тот же отбор, что у значка: круг рисуется ВОКРУГ значка и без
+        // него бессмыслен. У областного оповещения значка нет намеренно —
+        // центр области это случайная точка, — а круг всё равно рисовался,
+        // и на карте висели пунктирные окружности вокруг пустого места:
+        // ни метки, ни объяснения, откуда они взялись.
+        if (!isPointEvent(event.signal_type, event.zone_level)) continue;
         if (typeof event.lat !== "number" || typeof event.lon !== "number") continue;
         const ageMs = Math.max(0, referenceMs - new Date(event.last_seen_at).getTime());
         if (!iconVisible(ageMs, event.threat_type)) continue;

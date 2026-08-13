@@ -149,7 +149,11 @@ SOURCES: list[Source] = [
     Source("rschs_31", "RSCHS_31", "Оповещения РСЧС 🚨", "official", 5938, region="other", network=None),
     Source("mchs36", "mchs36", "МЧС Воронежской области", "official", 28294, region="voronezh", network=None),
     Source("radar_astrakhan", "radar_astrakhan", "🇷🇺 Радар Астрахани | Оповещение 🇷🇺", "regional", 6108, region="astrakhan", network=None),
-    Source("radar_yuga", "radar_yuga", "Радар 'Небо Юга' Ростов, Волгоград, Астрахан", "regional", 5915, region="astrakhan", network=None),
+    # Многорегиональные ленты: домашнего субъекта у них нет, и приписывать
+    # ему сообщения без места нельзя. «Радар Юга» с region="astrakhan"
+    # за неделю дал 63 фейковых события на Астраханской области — туда
+    # падало всё, что не разобралось, включая сообщения про Адлер.
+    Source("radar_yuga", "radar_yuga", "Радар 'Небо Юга' Ростов, Волгоград, Астрахан", "regional", 5915, region="other", network=None),
     Source("radar_ivanovo", "radar_ivanovo", "Радар Иваново и область", "regional", 9613, region="ivanovo", network=None),
     Source("ivanovo_radar", "ivanovo_radar", "Радар БПЛА | ЧП | Ивановская область", "regional", 1154, region="ivanovo", network=None),
     Source("radar_izhevsk", "radar_izhevsk", "Радар Ижевск", "regional", 1507, region="izhevsk", network=None),
@@ -177,7 +181,7 @@ SOURCES: list[Source] = [
     Source("voronezh_radar1", "voronezh_radar1", "Мой Воронеж | 112 РАДАР", "regional", 3402, region="voronezh", network="moy"),
     Source("radarrn136", "radarRN136", "ВОРОНЕЖСКИЙ РАДАР", "regional", 2603, region="voronezh", network=None),
     Source("radar_yaroslavl", "radar_yaroslavl", "Радар Ярославль", "regional", 51829, region="yaroslavl", network=None),
-    Source("radaryr", "radarYR", "РАДАР. Ярославль. Кострома. Иваново", "regional", 4797, region="yaroslavl", network=None),
+    Source("radaryr", "radarYR", "РАДАР. Ярославль. Кострома. Иваново", "regional", 4797, region="other", network=None),
 
     # --- Официальные каналы регионов и федеральный МЧС, 28.07.2026 ----------
     # Губернаторы и оперштабы объявляют тревогу и подтверждают последствия —
@@ -228,7 +232,7 @@ SOURCES: list[Source] = [
     Source("radarcheboksary", "RadarCheboksary", "Радар Чебоксары | БПЛА/Ракеты", "regional", 825, region="chuvashia", network=None),
     Source("radar_ekaterinburgg", "radar_ekaterinburgg", "Радар Екатеринбург и Свердловская область", "regional", 26781, region="sverdlovsk", network=None),
     Source("radar_ekaterenburg", "Radar_ekaterenburg", "Локатор Екатеринбурга и региона", "regional", 492, region="sverdlovsk", network=None),
-    Source("radar_196", "radar_196", "Радар Екатеринбург, Пермь, Челябинск", "regional", 363, region="sverdlovsk", network=None),
+    Source("radar_196", "radar_196", "Радар Екатеринбург, Пермь, Челябинск", "regional", 363, region="other", network=None),
     Source("radar_chelyabinskkk", "radar_chelyabinskkk", "Радар Челябинск", "regional", 16320, region="chelyabinsk", network=None),
     Source("radar_174", "radar_174", "Радар БПЛА Челябинск 774", "regional", 381, region="chelyabinsk", network=None),
     Source("radar_omskkk", "radar_omskkk", "Радар Омск и область", "regional", 12146, region="omsk", network=None),
@@ -239,12 +243,12 @@ SOURCES: list[Source] = [
     Source("radar_156", "radar_156", "Радар БПЛА | Оренбургская область", "regional", 804, region="orenburg", network=None),
     Source("alertperm", "AlertPerm", "Радар Пермь l БПЛА", "regional", 1698, region="perm", network=None),
     Source("permkrairadar", "permkrairadar", "Радар Пермский край", "regional", 332, region="perm", network=None),
-    Source("radarpermekb", "radarpermekb", "Радар Пермь,Екатеринбург, Челябинск, Тюмень", "regional", 580, region="perm", network=None),
+    Source("radarpermekb", "radarpermekb", "Радар Пермь,Екатеринбург, Челябинск, Тюмень", "regional", 580, region="other", network=None),
     Source("radar_tyumen", "radar_tyumen", "Радар Тюмень", "regional", 884, region="tyumen", network=None),
     Source("radar_astrakhann", "radar_astrakhann", "Радар Астрахань", "regional", 4832, region="astrakhan", network=None),
     Source("bpla_26", "bpla_26", "Беспилотная опасность и оповещения Ставропольс", "regional", 3327, region="stavropol", network=None),
     Source("stavropol_radarrr", "stavropol_radarrr", "Ставропольский Оповеститель", "regional", 861, region="stavropol", network=None),
-    Source("radarpiter", "radarPiter", "РАДАР. Питер. Мурманск. Петрозаводск", "regional", 360, region="spb", network=None),
+    Source("radarpiter", "radarPiter", "РАДАР. Питер. Мурманск. Петрозаводск", "regional", 360, region="other", network=None),
     Source("opoveschenie_bpla", "opoveschenie_bpla", "Оповещения БПЛА Татарстан ⚠️", "regional", 707, region="kazan", network=None),
     Source("tokmak_alert", "tokmak_alert", "🔴 Токмак: Тревога БПЛА", "regional", 1469, region="zaporozhye", network=None),
     Source("pushilindenis", "PushilinDenis", "Пушилин Д.В.", "official", 81834, region="dnr", network=None),
@@ -289,8 +293,8 @@ SOURCES: list[Source] = [
     Source("myrostov_radar", "myRostov_radar", "Мой Ростов | Радар", "regional", 2574, region="rostov", network="moy"),
     Source("radar_ru_rostov", "radar_ru_rostov", "Радар.ру | Ростовская область ( обстрелы, БПЛА", "regional", 4609, region="rostov", network="radar_ru"),
     Source("nebo_taganrog", "nebo_taganrog", "Небо Таганрога | Радар, тревоги, оповещения | ", "regional", 2559, region="rostov", network="nebo"),
-    Source("krd_radar", "krd_radar", "🚀 Радар Краснодар | Ростов", "regional", 4265, region="rostov", network=None),
-    Source("reserv_ug", "reserv_ug", "📡Радар ЮГА📡: Ростов, Краснодар, Ставрополь, Во", "regional", 1259, region="rostov", network=None),
+    Source("krd_radar", "krd_radar", "🚀 Радар Краснодар | Ростов", "regional", 4265, region="other", network=None),
+    Source("reserv_ug", "reserv_ug", "📡Радар ЮГА📡: Ростов, Краснодар, Ставрополь, Во", "regional", 1259, region="other", network=None),
     Source("volgogradskoe_nebo_radar", "volgogradskoe_nebo_radar", "Волгоградское Небо | РАДАР", "regional", 6320, region="volgograd", network="nebo"),
     Source("volgograd_radar1", "volgograd_radar1", "Мой Волгоград | 112 РАДАР", "regional", 1792, region="volgograd", network="moy"),
     Source("mytambov_radar", "myTambov_radar", "Мой Тамбов | Радар", "regional", 4379, region="tambov", network="moy"),
@@ -315,7 +319,7 @@ SOURCES: list[Source] = [
     Source("tverskoe_nebo_radar", "tverskoe_nebo_radar", "Тверское Небо | РАДАР", "regional", 747, region="tver", network="nebo"),
     Source("rodnaya_ryazan", "rodnaya_ryazan", "РОДНАЯ РЯЗАНЬ | РАДАР", "regional", 553, region="ryazan", network="rodnoy"),
     Source("penzaradar", "PenzaRadar", "Радар ПЕНЗА‼️", "regional", 1805, region="penza", network=None),
-    Source("radar_77_76_37_44_52_33_35", "radar_77_76_37_44_52_33_35", "РАДАР Москва. Ярославль. Иваново. Кострома. Ни", "regional", 2230, region="moscow", network=None),
+    Source("radar_77_76_37_44_52_33_35", "radar_77_76_37_44_52_33_35", "РАДАР Москва. Ярославль. Иваново. Кострома. Ни", "regional", 2230, region="other", network=None),
 
     # --- Найдено проходом по непокрытым субъектам, 29.07.2026 ----------------
     # Из 75 проверенных лент отобрано 17. Не взяты, как и прежде: украинские
