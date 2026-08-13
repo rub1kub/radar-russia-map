@@ -29,7 +29,8 @@ def db(tmp_path):
     return connection
 
 
-def event(connection, eid, signal, sources, when="datetime('now','-2 hours')"):
+def event(connection, eid, signal, sources, when="datetime('now','-2 hours')",
+          text="Тестовск сбитие БПЛА"):
     connection.execute(
         f"INSERT INTO events (id, first_seen_at, last_seen_at, status,"
         f" signal_type, threat_type, severity, confidence, source_count,"
@@ -39,7 +40,7 @@ def event(connection, eid, signal, sources, when="datetime('now','-2 hours')"):
         (eid, signal, sources))
     connection.execute(
         "INSERT INTO raw_messages (source_key, message_id, posted_at, text)"
-        " VALUES ('ch', 1, datetime('now'), 'Тестовск сбитие БПЛА')")
+        " VALUES ('ch', 1, datetime('now'), ?)", (text,))
     raw_id = connection.execute("SELECT MAX(id) m FROM raw_messages").fetchone()["m"]
     connection.execute(
         "INSERT INTO event_sources (event_id, raw_message_id, source_key,"
@@ -74,19 +75,20 @@ def test_old_event_is_not_reported(db):
 
 
 def test_report_mentions_zone_and_text(db):
-    event(db, "e1", "impact", 2)
+    event(db, "e1", "intercept", 2)
     text = report(suspicious(db))
-    assert "Тестовск" in text and "Удар" in text and "сбитие БПЛА" in text
+    assert "Тестовск" in text and "Перехват" in text and "сбитие БПЛА" in text
 
 
 def test_report_shows_the_message_that_set_the_signal(db):
-    """Событие открылось тревогой, удар принесло второе сообщение — в
+    """Событие открылось тревогой, перехват принесло второе сообщение — в
     отчёте должен стоять его текст, иначе честное событие выглядит фейком
-    (так случилось с Алчевском: «тревога БПЛА» при значке «Удар»)."""
-    event(db, "e1", "impact", 2)
+    (так случилось с Алчевском: «тревога БПЛА» при тяжёлом значке)."""
+    # Первое сообщение — только тревога, перехват приносит второе.
+    event(db, "e1", "intercept", 2, text="Тестовск тревога по БПЛА")
     db.execute(
         "INSERT INTO raw_messages (source_key, message_id, posted_at, text)"
-        " VALUES ('ch2', 2, datetime('now'), 'Тестовск слышны взрывы')")
+        " VALUES ('ch2', 2, datetime('now'), 'Тестовск работает ПВО по БПЛА')")
     raw_id = db.execute("SELECT MAX(id) m FROM raw_messages").fetchone()["m"]
     db.execute(
         "INSERT INTO event_sources (event_id, raw_message_id, source_key,"
@@ -95,4 +97,4 @@ def test_report_shows_the_message_that_set_the_signal(db):
     db.commit()
 
     items = suspicious(db)
-    assert "взрывы" in items[0]["text"]
+    assert "работает ПВО" in items[0]["text"]

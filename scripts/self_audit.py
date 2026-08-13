@@ -9,7 +9,7 @@
 опрос, «их сбил автомобиль» — ДТП). Движение механическое — значит, его
 можно делать каждую ночь без человека.
 
-Отбираются перехваты и удары за сутки, у которых один-два источника:
+Отбираются перехваты за сутки, у которых один-два источника:
 массово подтверждённое событие почти наверняка настоящее, а фейк из
 кривого разбора обычно живёт на одном сообщении. Владелец получает
 список «зона + сигнал + текст», пробегает глазами за минуту — и новый
@@ -44,7 +44,7 @@ def suspicious(connection) -> list[dict]:
         SELECT e.id, e.signal_type, e.severity, e.source_count,
                e.first_seen_at, z.name_ru
         FROM events e JOIN zones z ON z.id = e.zone_id
-        WHERE e.signal_type IN ('intercept', 'impact')
+        WHERE e.signal_type = 'intercept'
           AND e.first_seen_at > datetime('now', '-1 day')
           AND e.source_count <= ?
         ORDER BY e.first_seen_at DESC
@@ -89,7 +89,7 @@ def suspicious(connection) -> list[dict]:
 
 
 def report(items: list[dict]) -> str:
-    label = {"intercept": "Перехват", "impact": "Удар"}
+    label = {"intercept": "Перехват"}
     lines = [f"🔍 Самоаудит: {len(items)} "
              f"{'событие' if len(items) == 1 else 'событий'} на 1–2 источниках "
              "за сутки. Кривой разбор обычно живёт здесь:\n"]

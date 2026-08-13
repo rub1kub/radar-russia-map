@@ -451,3 +451,38 @@ def test_three_letter_villages_stay_below_threshold(geocoder):
         (geocoder.zones[item.zone_id]["population"] or 0) >= 20_000
         for item in geocoder.resolve(["Яя"])
     )
+
+
+# --- Работа ПВО публикуется районом, не точкой ------------------------------
+#
+# Решение владельца от 13 августа: карта показывает, что ПВО работает в
+# районе, но не указывает посёлок. Предупреждающая ценность не страдает —
+# человек прячется по своему району, — а точность, интересная для оценки
+# результатов удара, теряется.
+
+def test_intercept_place_rises_to_its_district(geocoder):
+    from pipeline.geocode import coarsen_intercept
+    resolved = geocoder.resolve(["Голубицкая"])
+    assert resolved and resolved[0].level == "place"
+    coarse = coarsen_intercept(geocoder, resolved[0])
+    assert coarse.level == "district"
+    assert coarse.name == "Темрюкский район"
+    assert (coarse.lat, coarse.lon) != (resolved[0].lat, resolved[0].lon)
+
+
+def test_intercept_district_stays_where_it_is(geocoder):
+    """Район поднимать некуда — он уже нужной крупности."""
+    from pipeline.geocode import coarsen_intercept
+    resolved = geocoder.resolve(["Тимашёвский район"])
+    assert resolved
+    assert coarsen_intercept(geocoder, resolved[0]).zone_id == resolved[0].zone_id
+
+
+def test_city_district_rises_to_the_city_itself(geocoder):
+    """У внутригородских частей родитель — сам город: «Марьино» -> «Москва»."""
+    from pipeline.geocode import coarsen_intercept
+    resolved = [item for item in geocoder.resolve(["Зеленоград"])
+                if item.level == "place"]
+    if not resolved:
+        pytest.skip("Зеленограда нет в справочнике")
+    assert coarsen_intercept(geocoder, resolved[0]).name == "Москва"

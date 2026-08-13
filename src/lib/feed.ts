@@ -42,7 +42,7 @@ const SIGHTING_SIGNALS = new Set(["detection", "intercept", "impact"]);
 export type QuietVerdict = {
   /** Сколько минут эфир молчит. */
   minutes: number;
-  /** Борт видели (фиксация, перехват, взрыв) — или было только предупреждение. */
+  /** Борт видели (фиксация, перехват) — или было только предупреждение. */
   sighted: boolean;
 };
 

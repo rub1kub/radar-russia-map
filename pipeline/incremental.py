@@ -37,7 +37,8 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
-from .geocode import Geocoder, Resolved, destination_zone_ids  # noqa: E402
+from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
+                      destination_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse, strip_footer  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -504,6 +505,9 @@ def run_once(
 
         for item in resolved:
             local = observation
+            # Работа ПВО публикуется районом, не точкой — см. coarsen_intercept.
+            if observation.signal_type == "intercept":
+                item = coarsen_intercept(geocoder, item)
             if item.zone_id in targets:
                 local = replace(observation, signal_type="danger", severity=5)
             fuser.add(

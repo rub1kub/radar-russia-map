@@ -42,7 +42,6 @@ from api.limits import (
     env_flag,
     env_int,
 )
-from api.fires import router as fires_router
 from api.geometry import router as geo_router
 from api.push import deliver_loop, router as push_router
 from api.telegram import (deliver_loop as telegram_loop, router as telegram_router,
@@ -112,7 +111,6 @@ app = FastAPI(title="Radar API", version="1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(geo_router)
-app.include_router(fires_router)
 app.include_router(push_router)
 app.include_router(telegram_router)
 

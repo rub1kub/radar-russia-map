@@ -20,7 +20,8 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
-from .geocode import Geocoder, Resolved, destination_zone_ids  # noqa: E402
+from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
+                      destination_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import MAX_RESOLVED_ZONES, parse  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
@@ -142,6 +143,9 @@ def rebuild(connection) -> dict:
         # становится отдельным наблюдением в своей зоне.
         for item in resolved:
             local = observation
+            # Работа ПВО публикуется районом, не точкой — см. coarsen_intercept.
+            if observation.signal_type == "intercept":
+                item = coarsen_intercept(geocoder, item)
             if item.zone_id in targets:
                 local = replace(observation, signal_type="danger", severity=5)
                 stats["as_destination"] = stats.get("as_destination", 0) + 1

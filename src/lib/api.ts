@@ -173,11 +173,6 @@ export const api = {
       `/api/v1/events/${encodeURIComponent(id)}/sources`,
       signal
     ),
-  fires: (signal?: AbortSignal) =>
-    get<{ points: Array<[number, number, number]>; updated: string | null }>(
-      "/api/v1/fires",
-      signal
-    ),
   historyDays: (limit: number, signal?: AbortSignal) =>
     get<{ days: HistoryDay[]; peak: number }>(`/api/v1/history/days?limit=${limit}`, signal),
   analyticsSources: (signal?: AbortSignal) =>

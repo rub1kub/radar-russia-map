@@ -141,7 +141,6 @@ type LayerState = {
   railways: boolean;
   regions: boolean;
   districts: boolean;
-  fires: boolean;
 };
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
@@ -283,7 +282,6 @@ const LAYER_OPTIONS: Array<{ key: keyof LayerState; label: string; swatch: strin
   { key: "landCover", label: "Леса и болота", swatch: "swatch-land-cover" },
   // Последствия прилётов видны с орбиты раньше и надёжнее, чем в лентах:
   // НПЗ и склады ГСМ горят сутками. Фоновый слой для интересующихся.
-  { key: "fires", label: "Пожары (NASA)", swatch: "swatch-fire" }
 ];
 
 
@@ -1006,9 +1004,6 @@ export default function App() {
   // источниках и пересобираются вместе со значками.
   const routeSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
   const trailSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
-  const fireSourceRef = useRef<VectorSource<Feature<Geometry>>>(new VectorSource());
-  const fireLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
-  const firesLoadedRef = useRef(false);
   const eventIconLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const polygonToZoneRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
   // Пока стартовый вид не применён, выбора ещё нет — и пустой выбор не
@@ -1060,7 +1055,6 @@ export default function App() {
     railways: false,
     regions: true,
     districts: true,
-    fires: false,
   });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1798,25 +1792,6 @@ export default function App() {
     const routeLayer = new VectorLayer({ source: routeSourceRef.current, zIndex: 38 });
     const trailLayer = new VectorLayer({ source: trailSourceRef.current, zIndex: 36 });
 
-    // Пожары — тихий фон под событиями: мелкие тёплые точки, чуть крупнее
-    // у мощных очагов. Никаких подписей и кругов — это не сигнал, а контекст.
-    const fireLayer = new VectorLayer({
-      source: fireSourceRef.current,
-      visible: layers.fires,
-      zIndex: 35,
-      style: (feature) => {
-        const frp = asNumber(feature.get("frp"), 5);
-        const radius = Math.min(6, 2.4 + Math.log10(Math.max(1, frp)) * 1.6);
-        return new Style({
-          image: new CircleStyle({
-            radius,
-            fill: new Fill({ color: "rgba(255, 140, 60, 0.55)" }),
-            stroke: new Stroke({ color: "rgba(255, 190, 120, 0.6)", width: 0.8 })
-          })
-        });
-      }
-    });
-
     const regionLayer = new VectorLayer({
       source: regionSource,
       visible: layers.regions,
@@ -1871,7 +1846,6 @@ export default function App() {
     roadLayerRef.current = roadLayer;
     railwayLayerRef.current = railwayLayer;
     eventIconLayerRef.current = eventIconLayer;
-    fireLayerRef.current = fireLayer;
     regionLayerRef.current = regionLayer;
     districtLayerRef.current = districtLayer;
     featuredPlaceLayerRef.current = featuredPlaceLayer;
@@ -1900,7 +1874,6 @@ export default function App() {
         cityLabelLayer,
         districtLayer,
         featuredPlaceLayer,
-        fireLayer,
         trailLayer,
         routeLayer,
         eventIconLayer
@@ -2430,32 +2403,7 @@ export default function App() {
     regionLayerRef.current?.setVisible(layers.regions);
     districtLayerRef.current?.setVisible(layers.districts);
     featuredPlaceLayerRef.current?.setVisible(layers.districts);
-    fireLayerRef.current?.setVisible(layers.fires);
     loadLazyLayersRef.current?.();
-
-    // Точки пожаров грузятся при первом включении слоя, а не на старте:
-    // выключенный слой не должен стоить ни одного запроса.
-    if (layers.fires && !firesLoadedRef.current) {
-      firesLoadedRef.current = true;
-      void api
-        .fires()
-        .then((payload) => {
-          const source = fireSourceRef.current;
-          source.clear();
-          for (const [lat, lon, frp] of payload.points) {
-            source.addFeature(
-              new Feature({
-                geometry: new Point(fromLonLat([lon, lat])),
-                kind: "fire",
-                frp
-              })
-            );
-          }
-        })
-        .catch(() => {
-          firesLoadedRef.current = false;
-        });
-    }
   }, [layers, basemapScheme]);
 
   // Смена подложки: новый источник в тот же слой, карта не пересоздаётся.
@@ -2926,8 +2874,8 @@ export default function App() {
                 про скорость борта и размер зоны живут в подсказках: они
                 нужны тому, кто спросит, и мешают тому, кто не спрашивал. */}
             <div className="severity-legend">
-              <span data-tip="Борт уже видят: фиксация, перехват, взрыв. Это про то, ЧТО сообщили, а не про то, сколько лент это подтвердило">
-                <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Фиксация, перехват, взрыв
+              <span data-tip="Борт уже видят: фиксация или работа ПВО. Это про то, ЧТО сообщили, а не про то, сколько лент это подтвердило. Места прилётов карта не публикует">
+                <i style={{ background: severityColor(9, 0.95) }} aria-hidden="true" />Фиксация, перехват
               </span>
               <span data-tip="Объявлена тревога или звучит сирена, но подтверждённой фиксации нет">
                 <i style={{ background: severityColor(7, 0.95) }} aria-hidden="true" />Тревога

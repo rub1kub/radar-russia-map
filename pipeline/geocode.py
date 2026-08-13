@@ -1058,6 +1058,37 @@ class Geocoder:
         return list(self.chain(zone_id))
 
 
+def coarsen_intercept(geocoder, item: Resolved) -> Resolved:
+    """Поднять работу ПВО с населённого пункта на его район.
+
+    Решение владельца от 13 августа, снижение правового риска: карта
+    показывает, что ПВО работает в районе, но не указывает конкретный
+    посёлок. Предупреждающая ценность от этого не страдает — человек и
+    так прячется по своему району, — а точность, интересная для оценки
+    результатов удара, теряется.
+
+    Родителем НП почти всегда оказывается район (99,4% справочника). У
+    оставшихся родитель — сразу регион, но это внутригородские части
+    Москвы и Петербурга («Марьино» -> «Москва»), где регион и есть город:
+    подъём туда осмысленный, а не размазывание точки на субъект.
+    """
+    if item.level != "place":
+        return item
+    zone = geocoder.zones.get(item.zone_id)
+    parent_id = zone.get("parent_id") if zone else None
+    parent = geocoder.zones.get(parent_id) if parent_id else None
+    if not parent:
+        return item
+    return Resolved(
+        zone_id=parent_id,
+        level=parent["level"],
+        name=parent["name_ru"],
+        lat=parent["lat"],
+        lon=parent["lon"],
+        phrase=item.phrase,
+    )
+
+
 def destination_zone_ids(geocoder: Geocoder, phrases: list[str],
                          home: str | None) -> set[str]:
     """Зоны, для которых сообщение — предупреждение, а не наблюдение.

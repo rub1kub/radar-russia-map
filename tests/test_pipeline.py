@@ -19,8 +19,8 @@ import pytest
 
 from pipeline.fuse import Fuser
 from pipeline.geocode import Geocoder
-from pipeline.parse import (candidate_phrases, foreign_side, parse,
-                            split_directions, strip_footer)
+from pipeline.parse import (candidate_phrases, classify_signal, foreign_side,
+                            parse, split_directions, strip_footer)
 from pipeline.textnorm import (expand_units, form_gender, name_gender, norm_key,
                                short_name, slugify, stem_key, stem_word,
                                strip_unit)
@@ -216,13 +216,18 @@ def test_waiting_for_allclear_is_not_allclear(text, signal):
 
 
 def test_household_signal_needs_named_threat():
-    """«Пожар» и «обломки» сами по себе — городская хроника."""
+    """«Пожар» и «обломки» сами по себе — городская хроника.
+
+    С названным типом угрозы текст всё ещё РАСПОЗНАЁТСЯ как удар — это
+    важно, потому что класс удара работает воротами: он решает, снять
+    сообщение целиком или опубликовать то, что в нём осталось. На карту
+    удар не идёт ни в каком случае (см. test_impact_is_never_published).
+    """
     assert not parse("Крупный пожар в районе Таращанцев, 64. Очевидцы сообщают "
                      "о сильном возгорании").relevant
-    observation = parse("Обломки беспилотников упали в станице Раевской, "
-                        "произошло возгорание")
-    assert observation.signal_type == "impact"
-    assert observation.threat_type == "uav"
+    text = "Обломки беспилотников упали в станице Раевской, произошло возгорание"
+    assert classify_signal(text, "uav")[0] == "impact"
+    assert parse(text).relevant is False
 
 
 @pytest.mark.parametrize("text,threat", [
@@ -1069,8 +1074,14 @@ def test_detection_is_on_the_red_level():
 
 
 def test_detection_still_below_impact():
-    """Взрыв остаётся тяжелее фиксации: это уже последствие, а не наблюдение."""
-    assert parse("Взрыв в Таганроге").severity > parse("Азов, фиксация БПЛА").severity
+    """Взрыв тяжелее фиксации — в классификации.
+
+    На карту удар не публикуется, но вес класса сохранён: по нему
+    сообщение опознаётся как удар и снимается, а не проскакивает мимо
+    ворот более слабым сигналом.
+    """
+    assert classify_signal("Взрыв в Таганроге", "uav")[1] > \
+        parse("Азов, фиксация БПЛА").severity
 
 
 def test_alarm_sits_between_warning_and_detection():
@@ -1438,12 +1449,15 @@ def test_unconfirmed_report_is_an_alarm_not_a_fact(text, signal, severity):
 
 
 def test_asserted_impact_with_hedged_details_stays_impact():
-    """Оговорка про подробности не отменяет названный удар."""
-    observation = parse(
-        "В Белгороде беспилотник ВСУ атаковал грузовой автомобиль. "
-        "По предварительной информации, пострадавших нет"
-    )
-    assert observation.signal_type == "impact"
+    """Оговорка про подробности не отменяет названный удар.
+
+    Проверка на уровне классификации: удар должен опознаваться, чтобы
+    ворота его сняли. Публикации у него нет.
+    """
+    text = ("В Белгороде беспилотник ВСУ атаковал грузовой автомобиль. "
+            "По предварительной информации, пострадавших нет")
+    assert classify_signal(text, "uav")[0] == "impact"
+    assert parse(text).relevant is False
 
 
 # --- Эхо отменённой тревоги -------------------------------------------------
@@ -1579,11 +1593,15 @@ def test_found_debris_is_aftermath_not_impact():
                   "Пострадавших и разрушений нет.")
     assert not found.relevant
 
-    live = parse("Обломки БПЛА упали на территории предприятия, пострадали четверо")
-    assert live.relevant and live.signal_type == "impact"
+    # Настоящее падение с последствиями правило обломков не трогает — его
+    # снимают уже ворота удара, и это разные пути к одному итогу.
+    live = "Обломки БПЛА упали на территории предприятия, пострадали четверо"
+    assert classify_signal(live, "uav")[0] == "impact"
+    assert parse(live).relevant is False
 
-    damage = parse("Обнаружены обломки БПЛА, повреждена крыша дома")
-    assert damage.relevant and damage.signal_type == "impact"
+    damage = "Обнаружены обломки БПЛА, повреждена крыша дома"
+    assert classify_signal(damage, "uav")[0] == "impact"
+    assert parse(damage).relevant is False
 
     # Та же хроника глаголом падения: оперштаб всегда говорит после факта.
     fell = parse("В Прикубанском округе упали фрагменты беспилотника во дворе "
@@ -1591,8 +1609,9 @@ def test_found_debris_is_aftermath_not_impact():
     assert not fell.relevant
 
     # А падение без «последствий нет» — событие: о нём ещё ничего не ясно.
-    fresh = parse("Обломки БПЛА упали на жилой дом, возгорание")
-    assert fresh.relevant and fresh.signal_type == "impact"
+    fresh = "Обломки БПЛА упали на жилой дом, возгорание"
+    assert classify_signal(fresh, "uav")[0] == "impact"
+    assert parse(fresh).relevant is False
 
 
 def test_late_arrival_joins_instead_of_twin():
@@ -2037,5 +2056,6 @@ def test_paintball_is_not_shelling():
     assert observation.relevant is False
 
 
-def test_real_shelling_still_reads_as_impact():
-    assert parse("Белгород под обстрелом").signal_type == "impact"
+def test_real_shelling_is_recognised_but_not_published():
+    assert classify_signal("Белгород под обстрелом", "uav")[0] == "impact"
+    assert parse("Белгород под обстрелом").relevant is False
