@@ -104,7 +104,7 @@ fi
 # --delete снёс бы их до того, как соберётся новая версия, и всё это время
 # посадочные отдавали бы 404.
 retry rsync -az --delete --exclude "region/" --exclude "city/" \
-  --exclude "svodka/" --exclude "sitemap.xml" \
+  --exclude "rayon/" --exclude "svodka/" --exclude "sitemap.xml" \
   --exclude "privacy/" --exclude "terms/" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
@@ -122,7 +122,7 @@ sleep 4
 # Пути в кавычках и с noglob: zsh иначе раскрывает «/» как шаблон и
 # подставляет вместо него содержимое корня.
 for path in "" "/api/v1/state" "/robots.txt" "/city/krasnodar/" \
-  "/svodka/$(date +%F)/"; do
+  "/rayon/" "/svodka/$(date +%F)/"; do
   printf "  %-16s " "${path:-/}"
   "$CURL" -s -o /dev/null -w "%{http_code}\n" --max-time 20 "$SITE$path"
 done

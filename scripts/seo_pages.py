@@ -56,9 +56,17 @@ TOP_DISTRICTS = 6
 # достаточно для длинного хвоста, но без сотен почти пустых дорвеев.
 CITY_MIN_EVENTS = 5
 CITY_MIN_POPULATION = 20_000
+# Районная страница — уровень, на котором события и происходят: Белгородский
+# район собирает сотни сообщений в месяц, а городской страницы у него нет и
+# не будет. Порог выше городского: у района нет фильтра по населению, и
+# полтора десятка событий за месяц — та граница, где сводка ещё остаётся
+# рассказом, а не пустым шаблоном. На боевом корпусе это ~300 районов.
+DISTRICT_MIN_EVENTS = 15
+DISTRICT_TYPE_RE = re.compile(r"\b(?:район|улус|кожуун)\b", re.IGNORECASE)
 DIGEST_DAYS = 30
 DIGEST_RECENT_EVENTS = 20
 CITY_MANIFEST_VERSION = 3
+DISTRICT_MANIFEST_VERSION = 1
 # Сколько соседей по алфавиту показать в перелинковке. Робот ходит по
 # ссылкам, и без них посадочные висят каждая сама по себе.
 NEIGHBOURS = 6
@@ -342,8 +350,46 @@ def inflect_city(name: str) -> str:
     return f"{name}е"
 
 
+def inflect_district(name: str) -> str:
+    """Предложный падеж района: «в Погарском районе», «в Абыйском улусе».
+
+    Общий inflect знает только «...ий район», а здесь встречаются улусы,
+    кожууны, «район имени Лазо» и национальные районы с цепочкой
+    прилагательных. Склоняем по словам: типовое слово — по словарю,
+    прилагательные до него — по окончанию, хвост после типового слова
+    («имени Лазо») остаётся в именительном.
+    """
+    head = {"район": "районе", "улус": "улусе", "кожуун": "кожууне"}
+
+    def adjective(word: str) -> str:
+        prefix, _, last = word.rpartition("-")
+        lowered = last.lower()
+        if lowered.endswith("ний"):
+            last = f"{last[:-2]}ем"
+        elif lowered.endswith(("ий", "ый", "ой")):
+            last = f"{last[:-2]}ом"
+        return f"{prefix}-{last}" if prefix else last
+
+    words = name.split()
+    result: list[str] = []
+    for index, word in enumerate(words):
+        if word.lower() in head:
+            result.append(head[word.lower()])
+            result.extend(words[index + 1:])
+            break
+        # Скобочное уточнение «(долгано-эвенкийский)» склоняется внутри скобок.
+        core = word.strip("()")
+        result.append(word.replace(core, adjective(core)) if core else word)
+    return " ".join(result)
+
+
 def location_phrase(name: str, page_kind: str) -> str:
-    inflected = inflect_city(name) if page_kind == "city" else inflect(name)
+    if page_kind == "city":
+        inflected = inflect_city(name)
+    elif page_kind == "rayon":
+        inflected = inflect_district(name)
+    else:
+        inflected = inflect(name)
     return f"{preposition(name)} {inflected}"
 
 
@@ -530,14 +576,69 @@ def build_city_catalog(connection: sqlite3.Connection, city_stats: dict[str, dic
     return sorted(candidates, key=lambda item: (item["name"], item["region_name"]))
 
 
+def district_slug(name: str) -> str:
+    """URL без типового слова: /rayon/pogarskiy/ — «rayon» уже в пути."""
+    trimmed = DISTRICT_TYPE_RE.sub(" ", name)
+    trimmed = re.sub(r"[()]", " ", trimmed)
+    return slugify(" ".join(trimmed.split())).replace("_", "-")
+
+
+def build_district_catalog(connection: sqlite3.Connection,
+                           city_stats: dict[str, dict],
+                           regions: dict[str, tuple[str, str]],
+                           taken: set[str]) -> list[dict]:
+    """Районы с собственной лентой — уровень, на котором события и происходят.
+
+    Городские округа уже покрыты городскими страницами (taken); сюда идут
+    районы, улусы и кожууны — ровно тот класс зон, который городской каталог
+    отбрасывает по названию. Фильтра по населению нет: Белгородский район
+    с сотнями сообщений в месяц важнее любого тихого стотысячника.
+    """
+    candidates = []
+    for row in connection.execute(
+            "SELECT id, parent_id, name_ru FROM zones WHERE level = 'district'"):
+        stats = city_stats.get(row["id"])
+        region = regions.get(row["parent_id"])
+        if (not stats or stats["events"] < DISTRICT_MIN_EVENTS or not region
+                or row["id"] in taken
+                or not DISTRICT_TYPE_RE.search(row["name_ru"])):
+            continue
+        region_name, region_slug = region
+        candidates.append({
+            "zone_id": row["id"],
+            "name": row["name_ru"],
+            "admin_name": row["name_ru"],
+            "region_id": row["parent_id"],
+            "region_name": region_name,
+            "region_slug": region_slug,
+            "slug": district_slug(row["name_ru"]),
+            "stats": stats,
+        })
+
+    # Кировских районов в стране больше десятка — коллизии получают суффикс
+    # субъекта, уникальные имена остаются короткими.
+    slug_counts = Counter(item["slug"] for item in candidates)
+    for item in candidates:
+        if slug_counts[item["slug"]] > 1:
+            item["slug"] = f'{item["slug"]}-{item["region_slug"]}'
+    return sorted(candidates, key=lambda item: (item["name"], item["region_name"]))
+
+
 def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
-                            manifest_path: Path) -> list[dict]:
-    """Сохранить опубликованные городские URL, даже когда месяц стал тихим.
+                            manifest_path: Path, *,
+                            version: int = CITY_MANIFEST_VERSION,
+                            slug_fn=city_slug,
+                            slug_overrides: dict[str, str] | None = None,
+                            ) -> list[dict]:
+    """Сохранить опубликованные URL, даже когда месяц стал тихим.
 
     Порог активности нужен только для первого появления. После индексации
     страница продолжает обновляться и честно показывает ноль, а не исчезает
-    из выдачи из-за скользящего окна.
+    из выдачи из-за скользящего окна. Та же механика обслуживает и районные
+    страницы — у них свой манифест, слаг и версия.
     """
+    if slug_overrides is None:
+        slug_overrides = CITY_ZONE_SLUG_OVERRIDES
     fields = (
         "zone_id", "name", "admin_name", "region_id", "region_name",
         "region_slug", "slug",
@@ -549,7 +650,7 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
             loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
             items = (loaded.get("cities")
                      if isinstance(loaded, dict)
-                     and loaded.get("version") == CITY_MANIFEST_VERSION
+                     and loaded.get("version") == version
                      else None)
             if isinstance(items, list):
                 previous = [item for item in items
@@ -562,7 +663,7 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
     merged = {item["zone_id"]: dict(item) for item in previous}
     for item in current:
         fresh = dict(item)
-        forced_slug = CITY_ZONE_SLUG_OVERRIDES.get(item["zone_id"])
+        forced_slug = slug_overrides.get(item["zone_id"])
         if forced_slug:
             fresh["slug"] = forced_slug
         # URL уже опубликованной зоны не меняем при обычной правке имени.
@@ -577,9 +678,9 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
     result = []
     for item in sorted(merged.values(),
                        key=lambda value: (value["name"], value["region_name"])):
-        candidate = item.get("slug") or city_slug(item["name"])
+        candidate = item.get("slug") or slug_fn(item["name"])
         if candidate in used:
-            candidate = f'{city_slug(item["name"])}-{item["region_slug"]}'
+            candidate = f'{slug_fn(item["name"])}-{item["region_slug"]}'
         serial = 2
         base = candidate
         while candidate in used:
@@ -593,7 +694,7 @@ def persistent_city_catalog(current: list[dict], city_stats: dict[str, dict],
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
         json.dumps({
-            "version": CITY_MANIFEST_VERSION,
+            "version": version,
             "cities": [
                 {key: item[key] for key in fields}
                 for item in result
@@ -851,14 +952,14 @@ def faq_block(name: str, stats: dict | None,
     return " ".join(html), ld
 
 
-def page(name: str, slug: str, districts: list[str], stats: dict | None,
+def page(name: str, slug: str, districts: list, stats: dict | None,
          *, path_prefix: str = "region",
          parent: tuple[str, str] | None = None,
          admin_name: str | None = None,
          child_links: list[tuple[str, str]] | None = None,
          map_region_slug: str | None = None,
          neighbours: list[tuple[str, str]], updated: str) -> str:
-    page_kind = "city" if path_prefix == "city" else "region"
+    page_kind = path_prefix if path_prefix in ("city", "rayon") else "region"
     where = location_phrase(name, page_kind)
     aliases = PLACE_SEARCH_ALIASES.get(name, ())
     # Формула из реальных запросов Вебмастера: люди спрашивают «тревога в
@@ -887,10 +988,18 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
 
     district_list = ""
     if districts:
-        items = "".join(f"<li>{escape(item)}</li>" for item in districts)
+        # Район с собственной сводкой становится ссылкой прямо в списке;
+        # остальные остаются текстом. Кортеж (имя, href|None) или строка.
+        entries = [(item, None) if isinstance(item, str) else item
+                   for item in districts]
+        items = "".join(
+            f'<li><a href="{href}">{escape(label)}</a></li>' if href
+            else f"<li>{escape(label)}</li>"
+            for label, href in entries)
         district_list = (
             "<h2>Районы и округа</h2>\n"
-            "      <p>На карте видно обстановку по каждому из них отдельно:</p>\n"
+            "      <p>На карте видно обстановку по каждому из них отдельно; "
+            "у части районов есть своя страница со сводкой:</p>\n"
             f"      <ul>{items}</ul>")
 
     child_list = ""
@@ -905,15 +1014,16 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
     neighbour_list = "".join(
         f'<li><a href="/{path_prefix}/{other_slug}/">{escape(other_name)}</a></li>'
         for other_name, other_slug in neighbours)
-    neighbour_title = ("Другие города и округа"
-                       if page_kind == "city" else "Соседние регионы")
+    neighbour_title = {"city": "Другие города и округа",
+                       "rayon": "Другие районы"}.get(page_kind,
+                                                     "Соседние регионы")
 
     faq_html, faq_ld = faq_block(name, stats, page_kind)
 
     map_href = (f"/?region={slug}" if path_prefix == "region"
                 else f"/?region={map_region_slug}" if map_region_slug else "/")
     scope = ""
-    if page_kind == "city" and admin_name:
+    if page_kind in ("city", "rayon") and admin_name:
         scope = (
             "<h2>Какая территория учтена</h2>\n"
             f"      <p>Сводка агрегирует сообщения, которые карта привязала "
@@ -928,13 +1038,12 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
             f"названия Санкт-Петербурга. Все варианты ведут к одной сводке "
             f"по городу и районам.</p>"
         )
+    hub = {"city": ("Города", "/city/"),
+           "rayon": ("Районы", "/rayon/")}.get(page_kind)
     if parent:
         parent_name, parent_url = parent
-        city_crumb = (
-            '<a href="/city/">Города</a> → '
-            if page_kind == "city" else ""
-        )
-        crumb_nav = (f'<a href="/">Карта обстановки</a> → {city_crumb}'
+        hub_crumb = (f'<a href="{hub[1]}">{hub[0]}</a> → ' if hub else "")
+        crumb_nav = (f'<a href="/">Карта обстановки</a> → {hub_crumb}'
                      f'<a href="{parent_url}">{escape(parent_name)}</a> → '
                      f'{escape(name)}')
     else:
@@ -944,10 +1053,10 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         {"@type": "ListItem", "position": 1, "name": "Карта обстановки",
          "item": f"{SITE}/"},
     ]
-    if page_kind == "city":
+    if hub:
         breadcrumbs.append({
             "@type": "ListItem", "position": len(breadcrumbs) + 1,
-            "name": "Города", "item": f"{SITE}/city/",
+            "name": hub[0], "item": f"{SITE}{hub[1]}",
         })
     if parent:
         breadcrumbs.append({
@@ -1065,7 +1174,8 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
         ней решения о личной безопасности — следуйте указаниям экстренных
         служб.
         <br /><a href="/">Вся карта обстановки по России</a> ·
-        <a href="/city/">Сводки по городам</a>
+        <a href="/city/">Сводки по городам</a> ·
+        <a href="/rayon/">Сводки по районам</a>
       </footer>
     </main>
   </body>
@@ -1073,43 +1183,44 @@ def page(name: str, slug: str, districts: list[str], stats: dict | None,
 """
 
 
-def city_index_page(cities: list[dict], updated: str) -> str:
-    """HTML-каталог опубликованных городов — один crawl hub вместо 150 сирот."""
+def catalog_index_page(items: list[dict], updated: str, *, path: str,
+                       crumb: str, heading: str, title: str,
+                       description: str) -> str:
+    """HTML-каталог опубликованных страниц — один crawl hub вместо сотен сирот.
+
+    Одна вёрстка обслуживает и города, и районы: разница только в путях
+    и словах.
+    """
     grouped: dict[str, dict] = {}
-    for city in cities:
-        region = grouped.setdefault(city["region_id"], {
-            "name": city["region_name"],
-            "slug": city["region_slug"],
-            "cities": [],
+    for item in items:
+        region = grouped.setdefault(item["region_id"], {
+            "name": item["region_name"],
+            "slug": item["region_slug"],
+            "items": [],
         })
-        region["cities"].append(city)
+        region["items"].append(item)
 
     sections = []
-    for region in sorted(grouped.values(), key=lambda item: item["name"]):
-        items = "".join(
-            f'<li><a href="/city/{city["slug"]}/">'
-            f'{escape(city["name"])}</a></li>'
-            for city in sorted(region["cities"], key=lambda item: item["name"])
+    for region in sorted(grouped.values(), key=lambda entry: entry["name"]):
+        links = "".join(
+            f'<li><a href="/{path}/{item["slug"]}/">'
+            f'{escape(item["name"])}</a></li>'
+            for item in sorted(region["items"], key=lambda entry: entry["name"])
         )
         sections.append(
             '<section><h2><a href="/region/' + region["slug"] + '/">'
-            + escape(region["name"]) + '</a></h2><ul>' + items
+            + escape(region["name"]) + '</a></h2><ul>' + links
             + '</ul></section>'
         )
 
-    title = "Тревога и БПЛА по городам России — карта и сводки"
-    description = (
-        f"Воздушная обстановка в {len(cities)} городах России: тревоги, "
-        "сообщения о БПЛА, последние события и ссылки на живую карту."
-    )
-    url = f"{SITE}/city/"
+    url = f"{SITE}/{path}/"
     breadcrumb_ld = json.dumps({
         "@context": "https://schema.org", "@type": "BreadcrumbList",
         "itemListElement": [
             {"@type": "ListItem", "position": 1,
              "name": "Карта обстановки", "item": f"{SITE}/"},
             {"@type": "ListItem", "position": 2,
-             "name": "Города", "item": url},
+             "name": crumb, "item": url},
         ],
     }, ensure_ascii=False)
     collection_ld = json.dumps({
@@ -1118,12 +1229,12 @@ def city_index_page(cities: list[dict], updated: str) -> str:
         "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
                      "url": f"{SITE}/"},
         "mainEntity": {
-            "@type": "ItemList", "numberOfItems": len(cities),
+            "@type": "ItemList", "numberOfItems": len(items),
             "itemListElement": [
                 {"@type": "ListItem", "position": index,
-                 "name": city["name"],
-                 "url": f'{SITE}/city/{city["slug"]}/'}
-                for index, city in enumerate(cities, start=1)
+                 "name": item["name"],
+                 "url": f'{SITE}/{path}/{item["slug"]}/'}
+                for index, item in enumerate(items, start=1)
             ],
         },
     }, ensure_ascii=False)
@@ -1164,8 +1275,8 @@ def city_index_page(cities: list[dict], updated: str) -> str:
     @media (max-width:560px) {{ main {{ padding:28px 16px 64px; }}
       .regions {{ grid-template-columns:1fr; gap:24px; }} }}
   </style></head><body><main>
-  <nav><a href="/">Карта обстановки</a> → Города</nav>
-  <h1>Тревога и БПЛА по городам России</h1>
+  <nav><a href="/">Карта обстановки</a> → {escape(crumb)}</nav>
+  <h1>{escape(heading)}</h1>
   <p>{escape(description)}</p>
   <a class="map" href="/">Открыть живую карту</a>
   <div class="regions">{''.join(sections)}</div>
@@ -1174,6 +1285,29 @@ def city_index_page(cities: list[dict], updated: str) -> str:
     <a href="/">Карта по России</a></footer>
 </main></body></html>
 """
+
+
+def city_index_page(cities: list[dict], updated: str) -> str:
+    return catalog_index_page(
+        cities, updated, path="city", crumb="Города",
+        heading="Тревога и БПЛА по городам России",
+        title="Тревога и БПЛА по городам России — карта и сводки",
+        description=(
+            f"Воздушная обстановка в {len(cities)} городах России: тревоги, "
+            "сообщения о БПЛА, последние события и ссылки на живую карту."),
+    )
+
+
+def district_index_page(districts: list[dict], updated: str) -> str:
+    return catalog_index_page(
+        districts, updated, path="rayon", crumb="Районы",
+        heading="Тревога и БПЛА по районам России",
+        title="Тревога и БПЛА по районам России — карта и сводки",
+        description=(
+            f"Воздушная обстановка в {len(districts)} районах России: "
+            "тревоги, сообщения о БПЛА, последние события и ссылки на "
+            "живую карту."),
+    )
 
 
 def digest_date(day: date) -> str:
@@ -1344,7 +1478,7 @@ def digest_index(days: list[str], daily_stats: dict[str, dict],
 
 
 def fill_prerender(named: list, stats: dict, updated: str,
-                   city_count: int) -> bool:
+                   city_count: int, district_count: int = 0) -> bool:
     """Вписать в главную то, что робот без JavaScript иначе не увидит.
 
     SPA для поисковика — пустой div: разметка ld+json есть, а текста и
@@ -1367,7 +1501,10 @@ def fill_prerender(named: list, stats: dict, updated: str,
         f'<p style="margin:18px 0 6px;color:#9da8a0">За последние 30 дней — '
         f'{total} событий в {active} регионах. Обновлено {escape(updated)}.</p>',
         f'<p style="margin:6px 0 12px"><a href="/city/" '
-        f'style="color:#9fd4b0">Сводки по {city_count} городам России</a></p>',
+        f'style="color:#9fd4b0">Сводки по {city_count} городам России</a>'
+        + (f' и <a href="/rayon/" style="color:#9fd4b0">'
+           f'{district_count} районам</a>' if district_count else "")
+        + '</p>',
         '<nav aria-label="Регионы"><h2 style="margin:18px 0 8px;font-size:16px">'
         'Обстановка по регионам</h2>',
         '<ul style="margin:0;padding:0;list-style:none;display:flex;'
@@ -1452,17 +1589,30 @@ def main() -> int:
         connection.row_factory = sqlite3.Row
         stats, city_stats, daily_stats = collect_stats(connection)
         current_cities = build_city_catalog(connection, city_stats, region_pages)
+        cities = persistent_city_catalog(
+            current_cities, city_stats, OUT / "city" / "manifest.json")
+        # Городская зона не получает второй, районной страницы: у Сочи одна
+        # сводка, а не /city/ и /rayon/ вперемешку.
+        current_rayons = build_district_catalog(
+            connection, city_stats, region_pages,
+            {city["zone_id"] for city in cities})
 
-    cities = persistent_city_catalog(
-        current_cities, city_stats, OUT / "city" / "manifest.json")
+    rayons = persistent_city_catalog(
+        current_rayons, city_stats, OUT / "rayon" / "manifest.json",
+        version=DISTRICT_MANIFEST_VERSION, slug_fn=district_slug,
+        slug_overrides={})
 
     cities_by_region: dict[str, list[dict]] = {}
     for city in cities:
         cities_by_region.setdefault(city["region_id"], []).append(city)
+    rayons_by_region: dict[str, list[dict]] = {}
+    for item in rayons:
+        rayons_by_region.setdefault(item["region_id"], []).append(item)
 
     sitemap: list[tuple[str, str, str, str]] = [
         (f"{SITE}/", lastmod, "hourly", "1.0"),
         (f"{SITE}/city/", lastmod, "daily", "0.85"),
+        (f"{SITE}/rayon/", lastmod, "daily", "0.85"),
         # Правовые страницы генерирует scripts/legal_pages при выкатке —
         # содержимое от данных не зависит. В карту сайта их всё же
         # включаем: страница, которой нет в индексе, не работает.
@@ -1471,8 +1621,15 @@ def main() -> int:
     ]
     (OUT / "city" / "index.html").write_text(
         city_index_page(cities, updated), encoding="utf-8")
+    (OUT / "rayon").mkdir(parents=True, exist_ok=True)
+    (OUT / "rayon" / "index.html").write_text(
+        district_index_page(rayons, updated), encoding="utf-8")
     for index, (name, slug, source_id, zone_id) in enumerate(named):
-        districts = sorted(by_region.get(source_id, []))
+        # Район со своей страницей становится ссылкой в списке региона.
+        rayon_links = {item["name"]: f'/rayon/{item["slug"]}/'
+                       for item in rayons_by_region.get(zone_id, [])}
+        districts = [(district, rayon_links.get(district))
+                     for district in sorted(by_region.get(source_id, []))]
         # Соседи по алфавиту, кольцом: у последних регионов иначе не было бы
         # ни одной исходящей ссылки.
         neighbours = [(named[(index + step) % len(named)][0],
@@ -1517,6 +1674,41 @@ def main() -> int:
         )
         sitemap.append((f'{SITE}/city/{city["slug"]}/', lastmod,
                         "hourly", "0.75"))
+
+    for item in rayons:
+        peers = rayons_by_region.get(item["region_id"], rayons)
+        item_index = peers.index(item)
+        neighbour_count = min(NEIGHBOURS, max(0, len(peers) - 1))
+        neighbours = [
+            (peers[(item_index + step) % len(peers)]["name"],
+             peers[(item_index + step) % len(peers)]["slug"])
+            for step in range(1, neighbour_count + 1)
+        ]
+        directory = OUT / "rayon" / item["slug"]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "index.html").write_text(
+            page(
+                item["name"], item["slug"], [], item["stats"],
+                path_prefix="rayon",
+                parent=(item["region_name"],
+                        f'{SITE}/region/{item["region_slug"]}/'),
+                admin_name=item["admin_name"],
+                map_region_slug=item["region_slug"],
+                neighbours=neighbours,
+                updated=updated,
+            ),
+            encoding="utf-8",
+        )
+        sitemap.append((f'{SITE}/rayon/{item["slug"]}/', lastmod,
+                        "hourly", "0.7"))
+
+    # Каталог районов устойчив благодаря манифесту, но при смене слага
+    # старая папка не должна остаться дублем с тем же содержимым.
+    active_rayon_slugs = {item["slug"] for item in rayons}
+    for directory in (OUT / "rayon").iterdir():
+        if directory.is_dir() and directory.name not in active_rayon_slugs:
+            (directory / "index.html").write_text(
+                city_retired_page(), encoding="utf-8")
 
     active_city_slugs = {city["slug"] for city in cities}
     for old_slug, target_slug in CITY_SLUG_REDIRECTS.items():
@@ -1582,10 +1774,10 @@ def main() -> int:
         f"{entries}\n</urlset>\n", encoding="utf-8")
 
     with_data = sum(1 for _, _, _, zone in named if stats.get(zone))
-    filled = fill_prerender(named, stats, updated, len(cities))
+    filled = fill_prerender(named, stats, updated, len(cities), len(rayons))
     print(f"SEO: регионов {len(named)} ({with_data} со сводкой), "
-          f"городов {len(cities)}, дней {len(day_keys)}, "
-          f"в sitemap {len(sitemap)} адресов"
+          f"городов {len(cities)}, районов {len(rayons)}, "
+          f"дней {len(day_keys)}, в sitemap {len(sitemap)} адресов"
           + (", пререндер главной обновлён" if filled else ""))
 
     if "--ping" in sys.argv:

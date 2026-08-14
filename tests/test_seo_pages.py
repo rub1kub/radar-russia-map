@@ -133,6 +133,125 @@ def test_city_name_comes_from_matching_place_not_district_adjective():
     assert seo.canonical_city_name("Малоярославетс") == "Малоярославец"
 
 
+def test_district_names_are_inflected_word_by_word():
+    assert seo.inflect_district("Погарский район") == "Погарском районе"
+    assert seo.inflect_district("Абыйский улус") == "Абыйском улусе"
+    assert seo.inflect_district("Тандинский кожуун") == "Тандинском кожууне"
+    assert seo.inflect_district("район имени Лазо") == "районе имени Лазо"
+    assert seo.inflect_district(
+        "Немецкий Национальный район") == "Немецком Национальном районе"
+    assert seo.inflect_district(
+        "Анабарский национальный (долгано-эвенкийский) район"
+    ) == "Анабарском национальном (долгано-эвенкийском) районе"
+    assert seo.inflect_district("Предгорный район") == "Предгорном районе"
+    assert seo.district_slug("Погарский район") == "pogarskiy"
+    assert seo.district_slug("район имени Лазо") == "imeni-lazo"
+
+
+def test_district_catalog_takes_rayons_not_covered_by_city_pages():
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE zones (
+            id TEXT PRIMARY KEY, parent_id TEXT,
+            level TEXT NOT NULL, name_ru TEXT NOT NULL, population INTEGER
+        );
+        """
+    )
+    connection.executemany(
+        "INSERT INTO zones VALUES (?, ?, ?, ?, ?)",
+        [
+            ("region", None, "region", "Брянская область", None),
+            ("region2", None, "region", "Ростовская область", None),
+            ("pogarskiy", "region", "district", "Погарский район", None),
+            ("kamenskiy_b", "region", "district", "Каменский район", None),
+            ("kamenskiy_r", "region2", "district", "Каменский район", None),
+            ("okrug", "region", "district", "городской округ Тестоград", None),
+            ("quiet", "region", "district", "Тихий район", None),
+        ],
+    )
+    regions = {"region": ("Брянская область", "bryanskaya-oblast"),
+               "region2": ("Ростовская область", "rostovskaya-oblast")}
+    city_stats = {
+        "pogarskiy": {"events": 20}, "kamenskiy_b": {"events": 16},
+        "kamenskiy_r": {"events": 17}, "okrug": {"events": 50},
+        "quiet": {"events": 3},
+    }
+
+    catalog = seo.build_district_catalog(
+        connection, city_stats, regions, {"okrug"})
+
+    # Городской округ уже занят городской страницей, тихий район не прошёл
+    # порог; тёзки получают суффикс субъекта.
+    assert [(item["name"], item["slug"]) for item in catalog] == [
+        ("Каменский район", "kamenskiy-bryanskaya-oblast"),
+        ("Каменский район", "kamenskiy-rostovskaya-oblast"),
+        ("Погарский район", "pogarskiy"),
+    ]
+
+
+def test_rayon_page_inflects_and_links_district_hub():
+    stats = {
+        "events": 21, "days": {datetime(2026, 8, 9).date()},
+        "last": "2026-08-09T10:00:00+00:00", "today": 2, "fresh": 1,
+        "districts": Counter(), "signals": Counter({"danger": 21}),
+        "threats": Counter({"uav": 21}), "hours": Counter({10: 21}),
+        "recent": [],
+    }
+    html = seo.page(
+        "Погарский район", "pogarskiy", [], stats,
+        path_prefix="rayon",
+        parent=("Брянская область",
+                "https://tihoenebo.com/region/bryanskaya-oblast/"),
+        admin_name="Погарский район",
+        map_region_slug="bryanskaya-oblast",
+        neighbours=[("Почепский район", "pochepskiy")],
+        updated="9 августа, 15:00 МСК",
+    )
+
+    assert "Тревога и БПЛА в Погарском районе сейчас" in html
+    assert ('rel="canonical" href="https://tihoenebo.com/rayon/pogarskiy/"'
+            in html)
+    assert '<a href="/rayon/">Районы</a>' in html
+    assert '/?region=bryanskaya-oblast' in html
+    assert '/rayon/pochepskiy/' in html
+    documents = _json_ld(html)
+    assert documents[0]["itemListElement"][1]["item"].endswith("/rayon/")
+    assert documents[1]["about"]["containedInPlace"]["name"] == "Брянская область"
+
+
+def test_region_page_links_districts_with_own_pages():
+    html = seo.page(
+        "Брянская область", "bryanskaya-oblast",
+        [("Погарский район", "/rayon/pogarskiy/"), ("Тихий район", None)],
+        None,
+        neighbours=[("Калужская область", "kaluzhskaya-oblast")],
+        updated="9 августа, 15:00 МСК",
+    )
+
+    assert '<a href="/rayon/pogarskiy/">Погарский район</a>' in html
+    assert "<li>Тихий район</li>" in html
+
+
+def test_district_index_groups_by_region():
+    rayons = [{
+        "zone_id": "pogarskiy", "name": "Погарский район",
+        "admin_name": "Погарский район", "region_id": "region",
+        "region_name": "Брянская область", "region_slug": "bryanskaya-oblast",
+        "slug": "pogarskiy", "stats": {"events": 20},
+    }]
+
+    html = seo.district_index_page(rayons, "9 августа, 18:30 МСК")
+
+    assert '<link rel="canonical" href="https://tihoenebo.com/rayon/"' in html
+    assert "Тревога и БПЛА по районам России" in html
+    assert '/rayon/pogarskiy/' in html
+    assert '/region/bryanskaya-oblast/' in html
+    documents = _json_ld(html)
+    assert documents[1]["mainEntity"]["numberOfItems"] == 1
+
+
 def test_city_manifest_keeps_published_url_when_activity_expires(tmp_path):
     manifest = tmp_path / "city" / "manifest.json"
     current = [{
