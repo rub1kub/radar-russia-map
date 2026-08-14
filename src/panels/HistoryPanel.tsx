@@ -174,8 +174,10 @@ export function HistoryPanel({
   onSpeed
 }: Props) {
   const timer = useRef<number | null>(null);
-  // Полоска дня меряет борты над точками, а не счёт событий: девяносто
-  // областных тревог тихого дня — не налёт, полсотни фиксаций ночью — налёт.
+  // Полоска дня меряет точечные фиксации и перехваты, а не счёт событий:
+  // девяносто областных тревог тихого дня — не налёт, полсотни фиксаций
+  // ночью — налёт. Шкала внутренняя: числом наружу она не выводится —
+  // сколько бортов на самом деле, не знает никто, событий всегда меньше.
   // Старый API поля не отдаёт — тогда откат на счёт событий, как раньше.
   const daysHaveHeavy = days.some((entry) => (entry.heavy ?? 0) > 0);
   const dayMetric = (entry: HistoryDay) =>
@@ -216,8 +218,9 @@ export function HistoryPanel({
 
   const atLive = !selectedDay && index >= slots.length - 1;
   const current = slots[index];
-  // Диаграмма меряет борты, как и полоса дней; совсем тихие сутки без
-  // единого борта показываются счётом событий — иначе полоса пустая.
+  // Диаграмма меряет то же, что и полоса дней; совсем тихие сутки без
+  // единой точечной фиксации показываются счётом событий — иначе полоса
+  // пустая. В подписях всегда счёт событий: он единственный честный.
   const slotsHaveHeavy = load.some((point) => point.heavy > 0);
   const slotMetric = (point: SlotLoad) =>
     slotsHaveHeavy ? point.heavy : point.count;
@@ -264,7 +267,7 @@ export function HistoryPanel({
                     onMouseEnter={() => setHoverDay(index)}
                     onFocus={() => setHoverDay(index)}
                     onBlur={() => setHoverDay(null)}
-                    aria-label={`${entry.day}, бортов ${entry.heavy ?? 0}, событий ${entry.events}`}
+                    aria-label={`${entry.day}, событий ${entry.events}`}
                   >
                     <i
                       style={{
@@ -290,12 +293,6 @@ export function HistoryPanel({
                   role="tooltip"
                 >
                   <b>{dayLabel(days[hoverDay].day)}</b> ·{" "}
-                  {days[hoverDay].heavy ? (
-                    <>
-                      {days[hoverDay].heavy}{" "}
-                      {plural(days[hoverDay].heavy ?? 0, "борт", "борта", "бортов")} ·{" "}
-                    </>
-                  ) : null}
                   {days[hoverDay].events}{" "}
                   {plural(days[hoverDay].events, "событие", "события", "событий")},
                   подтверждено {days[hoverDay].confirmed}
@@ -324,17 +321,13 @@ export function HistoryPanel({
                   className={`chart-bar ${at === index ? "is-on" : ""}`}
                   onClick={() => onSeek(at)}
                   tabIndex={-1}
-                  data-tip={`${formatDayTime(slots[at].at)} · ${
-                    point.heavy
-                      ? `${point.heavy} ${plural(point.heavy, "борт", "борта", "бортов")} · `
-                      : ""
-                  }${point.count} ${plural(
+                  data-tip={`${formatDayTime(slots[at].at)} · ${point.count} ${plural(
                     point.count,
                     "событие",
                     "события",
                     "событий"
                   )}`}
-                  aria-label={`${formatDayTime(slots[at].at)}, бортов ${point.heavy}, событий ${point.count}`}
+                  aria-label={`${formatDayTime(slots[at].at)}, событий ${point.count}`}
                 >
                   <i
                     style={{
@@ -397,9 +390,6 @@ export function HistoryPanel({
                   {atLive ? "сейчас" : current ? formatDayTime(current.at) : ""}
                   {now ? (
                     <b>
-                      {now.heavy
-                        ? `${now.heavy} ${plural(now.heavy, "борт", "борта", "бортов")} · `
-                        : ""}
                       {now.count} {plural(now.count, "событие", "события", "событий")}
                     </b>
                   ) : null}
