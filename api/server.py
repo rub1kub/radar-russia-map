@@ -576,10 +576,17 @@ def history_days(limit: int = Query(60, ge=1, le=400)):
         f"""
         SELECT date(datetime(e.first_seen_at, '+3 hours')) AS day,
                COUNT(DISTINCT e.id) AS events,
+               -- Борты над точками: фиксации, перехваты, удары точечных зон
+               -- (severity >= 8 бывает только у них). Мера налёта: счёт всех
+               -- событий меряет болтовню эфира — 97 тревог тихого дня
+               -- перевешивали полсотни бортов ночного налёта.
+               COUNT(DISTINCT CASE WHEN e.severity >= 8
+                     AND z.level != 'region' THEN e.id END) AS heavy,
                MAX(e.severity) AS max_severity,
                COUNT(DISTINCT es.source_key) AS sources,
                COUNT(DISTINCT CASE WHEN e.source_count > 1 THEN e.id END) AS confirmed
         FROM events e
+        LEFT JOIN zones z ON z.id = e.zone_id
         LEFT JOIN event_sources es ON es.event_id = e.id
         GROUP BY day
         HAVING sources >= {MIN_DAY_SOURCES}

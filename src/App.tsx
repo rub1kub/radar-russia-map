@@ -1249,14 +1249,20 @@ export default function App() {
       // налёта выглядел как атака прямо сейчас — при пустом эфире.
       const from = at - SLOT_MS;
       let count = 0;
+      let heavy = 0;
       let severity = 0;
       for (const event of historyEvents) {
         if (new Date(event.first_seen_at).getTime() > at) continue;
         if (new Date(event.last_seen_at).getTime() < from) continue;
         count += 1;
+        // Борты над точками — мера налёта. Счёт всех событий меряет
+        // болтовню эфира: в тихий полдень 97 областных тревог и 94
+        // «опасности» давали столбик выше, чем полсотни бортов ночного
+        // налёта, и пик истории вставал не туда.
+        if (event.severity >= 8 && event.zone_level !== "region") heavy += 1;
         severity = Math.max(severity, event.severity);
       }
-      return { count, severity };
+      return { count, heavy, severity };
     });
   }, [historyEvents, slots]);
 
