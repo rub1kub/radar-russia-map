@@ -100,7 +100,30 @@ def test_graph_counts_computed_transitions_separately():
     assert edges[0]["computed"] == 7
 
 
-def test_page_is_a_gallery_with_canonical_and_disclaimer(land):
+def test_export_graph_marks_trunks_arcs_and_anchors(land):
+    if not land.rings:
+        pytest.skip("regions.json недоступен")
+    tuapse = (44.10, 39.08, "Туапсе")
+    sochi = (43.60, 39.73, "Сочи")
+    routes = [_route([tuapse, sochi])] * 12
+    nodes, edges = rp.build_graph(routes, [])
+    graph = rp.export_graph(nodes, edges, land,
+                            {("Туапсе", "Сочи"): "kor-0"},
+                            {"routes": 12})
+
+    assert len(graph["edges"]) == 1
+    edge = graph["edges"][0]
+    assert edge["t"] == 1                       # магистраль
+    assert edge["kor"] == "kor-0"               # ссылка на карточку
+    assert edge["nm"] == 12 and edge["cp"] == 0
+    # Туапсе — Сочи идёт вдоль берега: дуга над морем посчитана в точки,
+    # клиенту остаётся нарисовать линию.
+    assert "arc" in edge and len(edge["arc"]) >= 10
+    names = {n["name"] for n in graph["nodes"]}
+    assert names == {"Туапсе", "Сочи"}
+
+
+def test_page_is_a_gallery_with_map_container(land):
     routes = [_route([ANAPA, RAEVSKAYA, NOVOROSSIYSK])] * 12
     transitions = [{
         "a": (44.89, 37.32), "b": (44.72, 37.77),
@@ -110,10 +133,9 @@ def test_page_is_a_gallery_with_canonical_and_disclaimer(land):
 
     assert 'rel="canonical" href="https://tihoenebo.com/marshruty/"' in html
     assert "Анапа → Новороссийск" in html
-    assert html.count("<svg") >= 2  # общая карта и хотя бы одна карточка
-    assert "магистраль" in html                      # легенда графа
-    assert "восстановлено по фиксациям" in html      # раскладка в подсказке
-    assert 'class="ant' in html                      # бегущие штрихи
-    assert "hero-zoom" in html                       # управление приближением
-    assert 'href="#kor-0"' in html                   # ребро ведёт к карточке
+    assert html.count("<svg") >= 1               # карточки галереи
+    assert '<div id="routes-map">' in html       # контейнер OpenLayers
+    assert "/assets/marshruty-map.js" in html
+    assert "/assets/marshruty-map.css" in html
+    assert 'id="kor-0"' in html                  # якорь карточки для клика
     assert "может опаздывать и ошибаться" in html
