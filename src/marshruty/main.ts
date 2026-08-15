@@ -67,14 +67,18 @@ function chainTip(chain: Chain): string {
   }
   const total = chain.nm + chain.cp;
   lines.push(
-    `Источники описывали этот путь ${total} ` +
-      `${plural(total, "раз", "раза", "раз")}.`
+    `Этот путь повторился ${total} ${plural(total, "раз", "раза", "раз")}.`
   );
-  if (chain.cp) {
-    const share = Math.round((chain.cp / total) * 100);
+  if (chain.nm && chain.cp) {
     lines.push(
-      `${share}% — не пересказ сообщения, а наша догадка по ` +
-        `последовательности фиксаций.`
+      `Из них ${chain.nm} ${plural(chain.nm, "раз", "раза", "раз")} путь ` +
+        `описал сам источник, ${chain.cp} — наша реконструкция по волне ` +
+        `фиксаций.`
+    );
+  } else if (chain.cp) {
+    lines.push(
+      "Источники этот путь не описывали — он восстановлен по тому, как " +
+        "волна фиксаций шла по карте."
     );
   }
   if (chain.r) {

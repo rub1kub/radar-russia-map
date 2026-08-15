@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+import sqlite3
+
 import pytest
 
 import scripts.routes_page as rp
@@ -52,12 +55,15 @@ def test_projection_maps_bbox_corners():
 
 
 def test_flow_path_smooths_kinked_chains():
+    """Карточка галереи рисуется тем же сплайном, что и трассы на карте."""
     path = rp.flow_path([(0.0, 0.0), (50.0, 40.0), (100.0, 0.0)])
-    # Излом сглажен квадратичной кривой через середину отрезка.
-    assert "Q50.0 40.0 75.0 20.0" in path
-    # Дуга по управляющей точке — один сегмент Q.
+    # Одно звено на точку заменяется десятками — это уже кривая.
+    assert path.count("L") > 15
+    assert path.startswith("M0.0 0.0")
+    assert path.endswith("L100.0 0.0")
+    # Морская отводка входит обычной путевой точкой и тоже сглаживается.
     arc = rp.flow_path([(0.0, 0.0), (100.0, 0.0)], (50.0, 30.0))
-    assert arc == "M0.0 0.0Q50.0 30.0 100.0 0.0"
+    assert arc.count("L") > 15
 
 
 def test_coastal_corridor_bends_over_the_sea(land):
@@ -86,13 +92,17 @@ def test_graph_merges_legs_and_directions():
     assert (merged["forward"], merged["backward"]) == (4, 1)
 
 
-def test_graph_counts_computed_transitions_separately():
+def test_graph_counts_reconstructed_waves_separately():
+    """Пересказ источника и наша догадка считаются порознь.
+
+    Подсказка на карте показывает долю вычисленного — значит, счёт должен
+    их различать, а не сваливать в одно число.
+    """
     routes = [_route([ANAPA, NOVOROSSIYSK])] * 3
-    transitions = [{
-        "a": (ANAPA[0], ANAPA[1]), "b": (NOVOROSSIYSK[0], NOVOROSSIYSK[1]),
-        "start": "Анапа", "end": "Новороссийск", "count": 7,
-    }]
-    _, edges = rp.build_graph(routes, transitions)
+    wave = [{"lat": ANAPA[0], "lon": ANAPA[1], "name": "Анапа"},
+            {"lat": NOVOROSSIYSK[0], "lon": NOVOROSSIYSK[1],
+             "name": "Новороссийск"}]
+    _, edges = rp.build_graph(routes, [wave] * 7)
 
     assert len(edges) == 1
     assert edges[0]["count"] == 10
@@ -122,6 +132,82 @@ def test_export_graph_marks_trunks_arcs_and_anchors(land):
     assert len(chain["pts"]) >= 10
     names = {label["name"] for label in graph["labels"]}
     assert names == {"Туапсе", "Сочи"}
+
+
+def test_smooth_path_keeps_waypoints_and_kills_corners():
+    """Прямой угол между районами — артефакт ломаной, а не траектория.
+
+    Борт самолётной схемы на 150 км/ч разворачивается радиусом ~400 м: на
+    масштабе карты угол физически невозможен. Кривая обязана пройти через
+    те же путевые точки, но без излома и без петли.
+    """
+    corner = [(50.0, 36.0), (50.0, 37.0), (51.0, 37.0)]
+    curve = rp.smooth_path(corner, steps=12)
+
+    for point in corner:
+        assert any(abs(c[0] - point[0]) < 1e-6 and abs(c[1] - point[1]) < 1e-6
+                   for c in curve)
+
+    def angle(a, b, c) -> float:
+        v1 = (b[0] - a[0], (b[1] - a[1]) * 0.64)
+        v2 = (c[0] - b[0], (c[1] - b[1]) * 0.64)
+        n1, n2 = math.hypot(*v1), math.hypot(*v2)
+        if n1 < 1e-12 or n2 < 1e-12:
+            return 0.0
+        cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+        return math.degrees(math.acos(cos))
+
+    worst = max(angle(curve[i], curve[i + 1], curve[i + 2])
+                for i in range(len(curve) - 2))
+    assert worst < 35
+    # Центростремительный Catmull-Rom не даёт петель: длина почти не растёт.
+    length = lambda path: sum(math.dist(a, b) for a, b in zip(path, path[1:]))
+    assert length(curve) < length(corner) * 1.15
+
+
+def test_tracks_follow_drone_physics():
+    """Волна собирается по скорости и курсу, а не по близости.
+
+    Три фиксации на одной прямой с шагом в полчаса и 75 км — это 150 км/ч,
+    крейсерская скорость борта: трек. Четвёртая через минуту в стороне —
+    другой борт, и в трек не идёт.
+    """
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE zones (id TEXT PRIMARY KEY, level TEXT, name_ru TEXT,
+                            source_id TEXT);
+        CREATE TABLE events (zone_id TEXT, lat REAL, lon REAL,
+                             severity INTEGER, first_seen_at TEXT);
+        """
+    )
+    chain = [("a", 50.0, 36.0, "2026-08-10T00:00:00+00:00"),
+             ("b", 50.0, 37.05, "2026-08-10T00:30:00+00:00"),
+             ("c", 50.0, 38.10, "2026-08-10T01:00:00+00:00"),
+             ("x", 55.0, 50.00, "2026-08-10T00:31:00+00:00")]
+    for zone, lat, lon, stamp in chain:
+        connection.execute("INSERT INTO zones VALUES (?,?,?,?)",
+                           (zone, "district", zone.upper(), None))
+        connection.execute("INSERT INTO events VALUES (?,?,?,?,?)",
+                           (zone, lat, lon, 8, stamp))
+
+    tracks = rp.reconstruct_tracks(connection)
+
+    assert len(tracks) == 1
+    assert [point["zone"] for point in tracks[0]] == ["a", "b", "c"]
+
+
+def test_sea_corridors_stay_out_of_the_gallery():
+    """«Новороссийск → Чёрное море» — уход за берег, а не коридор."""
+    sea = (44.30, 37.20, "Чёрное море")
+    routes = ([_route([NOVOROSSIYSK, sea])] * 20
+              + [_route([ANAPA, NOVOROSSIYSK])] * 20)
+
+    names = [(c["start"], c["end"])
+             for c in rp.build_corridors(routes, skip_names={"Чёрное море"})]
+
+    assert names == [("Анапа", "Новороссийск")]
 
 
 def test_chains_merge_consecutive_edges_into_one_route():

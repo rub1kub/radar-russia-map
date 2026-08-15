@@ -68,11 +68,20 @@ CHAIN_MIN_RATIO = 0.3
 LABELS_ALWAYS = 26
 LABELS_ZOOMED = 120
 
-MIN_TRANSITION = 5
-# Окно склейки двух фиксаций в переход: ближе трёх минут — это одно и то же
-# сообщение из двух лент, дальше пятидесяти — уже другой борт.
-TRANSITION_MINUTES = (3, 50)
-TRANSITION_KM = (8, 130)
+# --- Восстановление волн по фиксациям ---------------------------------
+# Пороги — от физики украинских дальнобойных БПЛА самолётной схемы
+# (Хорнет, Бобр, Дартс, Лютый): крейсерская скорость около 150 км/ч.
+# Продолжением фиксации считается следующая, до которой борт мог долететь
+# с правдоподобной скоростью и без разворота: 80-260 км/ч и не круче 70°.
+# На корпусе это даёт 622 трека медианной длиной 167 км — с настоящими
+# цепочками вроде «Штормово → Зеленовка → Тарасовский → … → Новониколаевский
+# район»: 762 км за 230 минут, то есть 199 км/ч.
+TRACK_SPEED_KMH = (80.0, 260.0)
+TRACK_CRUISE_KMH = 150.0
+TRACK_GAP_MINUTES = (3, 35)
+TRACK_MAX_TURN = math.radians(70)
+# Трек короче трёх точек — не волна, а пара совпавших сообщений.
+TRACK_MIN_POINTS = 3
 
 # Кластеризация точек в узлы: шаг сетки ~10 км.
 NODE_LAT_STEP = 0.09
@@ -237,62 +246,104 @@ def load_routes(connection: sqlite3.Connection) -> list[dict]:
     return routes
 
 
-def load_transitions(connection: sqlite3.Connection) -> list[dict]:
-    """Переходы, восстановленные из собственной базы фиксаций.
+def _bearing_ll(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.atan2((b[1] - a[1])
+                      * math.cos(math.radians((a[0] + b[0]) / 2)),
+                      b[0] - a[0])
 
-    Каждому точечному тяжёлому событию ищется один ближайший предшественник
-    в окне времени и расстояния — «фиксация была там, потом её увидели
-    здесь». Одна связка — догадка; в счёт идут только связки, повторившиеся
-    MIN_TRANSITION раз за всю историю.
+
+def _turn(a: float, b: float) -> float:
+    diff = abs(a - b) % (2 * math.pi)
+    return min(diff, 2 * math.pi - diff)
+
+
+def reconstruct_tracks(connection: sqlite3.Connection) -> list[list[dict]]:
+    """Волны, восстановленные из собственной базы фиксаций.
+
+    Налёт идёт волнами: борт видят в одном районе, через двадцать минут в
+    соседнем, ещё через двадцать в третьем. Здесь эта цепочка собирается
+    обратно — жадно, от каждой ещё не занятой фиксации: продолжением
+    считается следующая, до которой борт мог долететь с правдоподобной
+    скоростью (80-260 км/ч при крейсерских 150) и без разворота круче 70°.
+    Из кандидатов берётся самый «ровный» — ближе к крейсерской скорости и
+    с меньшим доворотом. Каждая фиксация принадлежит одному треку.
+
+    Это догадка, а не пересказ источника, — и на карте она помечена как
+    вычисленная. Но догадка физическая: пороги взяты от дальнобойных БПЛА
+    самолётной схемы, а не подобраны на глаз.
+
+    Акватории идут наравне с точечными зонами: «БПЛА над Азовским морем» —
+    такое же наблюдение, только над водой.
     """
-    # Акватории проходят наравне с точечными зонами: «БПЛА над Азовским
-    # морем» — такое же наблюдение, только над водой, и без него у
-    # приморских трасс обрывался морской конец.
     rows = connection.execute(
         """SELECT e.zone_id, e.lat, e.lon, e.first_seen_at, z.name_ru
            FROM events e JOIN zones z ON z.id = e.zone_id
            WHERE e.severity >= 8 AND e.lat IS NOT NULL
              AND (z.level != 'region' OR z.source_id LIKE '%-sea')
            ORDER BY e.first_seen_at""").fetchall()
-    events = [(datetime.fromisoformat(r["first_seen_at"]).timestamp(),
-               r["lat"], r["lon"], r["zone_id"], r["name_ru"]) for r in rows]
-    times = [e[0] for e in events]
-    low_s, high_s = TRANSITION_MINUTES[0] * 60, TRANSITION_MINUTES[1] * 60
+    events = [{
+        "at": datetime.fromisoformat(r["first_seen_at"]).timestamp(),
+        "lat": r["lat"], "lon": r["lon"],
+        "zone": r["zone_id"], "name": short_name(r["name_ru"]),
+    } for r in rows]
+    times = [event["at"] for event in events]
+    low_s, high_s = TRACK_GAP_MINUTES[0] * 60, TRACK_GAP_MINUTES[1] * 60
 
-    counts: Counter = Counter()
-    coords: dict = {}
-    for stamp, lat, lon, zone, name in events:
-        lo = bisect.bisect_left(times, stamp - high_s)
-        hi = bisect.bisect_left(times, stamp - low_s)
-        best = None
-        for a in events[lo:hi]:
-            if a[3] == zone:
-                continue
-            distance = _km((a[1], a[2]), (lat, lon))
-            if not (TRANSITION_KM[0] <= distance <= TRANSITION_KM[1]):
-                continue
-            score = distance + (stamp - a[0]) / 60 * 0.5
-            if best is None or score < best[0]:
-                best = (score, a)
-        if best is None:
+    taken = [False] * len(events)
+    tracks: list[list[dict]] = []
+    for index in range(len(events)):
+        if taken[index]:
             continue
-        a = best[1]
-        start, end = short_name(a[4]), short_name(name)
-        if start == end:
-            continue
-        key = (a[3], zone)
-        counts[key] += 1
-        coords.setdefault(key, ((a[1], a[2]), (lat, lon), start, end))
-    return [{
-        "a": coords[key][0], "b": coords[key][1],
-        "start": coords[key][2], "end": coords[key][3],
-        "count": count,
-    } for key, count in counts.items() if count >= MIN_TRANSITION]
+        taken[index] = True
+        track = [events[index]]
+        heading: float | None = None
+        while True:
+            last = track[-1]
+            lo = bisect.bisect_left(times, last["at"] + low_s)
+            hi = bisect.bisect_left(times, last["at"] + high_s)
+            best = None
+            for candidate in range(lo, hi):
+                if taken[candidate]:
+                    continue
+                nxt = events[candidate]
+                if nxt["zone"] == last["zone"]:
+                    continue
+                hours = (nxt["at"] - last["at"]) / 3600
+                if hours <= 0:
+                    continue
+                distance = _km((last["lat"], last["lon"]),
+                               (nxt["lat"], nxt["lon"]))
+                speed = distance / hours
+                if not (TRACK_SPEED_KMH[0] <= speed <= TRACK_SPEED_KMH[1]):
+                    continue
+                course = _bearing_ll((last["lat"], last["lon"]),
+                                     (nxt["lat"], nxt["lon"]))
+                doglegs = _turn(heading, course) if heading is not None else 0.0
+                if doglegs > TRACK_MAX_TURN:
+                    continue
+                score = (abs(speed - TRACK_CRUISE_KMH) / TRACK_CRUISE_KMH
+                         + doglegs / math.pi * 1.5)
+                if best is None or score < best[0]:
+                    best = (score, candidate, course)
+            if best is None:
+                break
+            taken[best[1]] = True
+            track.append(events[best[1]])
+            heading = best[2]
+        if len(track) >= TRACK_MIN_POINTS:
+            tracks.append(track)
+    return tracks
 
 
-def build_corridors(routes: list[dict],
-                    minimum: int = MIN_CORRIDOR) -> list[dict]:
-    """Коридор — все маршруты с одинаковыми началом и концом."""
+def build_corridors(routes: list[dict], minimum: int = MIN_CORRIDOR,
+                    skip_names: frozenset[str] | set[str] = frozenset(),
+                    ) -> list[dict]:
+    """Коридор — все маршруты с одинаковыми началом и концом.
+
+    skip_names убирает из галереи коридоры, упирающиеся в акваторию:
+    карточка «Новороссийск → Чёрное море» показывает не путь, а то, что
+    борт ушёл за береговую черту, — на общей карте это видно и без неё.
+    """
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for route in routes:
         key = (route["points"][0][2], route["points"][-1][2])
@@ -301,6 +352,8 @@ def build_corridors(routes: list[dict],
     corridors = []
     for (start, end), items in grouped.items():
         if len(items) < minimum or start == end:
+            continue
+        if short_name(start) in skip_names or short_name(end) in skip_names:
             continue
         stamps = sorted(item["posted_at"] for item in items)
         hours = Counter(
@@ -336,7 +389,7 @@ def _cell(lat: float, lon: float) -> tuple[int, int]:
     return (int(lat / NODE_LAT_STEP), int(lon / lon_step))
 
 
-def build_graph(routes: list[dict], transitions: list[dict]) -> tuple[
+def build_graph(routes: list[dict], tracks: list[list[dict]]) -> tuple[
         list[dict], list[dict]]:
     """Узлы и рёбра: все плечи, слитые по кластерам точек.
 
@@ -366,11 +419,14 @@ def build_graph(routes: list[dict], transitions: list[dict]) -> tuple[
                 continue
             legs[(a, b)] += 1
             named_legs[(a, b)] += 1
-    for transition in transitions:
-        a = visit(*transition["a"], transition["start"])
-        b = visit(*transition["b"], transition["end"])
-        if a != b:
-            legs[(a, b)] += transition["count"]
+    # Восстановленные волны дают такие же плечи, только помеченные
+    # вычисленными: одна волна — один проход цепочки.
+    for track in tracks:
+        cells = [visit(point["lat"], point["lon"], point["name"])
+                 for point in track]
+        for a, b in zip(cells, cells[1:]):
+            if a != b:
+                legs[(a, b)] += 1
 
     edges: dict[tuple, dict] = {}
     for (a, b), count in legs.items():
@@ -422,29 +478,57 @@ def build_graph(routes: list[dict], transitions: list[dict]) -> tuple[
     return nodes, result_edges[:MAX_EDGES]
 
 
-def _bezier(a: tuple[float, float], control: tuple[float, float],
-            b: tuple[float, float], steps: int = 10) -> list[list[float]]:
-    """Квадратичная дуга, рассчитанная в точки: клиенту остаётся линия."""
-    points = []
-    for index in range(steps + 1):
-        t = index / steps
-        lat = ((1 - t) ** 2 * a[0] + 2 * (1 - t) * t * control[0]
-               + t ** 2 * b[0])
-        lon = ((1 - t) ** 2 * a[1] + 2 * (1 - t) * t * control[1]
-               + t ** 2 * b[1])
-        points.append([round(lat, 4), round(lon, 4)])
-    return points
+def smooth_path(points: list[tuple[float, float]],
+                steps: int = 12) -> list[list[float]]:
+    """Сгладить ломаную по путевым точкам в траекторию полёта.
 
+    Излом на карте — артефакт: борт самолётной схемы на крейсерских
+    150 км/ч (41,7 м/с) с креном 25° разворачивается радиусом
+    v²/(g·tg φ) ≈ 380 метров — на масштабе карты это неразличимо, то есть
+    настоящий путь между районами кривой быть не может, а угловатым тем
+    более. Ломаная — лишь способ, которым мы соединили точки, и её надо
+    заменить гладкой линией, проходящей через те же точки.
 
-def _bearing(a: dict, b: dict) -> float:
-    return math.atan2((b["lon"] - a["lon"])
-                      * math.cos(math.radians((a["lat"] + b["lat"]) / 2)),
-                      b["lat"] - a["lat"])
+    Кривая — центростремительный Catmull-Rom (α=0,5): проходит ровно через
+    путевые точки и, в отличие от равномерного, не даёт петель и заносов
+    на резких поворотах, а именно они здесь и встречаются.
+    """
+    if len(points) < 3:
+        return [[round(lat, 4), round(lon, 4)] for lat, lon in points]
 
+    # Дублируем концы: кривой нужны соседи слева и справа от каждого звена.
+    padded = [points[0]] + list(points) + [points[-1]]
+    result: list[list[float]] = []
+    for index in range(len(padded) - 3):
+        p0, p1, p2, p3 = padded[index:index + 4]
 
-def _turn(a: float, b: float) -> float:
-    diff = abs(a - b) % (2 * math.pi)
-    return min(diff, 2 * math.pi - diff)
+        def knot(previous: float, a: tuple[float, float],
+                 b: tuple[float, float]) -> float:
+            # α=0,5 — корень из расстояния: длинное звено не перетягивает
+            # кривую на себя.
+            return previous + max(math.dist(a, b), 1e-9) ** 0.5
+
+        t0 = 0.0
+        t1 = knot(t0, p0, p1)
+        t2 = knot(t1, p1, p2)
+        t3 = knot(t2, p2, p3)
+        for step in range(steps):
+            t = t1 + (t2 - t1) * step / steps
+            a1 = [((t1 - t) * p0[k] + (t - t0) * p1[k]) / (t1 - t0)
+                  for k in (0, 1)]
+            a2 = [((t2 - t) * p1[k] + (t - t1) * p2[k]) / (t2 - t1)
+                  for k in (0, 1)]
+            a3 = [((t3 - t) * p2[k] + (t - t2) * p3[k]) / (t3 - t2)
+                  for k in (0, 1)]
+            b1 = [((t2 - t) * a1[k] + (t - t0) * a2[k]) / (t2 - t0)
+                  for k in (0, 1)]
+            b2 = [((t3 - t) * a2[k] + (t - t1) * a3[k]) / (t3 - t1)
+                  for k in (0, 1)]
+            point = [((t2 - t) * b1[k] + (t - t1) * b2[k]) / (t2 - t1)
+                     for k in (0, 1)]
+            result.append([round(point[0], 4), round(point[1], 4)])
+    result.append([round(points[-1][0], 4), round(points[-1][1], 4)])
+    return result
 
 
 def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
@@ -465,7 +549,8 @@ def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
     chains: list[list[dict]] = []
 
     def bearing_of(edge: dict) -> float:
-        return _bearing(nodes[edge["a"]], nodes[edge["b"]])
+        a, b = nodes[edge["a"]], nodes[edge["b"]]
+        return _bearing_ll((a["lat"], a["lon"]), (b["lat"], b["lon"]))
 
     def extend(edge: dict, forward: bool) -> list[dict]:
         tail: list[dict] = []
@@ -527,16 +612,18 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
     out_chains = []
     label_weight: Counter = Counter()
     for rank, chain in enumerate(chains):
-        points: list[list[float]] = []
-        for index, edge in enumerate(chain):
+        # Путевые точки трассы: узлы плюс морская отводка там, где плечо
+        # идёт вдоль берега, — и всё это одной гладкой линией.
+        waypoints: list[tuple[float, float]] = [
+            (nodes[chain[0]["a"]]["lat"], nodes[chain[0]["a"]]["lon"])]
+        for edge in chain:
             a, b = nodes[edge["a"]], nodes[edge["b"]]
-            start = (a["lat"], a["lon"])
-            end = (b["lat"], b["lon"])
-            control = land.sea_control(start, end)
-            segment = (_bezier(start, control, end) if control
-                       else [[round(start[0], 4), round(start[1], 4)],
-                             [round(end[0], 4), round(end[1], 4)]])
-            points.extend(segment if index == 0 else segment[1:])
+            control = land.sea_control((a["lat"], a["lon"]),
+                                       (b["lat"], b["lon"]))
+            if control:
+                waypoints.append(control)
+            waypoints.append((b["lat"], b["lon"]))
+        points = smooth_path(waypoints)
         top = max(e["count"] for e in chain)
         named = sum(e["named"] for e in chain)
         computed = sum(e["computed"] for e in chain)
@@ -577,21 +664,21 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
 
 def flow_path(points_xy: list[tuple[float, float]],
               control_xy: tuple[float, float] | None = None) -> str:
-    """Гладкий путь для мини-карт галереи."""
-    (x0, y0) = points_xy[0]
-    if control_xy is not None and len(points_xy) == 2:
-        (cx, cy), (x1, y1) = control_xy, points_xy[1]
-        return f"M{x0} {y0}Q{cx} {cy} {x1} {y1}"
-    if len(points_xy) == 2:
-        (x1, y1) = points_xy[1]
+    """Гладкий путь для мини-карт галереи — тем же сплайном, что и трассы.
+
+    Углов у настоящей траектории нет (см. smooth_path), поэтому и здесь
+    ломаная сглаживается, а морская отводка входит обычной путевой точкой.
+    """
+    chain = list(points_xy)
+    if control_xy is not None and len(chain) == 2:
+        chain = [chain[0], control_xy, chain[1]]
+    if len(chain) == 2:
+        (x0, y0), (x1, y1) = chain
         return f"M{x0} {y0}L{x1} {y1}"
-    parts = [f"M{x0} {y0}"]
-    for index in range(1, len(points_xy) - 1):
-        (ax, ay), (bx, by) = points_xy[index], points_xy[index + 1]
-        mx, my = round((ax + bx) / 2, 1), round((ay + by) / 2, 1)
-        parts.append(f"Q{ax} {ay} {mx} {my}")
-    (x1, y1) = points_xy[-1]
-    parts.append(f"L{x1} {y1}")
+    curve = smooth_path([(y, x) for x, y in chain], steps=10)
+    parts = [f"M{round(curve[0][1], 1)} {round(curve[0][0], 1)}"]
+    parts.extend(f"L{round(point[1], 1)} {round(point[0], 1)}"
+                 for point in curve[1:])
     return "".join(parts)
 
 
@@ -688,9 +775,10 @@ def card_html(corridor: dict, land: Land, anchor: str) -> str:
     </figure>"""
 
 
-def build_page(routes: list[dict], transitions: list[dict],
-               land: Land, updated: str) -> str:
-    corridors = build_corridors(routes)[:MAX_CARDS]
+def build_page(routes: list[dict], tracks: list[list[dict]],
+               land: Land, updated: str,
+               skip_names: frozenset[str] | set[str] = frozenset()) -> str:
+    corridors = build_corridors(routes, skip_names=skip_names)[:MAX_CARDS]
 
     total = len(routes)
     night = sum(
@@ -701,12 +789,13 @@ def build_page(routes: list[dict], transitions: list[dict],
     first = min((r["posted_at"] for r in routes), default="")
     span_days = ((now_utc() - datetime.fromisoformat(first)).days
                  if first else 0)
-    links = sum(t["count"] for t in transitions)
+    waves = len(tracks)
+    wave_points = sum(len(track) for track in tracks)
 
     title = "Маршруты БПЛА — повторяющиеся коридоры на карте"
     description = (
         f"{total} маршрутов БПЛА за {span_days} дней из открытых сообщений "
-        f"плюс переходы, восстановленные по последовательности фиксаций: "
+        f"плюс {waves} волн, восстановленных по движению фиксаций: "
         f"интерактивная карта коридоров и галерея самых устойчивых.")
     url = f"{SITE}/marshruty/"
     breadcrumb_ld = json.dumps({
@@ -786,36 +875,46 @@ def build_page(routes: list[dict], transitions: list[dict],
       <p>За {span_days} {plural(span_days, "день", "дня", "дней")} карта
       записала <strong>{total}</strong>
       {plural(total, "маршрут", "маршрута", "маршрутов")}, названных самими
-      источниками, и восстановила {links}
-      {plural(links, "переход", "перехода", "переходов")} по
-      последовательности фиксаций. Всё это слито в граф: узлы — места,
-      которые источники называют снова и снова, рёбра — повторяющиеся
-      плечи между ними. {night_share}% маршрутов — ночные.</p>
+      источниками, и восстановила <strong>{waves}</strong>
+      {plural(waves, "волну", "волны", "волн")} по движению фиксаций:
+      налёт идёт волнами, борт видят в одном районе, через двадцать минут
+      в соседнем — и эта цепочка собирается обратно в путь
+      ({wave_points} {plural(wave_points, "фиксация", "фиксации", "фиксаций")}
+      легли в треки). Всё вместе сложено в повторяющиеся трассы.
+      {night_share}% маршрутов — ночные.</p>
 
       <a class="map" href="/">Открыть живую карту</a>
 
       <div id="routes-map"></div>
-      <p class="map-note">Толщина линии — сколько раз повторился коридор;
+      <p class="map-note">Толщина линии — сколько раз повторилась трасса;
       штрихи бегут по направлению полёта. При приближении проявляются
-      локальные ветки и подписи малых узлов. Наведите на линию или узел —
-      подсказка с числами; клик по линии ведёт к карточке коридора ниже.
-      Прибрежные дуги идут над морем: «Туапсе — Сочи» не значит «через
-      города».</p>
+      локальные ветки и подписи малых мест. Наведите на линию — подсказка
+      с числами; клик ведёт к карточке коридора ниже. Прибрежные дуги идут
+      над морем: «Туапсе — Сочи» не значит «через города».</p>
 
       <h2>Устойчивые коридоры</h2>
-      <p>Каждая карточка — один коридор: бледные линии — все его маршруты,
-      стрелка — самый частый вариант пути.</p>
+      <p>Каждая карточка — один коридор между населёнными пунктами:
+      бледные линии — все его маршруты, стрелка — самый частый вариант
+      пути. Уходы за береговую черту сюда не попадают — их видно на
+      карте выше.</p>
       <div class="gallery">{cards}</div>
 
       <h2>Как это читать</h2>
-      <p>Узлы графа — кластеры мест (~10 км), которые источники называют
-      постоянно; рёбра — плечи между ними, повторившиеся от {MIN_EDGE}
-      раз. Ребро рисуется в преобладающую сторону; если летали в обе,
-      подсказка показывает счёт туда и обратно. Основа — маршруты, которые
-      источник описал сам; к ним добавлены переходы, восстановленные из
-      базы: две точечные фиксации подряд, вторая в пределах 50 минут и
-      130 км. Доля восстановленного видна в подсказке каждого ребра.
-      Число повторов зависит и от активности каналов региона.</p>
+      <p>Трасса — цепочка плеч между местами, которые называют снова и
+      снова; плечо живёт от {MIN_EDGE} повторов и рисуется в преобладающую
+      сторону. Линии гладкие не для красоты: борт самолётной схемы на
+      крейсерских 150 км/ч разворачивается радиусом около 400 метров — на
+      масштабе карты угол физически невозможен, и ломаная была бы враньём
+      о траектории.</p>
+      <p>Данных два вида, и подсказка всегда говорит, чего сколько.
+      Первый — маршруты, которые источник описал сам: «от Анапы через
+      Раевскую на Новороссийск». Второй — волны, восстановленные из нашей
+      базы: борт видят в одном районе, через 3–35 минут в соседнем, и если
+      он мог туда долететь с правдоподобной скоростью (80–260 км/ч при
+      крейсерских 150) без разворота круче 70°, фиксации связываются в
+      трек. Это догадка — но догадка по физике полёта, а не по
+      совпадению имён. Число повторов зависит и от активности каналов
+      региона.</p>
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по
@@ -833,21 +932,27 @@ def build_page(routes: list[dict], transitions: list[dict],
 """
 
 
+def sea_names(connection: sqlite3.Connection) -> set[str]:
+    return {row["name_ru"] for row in connection.execute(
+        "SELECT name_ru FROM zones WHERE source_id LIKE '%-sea'")}
+
+
 def build(connection: sqlite3.Connection) -> int:
     """Собрать corridors.json и dist/marshruty/index.html."""
     routes = load_routes(connection)
-    transitions = load_transitions(connection)
+    tracks = reconstruct_tracks(connection)
     land = Land()
     today = now_utc().astimezone(MSK)
     updated = f"{today.day} {MONTHS[today.month - 1]}, {today:%H:%M} МСК"
 
-    corridors = build_corridors(routes)[:MAX_CARDS]
+    corridors = build_corridors(
+        routes, skip_names=sea_names(connection))[:MAX_CARDS]
     anchors = {(c["start"], c["end"]): f"kor-{i}"
                for i, c in enumerate(corridors)}
-    nodes, edges = build_graph(routes, transitions)
+    nodes, edges = build_graph(routes, tracks)
     graph = export_graph(nodes, edges, land, anchors, {
         "routes": len(routes),
-        "transitions": sum(t["count"] for t in transitions),
+        "tracks": len(tracks),
     })
     data_dir = OUT / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -858,7 +963,7 @@ def build(connection: sqlite3.Connection) -> int:
     directory = OUT / "marshruty"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "index.html").write_text(
-        build_page(routes, transitions, land, updated), encoding="utf-8")
+        build_page(routes, tracks, land, updated, sea_names(connection)), encoding="utf-8")
     return len(corridors)
 
 
