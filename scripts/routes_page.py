@@ -50,10 +50,16 @@ DATA = ROOT / "public" / "data"
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря")
 
-# Коридор попадает в галерею от десяти повторов: единичный маршрут — эпизод,
-# десять — закономерность. Карточек не больше шестидесяти.
-MIN_CORRIDOR = 10
-MAX_CARDS = 60
+# Коридор попадает в галерею от шести повторов: единичный маршрут — эпизод,
+# полдюжины — закономерность. Порог был десять, и город вроде Краснодара в
+# галерею не попадал вовсе: его коридоры собирают по 4-11 повторов против
+# 86 у черноморских. Поиск обязан их находить.
+MIN_CORRIDOR = 6
+# В галерее живут все коридоры выше порога — иначе поиск врёт, показывая
+# «ничего не найдено» там, где данные есть. Сразу видно первые VISIBLE_CARDS,
+# остальные открываются кнопкой или находятся поиском.
+MAX_CARDS = 400
+VISIBLE_CARDS = 60
 # Ребро графа живёт от двух повторов: тройка оставляла север пустым,
 # хотя запуски там почти ежедневно — просто ленты реже повторяются.
 MIN_EDGE = 2
@@ -213,8 +219,16 @@ class Land:
         """
         margin = 60.0
         paths = []
-        for _, ring in self.rings:
+        # Кольца мельче нескольких пикселей в кадре не рисуются: острова и
+        # анклавы на мини-карте всё равно неразличимы, а точек несут много.
+        min_ring = step * 2
+        for (lat0, lon0, lat1, lon1), ring in self.rings:
             if not any(projection.inside(lat, lon) for lon, lat in ring):
+                continue
+            corner_a = projection.xy(lat0, lon0)
+            corner_b = projection.xy(lat1, lon1)
+            if (abs(corner_a[0] - corner_b[0]) < min_ring
+                    and abs(corner_a[1] - corner_b[1]) < min_ring):
                 continue
             previous = None
             parts = []
@@ -785,15 +799,20 @@ def card_svg(corridor: dict, land: Land) -> str:
     bbox = (min(lats) - pad_deg, min(lons) - pad_deg / 0.65,
             max(lats) + pad_deg, max(lons) + pad_deg / 0.65)
     width, height = 280, 170
-    projection = Projection(bbox, width, height, pad=12)
+    # Целые пиксели: 372 карточки на странице, и полузнака после запятой на
+    # каждой координате подложки хватало на лишние сотни килобайт.
+    projection = Projection(bbox, width, height, pad=12, precision=0)
 
-    outline = land.svg_path(projection, step=3.0)
+    # Шаг прорежения крупный намеренно: подложка мини-карты — это узнать
+    # берег и границу, а не разглядеть изгибы. При шаге 3 подложки съедали
+    # 1,3 МБ страницы на 372 карточки — три четверти веса.
+    outline = land.svg_path(projection, step=6.0)
     base = (f'<path d="{outline}" fill="#161d1a" stroke="#333f39" '
             f'stroke-width="0.8" />' if outline else "")
 
     seen: set[str] = set()
     faint = []
-    for route in corridor["routes"][:60]:
+    for route in corridor["routes"][:24]:
         xy = [projection.xy(p[0], p[1]) for p in route["points"]]
         path = flow_path(xy)
         if path in seen:
@@ -858,7 +877,8 @@ def card_html(corridor: dict, land: Land, anchor: str,
             haystack.add(region.lower())
     search = " ".join(sorted(haystack))
     return f"""
-    <figure class="corridor" id="{anchor}" data-q="{escape(search)}">
+    <figure class="corridor" id="{anchor}" data-q="{escape(search)}"
+            data-name="{escape((corridor["start"] + " " + corridor["end"]).lower())}">
       {card_svg(corridor, land)}
       <figcaption>
         <b>{escape(corridor["start"])} → {escape(corridor["end"])}</b>
@@ -991,6 +1011,11 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       .gallery {{ display:grid; gap:22px 18px; margin-top:20px;
                  grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
       figure.corridor[hidden] {{ display:none; }}
+      .more {{ display:block; margin:24px auto 0; padding:11px 22px;
+              border-radius:10px; border:1px solid #2c352f; background:#131a17;
+              color:#dfe6df; font-size:14px; cursor:pointer; }}
+      .more:hover {{ border-color:#3d4a42; }}
+      .more[hidden] {{ display:none; }}
       figure.corridor {{ margin:0; scroll-margin-top:24px; }}
       figure.corridor svg {{ display:block; width:100%; height:auto;
                             border-radius:8px; }}
@@ -1024,15 +1049,17 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       сёла и второстепенные пути.</p>
 
       <h2>Устойчивые коридоры</h2>
-      <p>Пути между населёнными пунктами, повторившиеся не меньше
-      {MIN_CORRIDOR} раз.</p>
+      <p>{len(corridors)} путей между населёнными пунктами, каждый
+      повторился не меньше {MIN_CORRIDOR} раз.</p>
       <div class="finder">
         <input id="finder" type="search" autocomplete="off"
-               placeholder="Найти город, район или регион — например, Крым"
+               placeholder="Найти город, район или регион — например, Краснодар"
                aria-label="Поиск по коридорам" />
         <span id="finder-count"></span>
       </div>
       <div class="gallery">{cards}</div>
+      <button id="finder-more" class="more" type="button">
+        Показать все {len(corridors)}</button>
 
       <h2>Откуда эти линии</h2>
       <p><b style="color:#f0475a">Красные</b> — пути, которые описал сам

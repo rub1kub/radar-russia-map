@@ -383,27 +383,49 @@ function render(target: HTMLElement, graph: Graph): void {
 function initFinder(): void {
   const input = document.getElementById("finder") as HTMLInputElement | null;
   const counter = document.getElementById("finder-count");
+  const more = document.getElementById("finder-more");
   if (!input) return;
+  const gallery = document.querySelector(".gallery");
   const cards = Array.from(
     document.querySelectorAll<HTMLElement>("figure.corridor")
   );
+  /** Сколько карточек видно без поиска: остальные ждут кнопки. */
+  const VISIBLE = 60;
+  let expanded = false;
 
   const apply = () => {
     const query = input.value.trim().toLowerCase();
     let shown = 0;
     for (const card of cards) {
       const hit = !query || (card.dataset.q ?? "").includes(query);
-      card.hidden = !hit;
+      // Без запроса показываем первые шестьдесят; поиск идёт по всем.
+      card.hidden = !hit || (!query && !expanded && shown >= VISIBLE);
       if (hit) shown += 1;
     }
     if (counter) {
-      counter.textContent = query
-        ? `${shown} из ${cards.length}`
-        : "";
+      counter.textContent = query ? `${shown} из ${cards.length}` : "";
+    }
+    if (more) {
+      more.hidden = Boolean(query) || expanded || cards.length <= VISIBLE;
+    }
+    // Совпадение по самому названию коридора важнее совпадения по региону:
+    // на запрос «Краснодар» сначала идут пути в Краснодар, а потом всё
+    // остальное в Краснодарском крае.
+    if (query && gallery) {
+      const exact = cards.filter(
+        (card) => !card.hidden && (card.dataset.name ?? "").includes(query)
+      );
+      for (let index = exact.length - 1; index >= 0; index -= 1) {
+        gallery.prepend(exact[index]);
+      }
     }
   };
 
   input.addEventListener("input", apply);
+  more?.addEventListener("click", () => {
+    expanded = true;
+    apply();
+  });
   apply();
 }
 
