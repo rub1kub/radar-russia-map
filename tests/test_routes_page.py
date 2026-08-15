@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import scripts.routes_page as rp
 
 
@@ -10,6 +12,11 @@ def _route(points, posted="2026-08-10T22:00:00+00:00", threat="uav"):
 ANAPA = (44.89, 37.32, "Анапа")
 RAEVSKAYA = (44.83, 37.56, "Раевская")
 NOVOROSSIYSK = (44.72, 37.77, "Новороссийск")
+
+
+@pytest.fixture(scope="module")
+def land() -> rp.Land:
+    return rp.Land()
 
 
 def test_corridors_group_by_endpoints_and_respect_threshold():
@@ -36,17 +43,6 @@ def test_corridor_night_share_uses_moscow_clock():
     assert corridor["night_share"] == 80
 
 
-def test_segments_merge_repeated_legs():
-    routes = [_route([ANAPA, RAEVSKAYA, NOVOROSSIYSK])] * 3
-    segments = rp.build_segments(routes)
-    # Два плеча, каждое повторено трижды; единичных нет.
-    assert sorted(s[4] for s in segments) == [3, 3]
-
-
-def test_single_legs_stay_off_the_hero_map():
-    assert rp.build_segments([_route([ANAPA, NOVOROSSIYSK])]) == []
-
-
 def test_projection_maps_bbox_corners():
     projection = rp.Projection((44.0, 37.0, 46.0, 40.0), 300, 200)
     x0, y0 = projection.xy(46.0, 37.0)   # северо-запад -> левый верх
@@ -55,12 +51,37 @@ def test_projection_maps_bbox_corners():
     assert y1 > y0
 
 
-def test_page_is_a_gallery_with_canonical_and_disclaimer():
+def test_flow_path_smooths_kinked_chains():
+    path = rp.flow_path([(0.0, 0.0), (50.0, 40.0), (100.0, 0.0)])
+    # Излом сглажен квадратичной кривой через середину отрезка.
+    assert "Q50.0 40.0 75.0 20.0" in path
+    # Дуга по управляющей точке — один сегмент Q.
+    arc = rp.flow_path([(0.0, 0.0), (100.0, 0.0)], (50.0, 30.0))
+    assert arc == "M0.0 0.0Q50.0 30.0 100.0 0.0"
+
+
+def test_coastal_corridor_bends_over_the_sea(land):
+    if not land.rings:
+        pytest.skip("regions.json недоступен")
+    # Туапсе -> Сочи: суша строго к северо-востоку, море к юго-западу.
+    control = land.sea_control((44.10, 39.08), (43.60, 39.73))
+    assert control is not None
+    assert not land.is_land(*control)
+    # Сухопутное плечо в глубине области дугу не получает.
+    assert land.sea_control((52.60, 36.0), (52.97, 37.05)) is None
+
+
+def test_page_is_a_gallery_with_canonical_and_disclaimer(land):
     routes = [_route([ANAPA, RAEVSKAYA, NOVOROSSIYSK])] * 12
-    html = rp.build_page(routes, "15 августа, 12:00 МСК")
+    transitions = [{
+        "a": (44.89, 37.32), "b": (44.72, 37.77),
+        "start": "Анапа", "end": "Геленджик", "count": 7,
+    }]
+    html = rp.build_page(routes, transitions, land, "15 августа, 12:00 МСК")
 
     assert 'rel="canonical" href="https://tihoenebo.com/marshruty/"' in html
     assert "Анапа → Новороссийск" in html
     assert html.count("<svg") >= 2  # общая карта и хотя бы одна карточка
-    assert "достраивает" in html
+    assert "восстановлен по фиксациям" in html   # легенда двух слоёв
+    assert "hero-zoom" in html                   # управление приближением
     assert "может опаздывать и ошибаться" in html

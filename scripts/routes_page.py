@@ -1,31 +1,34 @@
-"""Страница «Маршруты БПЛА»: устойчивые коридоры из исторических маршрутов.
+"""Страница «Маршруты БПЛА»: устойчивые коридоры из исторических данных.
 
     PYTHONPATH=.:ingest ingest/.venv/bin/python -m scripts.routes_page
 
-За три месяца в таблице routes накопились тысячи маршрутов, названных
-самими сообщениями («от Анапы через Раевскую на Новороссийск»), и
-большинство из них повторяется: коридор Каланчак → Армянск живёт
-месяцами. Страница показывает это честно — общую карту всех плеч и
-галерею устойчивых коридоров с их числами.
+Два источника, честно разделённые на карте:
 
-Ничего не вычисляется и не досочиняется: каждый маршрут — пересказ
-одного сообщения, прошедший фильтры pipeline/routes.py (длина плеча,
-извилистость). Агрегация лишь считает, как часто источники называют
-один и тот же путь.
+  • именованные маршруты — источник сам описал путь («от Анапы через
+    Раевскую на Новороссийск»), таблица routes; рисуются сплошным;
+  • восстановленные переходы — две точечные фиксации подряд в собственной
+    базе событий (вторая в пределах 50 минут и 130 км от первой); каждая
+    связка — догадка, но связка, повторившаяся десятки раз за месяцы, —
+    коридор. Рисуются пунктиром, и легенда говорит об этом прямо.
 
-Вызывается из scripts.seo_pages при каждой пересборке посадочных, то
-есть ежечасно по таймеру и при выкатке.
+Прибрежные коридоры (Туапсе → Сочи) борт летит над морем, а не через
+города: сторона выгиба дуги выбирается проверкой «какая сторона — не
+суша» по полигонам субъектов.
+
+Вызывается из scripts.seo_pages при каждой пересборке посадочных —
+ежечасно по таймеру и при выкатке.
 """
 
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import sqlite3
 import sys
 from collections import Counter, defaultdict
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -43,18 +46,24 @@ MONTHS = ("января", "февраля", "марта", "апреля", "ма�
           "августа", "сентября", "октября", "ноября", "декабря")
 
 # Коридор попадает в галерею от десяти повторов: единичный маршрут — эпизод,
-# десять — закономерность. Карточек не больше шестидесяти: страница остаётся
-# галереей, а не свалкой.
+# десять — закономерность. Карточек не больше шестидесяти.
 MIN_CORRIDOR = 10
 MAX_CARDS = 60
-# На общую карту не идут плечи, встреченные один раз: их сотни, и они
-# превращают картину в шум. Повторившееся плечо — уже дорога.
-MIN_SEGMENT = 2
+# На общую карту именованный коридор идёт от пяти повторов, восстановленный
+# переход — тоже от пяти: ниже начинается сыпь единичных догадок.
+HERO_MIN_FLOW = 5
+MIN_TRANSITION = 5
+# Окно склейки двух фиксаций в переход: ближе трёх минут — это одно и то же
+# сообщение из двух лент, дальше пятидесяти — уже другой борт.
+TRANSITION_MINUTES = (3, 50)
+TRANSITION_KM = (8, 130)
 
-# Театр событий: западная часть, где живут почти все маршруты. Единичные
-# дальние (Урал) в галерее остаются, на общей карте — за кадром.
+# Театр событий: западная часть, где живут почти все маршруты.
 HERO_BBOX = (42.8, 27.5, 59.5, 55.0)  # lat0, lon0, lat1, lon1
-HERO_W, HERO_H = 960, 720
+HERO_W, HERO_H = 1120, 840
+
+# Крупные города для ориентировки: точка и подпись, без событийного смысла.
+CITY_MIN_POPULATION = 350_000
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:
@@ -73,12 +82,14 @@ def day_word(iso: str) -> str:
     return f"{stamp.day} {MONTHS[stamp.month - 1]}"
 
 
-class Projection:
-    """Равнопромежуточная проекция в пиксели SVG.
+def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    dx = (b[1] - a[1]) * 111.0 * math.cos(math.radians((a[0] + b[0]) / 2))
+    dy = (b[0] - a[0]) * 111.0
+    return math.hypot(dx, dy)
 
-    Косинус середины широты выравнивает масштаб по осям: без него юг
-    растянут, и Крым выглядит вдвое шире Брянска.
-    """
+
+class Projection:
+    """Равнопромежуточная проекция в пиксели SVG."""
 
     def __init__(self, bbox: tuple[float, float, float, float],
                  width: int, height: int, pad: float = 0.0,
@@ -97,8 +108,6 @@ class Projection:
     def xy(self, lat: float, lon: float) -> tuple[float, float]:
         x = self.pad + (lon - self.lon0) * self.cos * self.scale
         y = self.pad + (self.lat1 - lat) * self.scale
-        # На большой карте пиксельной точности хватает: ползнака после
-        # запятой на полутора тысячах линий — лишние сто килобайт.
         if self.precision == 0:
             return int(round(x)), int(round(y))
         return round(x, self.precision), round(y, self.precision)
@@ -107,11 +116,88 @@ class Projection:
         return self.lat0 <= lat <= self.lat1 and self.lon0 <= lon <= self.lon1
 
 
+class Land:
+    """Полигоны субъектов: и подложка карты, и ответ на вопрос «это суша?».
+
+    Второе нужно прибрежным коридорам: «Туапсе — Сочи» борт идёт над морем,
+    и дуга должна выгибаться в сторону воды, а не вглубь берега.
+    """
+
+    def __init__(self) -> None:
+        self.rings: list[tuple[tuple[float, float, float, float], list]] = []
+        self.regions: list[tuple[str, float, float]] = []
+        try:
+            collection = json.loads(
+                (DATA / "regions.json").read_text(encoding="utf-8"))
+        except OSError:
+            return
+        for feature in collection.get("features", []):
+            geometry = feature.get("geometry") or {}
+            name = (feature.get("properties") or {}).get("name") or ""
+            polygons = (geometry.get("coordinates", [])
+                        if geometry.get("type") == "MultiPolygon"
+                        else [geometry.get("coordinates", [])])
+            largest: list | None = None
+            for polygon in polygons:
+                for ring in polygon:
+                    if len(ring) < 4:
+                        continue
+                    lons = [p[0] for p in ring]
+                    lats = [p[1] for p in ring]
+                    self.rings.append(
+                        ((min(lats), min(lons), max(lats), max(lons)), ring))
+                    if largest is None or len(ring) > len(largest):
+                        largest = ring
+            if name and largest:
+                self.regions.append((
+                    name,
+                    sum(p[1] for p in largest) / len(largest),
+                    sum(p[0] for p in largest) / len(largest),
+                ))
+
+    def is_land(self, lat: float, lon: float) -> bool:
+        for (lat0, lon0, lat1, lon1), ring in self.rings:
+            if not (lat0 <= lat <= lat1 and lon0 <= lon <= lon1):
+                continue
+            hit = False
+            for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+                if (ay > lat) != (by > lat):
+                    cross = (bx - ax) * (lat - ay) / (by - ay) + ax
+                    if lon < cross:
+                        hit = not hit
+            if hit:
+                return True
+        return False
+
+    def sea_control(self, a: tuple[float, float],
+                    b: tuple[float, float]) -> tuple[float, float] | None:
+        """Точка над водой сбоку от середины плеча — управляющая для дуги.
+
+        Кандидаты — перпендикуляры в обе стороны; берётся тот, что не на
+        суше. Если оба на суше (глубинный коридор) — дуга не нужна.
+        """
+        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        span = _km(a, b)
+        if span < 20:
+            return None
+        # Перпендикуляр в градусах: поперёк направления, длиной ~18% плеча.
+        dlat = b[0] - a[0]
+        dlon = (b[1] - a[1]) * math.cos(math.radians(mid[0]))
+        norm = math.hypot(dlat, dlon) or 1.0
+        k = 0.18 * (span / 111.0)
+        for side in (1, -1):
+            candidate = (mid[0] + side * (-dlon) / norm * k,
+                         mid[1] + side * dlat / norm * k
+                         / math.cos(math.radians(mid[0])))
+            if not self.is_land(*candidate):
+                return candidate
+        return None
+
+
 def load_routes(connection: sqlite3.Connection) -> list[dict]:
-    rows = connection.execute(
-        "SELECT points, posted_at, threat_type FROM routes").fetchall()
     routes = []
-    for row in rows:
+    for row in connection.execute(
+            "SELECT points, posted_at, threat_type FROM routes"):
         points = json.loads(row["points"])
         if len(points) < 2:
             continue
@@ -123,12 +209,60 @@ def load_routes(connection: sqlite3.Connection) -> list[dict]:
     return routes
 
 
-def build_corridors(routes: list[dict]) -> list[dict]:
-    """Коридор — все маршруты с одинаковыми началом и концом.
+def load_transitions(connection: sqlite3.Connection) -> list[dict]:
+    """Переходы, восстановленные из собственной базы фиксаций.
 
-    Имена концов уже нормализованы геокодером, поэтому группировка по ним
-    честнее координатной: «Анапа» из разных сообщений — одна точка.
+    Каждому точечному тяжёлому событию ищется один ближайший предшественник
+    в окне времени и расстояния — «фиксация была там, потом её увидели
+    здесь». Одна связка — догадка; в счёт идут только связки, повторившиеся
+    MIN_TRANSITION раз за всю историю. Пары «город — его же округ»
+    отбрасываются: это одна территория на двух уровнях зон.
     """
+    rows = connection.execute(
+        """SELECT e.zone_id, e.lat, e.lon, e.first_seen_at, z.name_ru
+           FROM events e JOIN zones z ON z.id = e.zone_id
+           WHERE e.severity >= 8 AND z.level != 'region'
+             AND e.lat IS NOT NULL
+           ORDER BY e.first_seen_at""").fetchall()
+    events = [(datetime.fromisoformat(r["first_seen_at"]).timestamp(),
+               r["lat"], r["lon"], r["zone_id"], r["name_ru"]) for r in rows]
+    times = [e[0] for e in events]
+    low_s, high_s = TRANSITION_MINUTES[0] * 60, TRANSITION_MINUTES[1] * 60
+
+    counts: Counter = Counter()
+    coords: dict = {}
+    for stamp, lat, lon, zone, name in events:
+        lo = bisect.bisect_left(times, stamp - high_s)
+        hi = bisect.bisect_left(times, stamp - low_s)
+        best = None
+        for a in events[lo:hi]:
+            if a[3] == zone:
+                continue
+            distance = _km((a[1], a[2]), (lat, lon))
+            if not (TRANSITION_KM[0] <= distance <= TRANSITION_KM[1]):
+                continue
+            score = distance + (stamp - a[0]) / 60 * 0.5
+            if best is None or score < best[0]:
+                best = (score, a)
+        if best is None:
+            continue
+        a = best[1]
+        start, end = short_name(a[4]), short_name(name)
+        if start == end:
+            continue
+        key = (a[3], zone)
+        counts[key] += 1
+        coords.setdefault(key, ((a[1], a[2]), (lat, lon), start, end))
+    return [{
+        "a": coords[key][0], "b": coords[key][1],
+        "start": coords[key][2], "end": coords[key][3],
+        "count": count,
+    } for key, count in counts.items() if count >= MIN_TRANSITION]
+
+
+def build_corridors(routes: list[dict],
+                    minimum: int = MIN_CORRIDOR) -> list[dict]:
+    """Коридор — все маршруты с одинаковыми началом и концом."""
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for route in routes:
         key = (route["points"][0][2], route["points"][-1][2])
@@ -136,7 +270,7 @@ def build_corridors(routes: list[dict]) -> list[dict]:
 
     corridors = []
     for (start, end), items in grouped.items():
-        if len(items) < MIN_CORRIDOR or start == end:
+        if len(items) < minimum or start == end:
             continue
         stamps = sorted(item["posted_at"] for item in items)
         hours = Counter(
@@ -145,7 +279,6 @@ def build_corridors(routes: list[dict]) -> list[dict]:
         night = sum(v for h, v in hours.items() if h >= 21 or h < 6)
         threats = Counter(item["threat"] for item in items)
         months = sorted({stamp[:7] for stamp in stamps})
-        # Самая частая цепочка точек — лицо коридора на карточке.
         variants = Counter(
             tuple(p[2] for p in item["points"]) for item in items)
         face_names = variants.most_common(1)[0][0]
@@ -162,152 +295,184 @@ def build_corridors(routes: list[dict]) -> list[dict]:
             "routes": items,
         })
     corridors.sort(key=lambda c: (-c["count"], c["start"]))
-    return corridors[:MAX_CARDS]
+    return corridors
 
 
-def build_segments(routes: list[dict]) -> list[tuple[float, float, float, float, int]]:
-    """Плечи всех маршрутов, слитые по округлённым концам.
+def flow_path(points_xy: list[tuple[float, float]],
+              control_xy: tuple[float, float] | None = None) -> str:
+    """Гладкий путь: дуга по управляющей точке или сглаженная ломаная.
 
-    Округление до 0.05° (~4 км) склеивает один и тот же перелёт из разных
-    сообщений; счёт повторов управляет толщиной линии.
+    Ломаная сглаживается квадратичными кривыми через середины отрезков —
+    углы уходят, путь остаётся тем же. Именно изломы делали стрелки
+    «рваными».
     """
-    counts: Counter = Counter()
-    coords: dict = {}
-    for route in routes:
-        for a, b in zip(route["points"], route["points"][1:]):
-            key = (round(a[0] / 0.05), round(a[1] / 0.05),
-                   round(b[0] / 0.05), round(b[1] / 0.05))
-            counts[key] += 1
-            coords.setdefault(key, (a[0], a[1], b[0], b[1]))
-    return [(*coords[key], count) for key, count in counts.items()
-            if count >= MIN_SEGMENT]
+    (x0, y0) = points_xy[0]
+    if control_xy is not None and len(points_xy) == 2:
+        (cx, cy), (x1, y1) = control_xy, points_xy[1]
+        return f"M{x0} {y0}Q{cx} {cy} {x1} {y1}"
+    if len(points_xy) == 2:
+        (x1, y1) = points_xy[1]
+        return f"M{x0} {y0}L{x1} {y1}"
+    parts = [f"M{x0} {y0}"]
+    for index in range(1, len(points_xy) - 1):
+        (ax, ay), (bx, by) = points_xy[index], points_xy[index + 1]
+        mx, my = round((ax + bx) / 2, 1), round((ay + by) / 2, 1)
+        parts.append(f"Q{ax} {ay} {mx} {my}")
+    (x1, y1) = points_xy[-1]
+    parts.append(f"L{x1} {y1}")
+    return "".join(parts)
 
 
-def region_paths(projection: Projection) -> str:
-    """Подложка: контуры субъектов в кадре, прорежённые до читаемости."""
-    try:
-        collection = json.loads(
-            (DATA / "regions.json").read_text(encoding="utf-8"))
-    except OSError:
-        return ""
-    paths = []
-    for feature in collection.get("features", []):
-        geometry = feature.get("geometry") or {}
-        polygons = (geometry.get("coordinates", [])
-                    if geometry.get("type") == "MultiPolygon"
-                    else [geometry.get("coordinates", [])])
-        for polygon in polygons:
-            for ring in polygon:
-                if not ring:
-                    continue
-                # Кольцо целиком за кадром не рисуется.
-                if not any(projection.inside(lat, lon) for lon, lat in ring):
-                    continue
-                previous = None
-                parts = []
-                for lon, lat in ring:
-                    x, y = projection.xy(lat, lon)
-                    # Прореживание: точки ближе трёх пикселей не двигают
-                    # контур, а весят как все остальные.
-                    if previous and abs(x - previous[0]) < 3 and abs(y - previous[1]) < 3:
-                        continue
-                    parts.append(f"{'M' if previous is None else 'L'}{x} {y}")
-                    previous = (x, y)
-                if len(parts) > 2:
-                    paths.append("".join(parts) + "Z")
-    return (f'<path d="{" ".join(paths)}" fill="#131917" stroke="#2a332e" '
-            f'stroke-width="0.6" />') if paths else ""
+def arrow_head(tail: tuple[float, float], tip: tuple[float, float],
+               size: float, color: str) -> str:
+    """Заливной наконечник, посаженный по направлению последнего отрезка."""
+    angle = math.atan2(tip[1] - tail[1], tip[0] - tail[0])
+    left = (tip[0] - size * math.cos(angle - 0.42),
+            tip[1] - size * math.sin(angle - 0.42))
+    right = (tip[0] - size * math.cos(angle + 0.42),
+             tip[1] - size * math.sin(angle + 0.42))
+    return (f'<path d="M{round(left[0], 1)} {round(left[1], 1)} '
+            f'L{tip[0]} {tip[1]} L{round(right[0], 1)} {round(right[1], 1)} '
+            f'Z" fill="{color}" />')
 
 
-def hero_svg(routes: list[dict], corridors: list[dict]) -> str:
-    """Общая карта: все повторившиеся плечи, поверх — стрелки коридоров."""
-    projection = Projection(HERO_BBOX, HERO_W, HERO_H, pad=8, precision=0)
-    segments = [s for s in build_segments(routes)
-                if projection.inside(s[0], s[1]) and projection.inside(s[2], s[3])]
-    peak = max((s[4] for s in segments), default=1)
+def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
+    """Общая карта: подложка с подписями, поверх — потоки двух слоёв."""
+    projection = Projection(HERO_BBOX, HERO_W, HERO_H, pad=10, precision=0)
 
-    lines = []
-    for lat0, lon0, lat1, lon1, count in sorted(segments, key=lambda s: s[4]):
-        x0, y0 = projection.xy(lat0, lon0)
-        x1, y1 = projection.xy(lat1, lon1)
-        share = math.log1p(count) / math.log1p(peak)
-        width = round(0.8 + 3.2 * share, 1)
-        opacity = round(0.25 + 0.65 * share, 2)
-        lines.append(
-            f'<line x1="{x0}" y1="{y0}" x2="{x1}" y2="{y1}" '
-            f'stroke-width="{width}" stroke-opacity="{opacity}" />')
-
-    # Стрелки — только у самых частых коридоров: направление читается, а
-    # карта не зарастает наконечниками.
-    heads = []
-    for corridor in corridors[:12]:
-        tail, head = corridor["face"][-2], corridor["face"][-1]
-        if not (projection.inside(head[0], head[1])
-                and projection.inside(tail[0], tail[1])):
+    # Подложка: контуры субъектов, прорежённые до пикселя.
+    base_paths = []
+    for _, ring_data in land.rings:
+        if not any(projection.inside(lat, lon) for lon, lat in ring_data):
             continue
-        x0, y0 = projection.xy(tail[0], tail[1])
-        x1, y1 = projection.xy(head[0], head[1])
-        angle = math.atan2(y1 - y0, x1 - x0)
-        size = 9.0
-        left = (x1 - size * math.cos(angle - 0.45),
-                y1 - size * math.sin(angle - 0.45))
-        right = (x1 - size * math.cos(angle + 0.45),
-                 y1 - size * math.sin(angle + 0.45))
-        heads.append(
-            f'<path d="M{round(left[0],1)} {round(left[1],1)} L{x1} {y1} '
-            f'L{round(right[0],1)} {round(right[1],1)}" stroke="#ff8592" '
-            f'stroke-width="2" fill="none" stroke-linejoin="round" />')
+        previous = None
+        parts = []
+        for lon, lat in ring_data:
+            x, y = projection.xy(lat, lon)
+            if previous and abs(x - previous[0]) < 3 and abs(y - previous[1]) < 3:
+                continue
+            parts.append(f"{'M' if previous is None else 'L'}{x} {y}")
+            previous = (x, y)
+        if len(parts) > 2:
+            base_paths.append("".join(parts) + "Z")
+    base = (f'<path d="{" ".join(base_paths)}" fill="#151b18" '
+            f'stroke="#28322c" stroke-width="0.7" />') if base_paths else ""
+
+    # Подписи субъектов — тихим цветом, только внутри кадра. Группа
+    # с классом: при зуме JS контр-масштабирует кегль, чтобы подпись
+    # не раздувалась вместе с картой.
+    region_labels = []
+    for name, lat, lon in land.regions:
+        if not projection.inside(lat, lon):
+            continue
+        x, y = projection.xy(lat, lon)
+        region_labels.append(
+            f'<text x="{x}" y="{y}" text-anchor="middle">'
+            f'{escape(short_name(name))}</text>')
+
+    # Именованные коридоры — сплошные дуги.
+    named = build_corridors(routes, minimum=HERO_MIN_FLOW)
+    named_keys = {(c["start"], c["end"]) for c in named}
+    peak = max((c["count"] for c in named), default=1)
+    solid = []
+    for corridor in sorted(named, key=lambda c: c["count"]):
+        chain = [(p[0], p[1]) for p in corridor["face"]]
+        if not all(projection.inside(lat, lon) for lat, lon in chain):
+            continue
+        share = math.log1p(corridor["count"]) / math.log1p(peak)
+        width = round(1.2 + 4.6 * share, 1)
+        opacity = round(0.45 + 0.5 * share, 2)
+        control = land.sea_control(chain[0], chain[-1]) if len(chain) == 2 else None
+        xy = [projection.xy(lat, lon) for lat, lon in chain]
+        control_xy = projection.xy(*control) if control else None
+        tail_xy = control_xy if control_xy else xy[-2]
+        solid.append(
+            f'<path d="{flow_path(xy, control_xy)}" fill="none" '
+            f'stroke="#e9404f" stroke-width="{width}" '
+            f'stroke-opacity="{opacity}" stroke-linecap="round" '
+            f'stroke-linejoin="round" />'
+            + arrow_head(tail_xy, xy[-1], 3.2 + width * 1.15, "#f77683"))
+
+    # Восстановленные переходы — пунктирные дуги другим цветом. Пара,
+    # уже названная источниками, второй раз не рисуется.
+    dashed = []
+    peak_t = max((t["count"] for t in transitions), default=1)
+    for transition in sorted(transitions, key=lambda t: t["count"]):
+        if (transition["start"], transition["end"]) in named_keys:
+            continue
+        a, b = transition["a"], transition["b"]
+        if not (projection.inside(*a) and projection.inside(*b)):
+            continue
+        share = math.log1p(transition["count"]) / math.log1p(peak_t)
+        width = round(1.1 + 3.4 * share, 1)
+        control = land.sea_control(a, b)
+        xy = [projection.xy(*a), projection.xy(*b)]
+        control_xy = projection.xy(*control) if control else None
+        tail_xy = control_xy if control_xy else xy[0]
+        dashed.append(
+            f'<path d="{flow_path(xy, control_xy)}" fill="none" '
+            f'stroke="#f7a23b" stroke-width="{width}" stroke-opacity="0.8" '
+            f'stroke-dasharray="7 5" stroke-linecap="round" />'
+            + arrow_head(tail_xy, xy[1], 3 + width * 1.15, "#f0b46a"))
+
+    # Города-ориентиры. Тоже в группе — кегль контр-масштабируется при зуме.
+    cities = []
+    for name, lat, lon in getattr(land, "cities", []):
+        if not projection.inside(lat, lon):
+            continue
+        x, y = projection.xy(lat, lon)
+        cities.append(
+            f'<circle cx="{x}" cy="{y}" r="2.4" fill="#5b6a62" />'
+            f'<text x="{x + 6}" y="{y + 4}">{escape(name)}</text>')
 
     return (f'<svg viewBox="0 0 {HERO_W} {HERO_H}" role="img" '
             f'aria-label="Карта повторяющихся маршрутов БПЛА" '
             f'xmlns="http://www.w3.org/2000/svg">'
-            f'<rect width="{HERO_W}" height="{HERO_H}" fill="#0b0f0e" />'
-            + region_paths(projection)
-            + f'<g stroke="#e93e4e" stroke-linecap="round">{"".join(lines)}</g>'
-            + "".join(heads) + "</svg>")
+            f'<rect x="-2000" y="-2000" width="5000" height="5000" fill="#0a0e0d" />'
+            + base
+            + f'<g class="map-labels" fill="#46524b" font-size="12">'
+              f'{"".join(region_labels)}</g>'
+            + f'<g class="map-cities" fill="#77857c" font-size="12">'
+              f'{"".join(cities)}</g>'
+            + "".join(dashed) + "".join(solid) + "</svg>")
 
 
-def card_svg(corridor: dict) -> str:
-    """Мини-карта коридора: все его маршруты бледно, лицо — стрелкой."""
+def card_svg(corridor: dict, land: Land) -> str:
+    """Мини-карта коридора: бледные варианты, лицо — гладкой стрелкой."""
     lats = [p[0] for r in corridor["routes"] for p in r["points"]]
     lons = [p[1] for r in corridor["routes"] for p in r["points"]]
     spread = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.65, 0.2)
-    pad_deg = spread * 0.22
+    pad_deg = spread * 0.24
     bbox = (min(lats) - pad_deg, min(lons) - pad_deg / 0.65,
             max(lats) + pad_deg, max(lons) + pad_deg / 0.65)
     width, height = 280, 170
-    projection = Projection(bbox, width, height, pad=10)
+    projection = Projection(bbox, width, height, pad=12)
 
-    faint = []
-    # Одинаковые цепочки дают одинаковые линии — рисуем каждую один раз.
     seen: set[str] = set()
+    faint = []
     for route in corridor["routes"][:60]:
-        points = " ".join(
-            f"{x},{y}" for x, y in
-            (projection.xy(p[0], p[1]) for p in route["points"]))
-        if points in seen:
+        xy = [projection.xy(p[0], p[1]) for p in route["points"]]
+        path = flow_path(xy)
+        if path in seen:
             continue
-        seen.add(points)
-        faint.append(f'<polyline points="{points}" />')
+        seen.add(path)
+        faint.append(f'<path d="{path}" />')
 
     face = corridor["face"]
-    face_xy = [projection.xy(p[0], p[1]) for p in face]
-    face_line = " ".join(f"{x},{y}" for x, y in face_xy)
-    (x0, y0), (x1, y1) = face_xy[-2], face_xy[-1]
-    angle = math.atan2(y1 - y0, x1 - x0)
-    size = 8.0
-    left = (x1 - size * math.cos(angle - 0.45), y1 - size * math.sin(angle - 0.45))
-    right = (x1 - size * math.cos(angle + 0.45), y1 - size * math.sin(angle + 0.45))
+    chain = [(p[0], p[1]) for p in face]
+    control = land.sea_control(chain[0], chain[-1]) if len(chain) == 2 else None
+    face_xy = [projection.xy(lat, lon) for lat, lon in chain]
+    control_xy = projection.xy(*control) if control else None
+    tail_xy = control_xy if control_xy else face_xy[-2]
 
     labels = []
-    for (x, y), name, anchor in ((face_xy[0], corridor["start"], "start"),
-                                 (face_xy[-1], corridor["end"], "end")):
-        # Подпись не должна вылезать за кадр — прижимается к своему краю.
+    for (x, y), name, kind in ((face_xy[0], corridor["start"], "start"),
+                               (face_xy[-1], corridor["end"], "end")):
         align = "start" if x < width / 2 else "end"
-        ty = y - 7 if y > 24 else y + 14
+        ty = y - 8 if y > 26 else y + 16
         labels.append(
             f'<circle cx="{x}" cy="{y}" r="3" '
-            f'fill="{"#ff8592" if anchor == "end" else "#9fd4b0"}" />'
+            f'fill="{"#ff8d97" if kind == "end" else "#9fd4b0"}" />'
             f'<text x="{x}" y="{ty}" text-anchor="{align}" fill="#dfe6df" '
             f'font-size="11">{escape(name)}</text>')
 
@@ -315,14 +480,12 @@ def card_svg(corridor: dict) -> str:
             f'aria-label="Коридор {escape(corridor["start"])} — '
             f'{escape(corridor["end"])}" xmlns="http://www.w3.org/2000/svg">'
             f'<rect width="{width}" height="{height}" fill="#0e1311" rx="8" />'
-            + f'<g fill="none" stroke="#e93e4e" stroke-opacity="0.14" '
+            + f'<g fill="none" stroke="#e9404f" stroke-opacity="0.13" '
               f'stroke-width="1.6" stroke-linecap="round">{"".join(faint)}</g>'
-            + f'<polyline points="{face_line}" fill="none" stroke="#e93e4e" '
-              f'stroke-width="2.4" stroke-linecap="round" '
+            + f'<path d="{flow_path(face_xy, control_xy)}" fill="none" '
+              f'stroke="#e9404f" stroke-width="2.6" stroke-linecap="round" '
               f'stroke-linejoin="round" />'
-            + f'<path d="M{round(left[0],1)} {round(left[1],1)} L{x1} {y1} '
-              f'L{round(right[0],1)} {round(right[1],1)}" stroke="#ff8592" '
-              f'stroke-width="2.2" fill="none" stroke-linejoin="round" />'
+            + arrow_head(tail_xy, face_xy[-1], 9, "#ff8d97")
             + "".join(labels) + "</svg>")
 
 
@@ -330,7 +493,7 @@ THREAT_WORDS = {"uav": "БПЛА", "fpv": "FPV", "rocket": "ракеты",
                 "kab": "КАБ", "bek": "БЭК", "aviation": "авиация"}
 
 
-def card_html(corridor: dict) -> str:
+def card_html(corridor: dict, land: Land) -> str:
     threat_keys = [k for k, _ in corridor["threats"].most_common(2)
                    if k != "unknown"]
     threats = ", ".join(THREAT_WORDS.get(k, k) for k in threat_keys) or "БПЛА"
@@ -339,7 +502,7 @@ def card_html(corridor: dict) -> str:
                  if months > 1 else "в этом месяце")
     return f"""
     <figure class="corridor">
-      {card_svg(corridor)}
+      {card_svg(corridor, land)}
       <figcaption>
         <b>{escape(corridor["start"])} → {escape(corridor["end"])}</b>
         <span>{corridor["count"]} {plural(corridor["count"], "маршрут", "маршрута", "маршрутов")}
@@ -349,8 +512,67 @@ def card_html(corridor: dict) -> str:
     </figure>"""
 
 
-def build_page(routes: list[dict], updated: str) -> str:
-    corridors = build_corridors(routes)
+PANZOOM_JS = """
+(function () {
+  var box = document.querySelector(".hero");
+  var svg = box.querySelector("svg");
+  var W = %(w)d, H = %(h)d;
+  var vb = [0, 0, W, H];
+  var labelGroups = svg.querySelectorAll(".map-labels, .map-cities");
+  function apply() {
+    svg.setAttribute("viewBox", vb.join(" "));
+    // Подписи не должны раздуваться вместе с картой: кегль в юнитах SVG
+    // уменьшается пропорционально приближению — на экране размер стоит.
+    var scale = vb[2] / W;
+    labelGroups.forEach(function (g) {
+      g.setAttribute("font-size", (12 * scale).toFixed(2));
+    });
+  }
+  function clamp() {
+    vb[2] = Math.min(W, Math.max(W / 14, vb[2]));
+    vb[3] = vb[2] * H / W;
+    vb[0] = Math.min(W - vb[2], Math.max(0, vb[0]));
+    vb[1] = Math.min(H - vb[3], Math.max(0, vb[1]));
+  }
+  function zoom(factor, cx, cy) {
+    var mx = vb[0] + cx * vb[2], my = vb[1] + cy * vb[3];
+    vb[2] *= factor; vb[3] *= factor;
+    vb[0] = mx - cx * vb[2]; vb[1] = my - cy * vb[3];
+    clamp(); apply();
+  }
+  box.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var r = svg.getBoundingClientRect();
+    zoom(e.deltaY < 0 ? 0.82 : 1 / 0.82,
+         (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+  }, { passive: false });
+  var drag = null;
+  box.addEventListener("pointerdown", function (e) {
+    drag = [e.clientX, e.clientY]; box.setPointerCapture(e.pointerId);
+  });
+  box.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    var r = svg.getBoundingClientRect();
+    vb[0] -= (e.clientX - drag[0]) / r.width * vb[2];
+    vb[1] -= (e.clientY - drag[1]) / r.height * vb[3];
+    drag = [e.clientX, e.clientY]; clamp(); apply();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (n) {
+    box.addEventListener(n, function () { drag = null; });
+  });
+  document.querySelectorAll(".hero-zoom button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (b.dataset.z === "0") { vb = [0, 0, W, H]; apply(); return; }
+      zoom(b.dataset.z === "+" ? 0.72 : 1 / 0.72, 0.5, 0.5);
+    });
+  });
+})();
+"""
+
+
+def build_page(routes: list[dict], transitions: list[dict],
+               land: Land, updated: str) -> str:
+    corridors = build_corridors(routes)[:MAX_CARDS]
     total = len(routes)
     night = sum(
         1 for r in routes
@@ -358,15 +580,15 @@ def build_page(routes: list[dict], updated: str) -> str:
         or datetime.fromisoformat(r["posted_at"]).astimezone(MSK).hour < 6)
     night_share = round(night * 100 / total) if total else 0
     first = min((r["posted_at"] for r in routes), default="")
-    span_days = 0
-    if first:
-        span_days = (now_utc() - datetime.fromisoformat(first)).days
+    span_days = ((now_utc() - datetime.fromisoformat(first)).days
+                 if first else 0)
+    links = sum(t["count"] for t in transitions)
 
     title = "Маршруты БПЛА — повторяющиеся коридоры на карте"
     description = (
-        f"{total} маршрутов БПЛА за {span_days} дней из открытых сообщений: "
-        f"общая карта коридоров и галерея самых устойчивых — с числом "
-        f"повторов и временем активности.")
+        f"{total} маршрутов БПЛА за {span_days} дней из открытых сообщений "
+        f"плюс переходы, восстановленные по последовательности фиксаций: "
+        f"карта коридоров с приближением и галерея самых устойчивых.")
     url = f"{SITE}/marshruty/"
     breadcrumb_ld = json.dumps({
         "@context": "https://schema.org", "@type": "BreadcrumbList",
@@ -384,8 +606,8 @@ def build_page(routes: list[dict], updated: str) -> str:
                      "url": f"{SITE}/"},
     }, ensure_ascii=False)
 
-    cards = "".join(card_html(c) for c in corridors)
-    hero = hero_svg(routes, corridors)
+    cards = "".join(card_html(c, land) for c in corridors)
+    hero = hero_svg(routes, transitions, land)
 
     return f"""<!doctype html>
 <html lang="ru">
@@ -408,7 +630,7 @@ def build_page(routes: list[dict], updated: str) -> str:
     <style>
       body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
              font:16px/1.6 Inter, system-ui, -apple-system, sans-serif; }}
-      main {{ max-width:1020px; margin:0 auto; padding:40px 20px 80px; }}
+      main {{ max-width:1120px; margin:0 auto; padding:40px 20px 80px; }}
       h1 {{ font-size:29px; line-height:1.25; margin:0 0 14px; max-width:760px; }}
       h2 {{ font-size:19px; margin:38px 0 10px; }}
       p {{ color:#aab4ad; max-width:760px; }}
@@ -417,9 +639,28 @@ def build_page(routes: list[dict], updated: str) -> str:
       a.map {{ display:inline-block; margin:16px 0 8px; padding:13px 22px;
               background:#e93e4e; color:#fff; text-decoration:none;
               border-radius:10px; font-weight:600; }}
-      .hero {{ margin:26px 0 8px; border-radius:12px; overflow:hidden;
-              border:1px solid rgba(255,255,255,.07); }}
+      .hero-wrap {{ position:relative; margin:26px 0 8px; }}
+      .hero {{ border-radius:12px; overflow:hidden; cursor:grab;
+              border:1px solid rgba(255,255,255,.07); touch-action:none; }}
+      .hero:active {{ cursor:grabbing; }}
       .hero svg {{ display:block; width:100%; height:auto; }}
+      .hero-zoom {{ position:absolute; right:12px; bottom:12px;
+                   display:flex; flex-direction:column; gap:6px; }}
+      .hero-legend {{ position:absolute; right:12px; top:12px;
+                     background:rgba(12,16,15,.88); padding:10px 14px;
+                     border:1px solid #28322c; border-radius:9px;
+                     display:flex; flex-direction:column; gap:6px;
+                     font-size:13px; color:#aab4ad; pointer-events:none; }}
+      .hero-legend i {{ display:inline-block; width:34px; height:0;
+                       vertical-align:middle; margin-right:8px;
+                       border-top:3px solid #e9404f; border-radius:2px; }}
+      .hero-legend i.dash {{ border-top:3px dashed #f7a23b; }}
+      @media (max-width:560px) {{ .hero-legend {{ font-size:11px;
+        padding:8px 10px; }} .hero-legend i {{ width:22px; }} }}
+      .hero-zoom button {{ width:36px; height:36px; border-radius:9px;
+                          border:1px solid rgba(255,255,255,.14);
+                          background:#141a17; color:#dfe6df; font-size:17px;
+                          cursor:pointer; }}
       .hero-note {{ font-size:13px; color:#7d8a83; margin-top:8px; }}
       .gallery {{ display:grid; gap:22px 18px; margin-top:20px;
                  grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
@@ -441,29 +682,42 @@ def build_page(routes: list[dict], updated: str) -> str:
       <p>За {span_days} {plural(span_days, "день", "дня", "дней")} карта
       записала <strong>{total}</strong>
       {plural(total, "маршрут", "маршрута", "маршрутов")}, названных самими
-      источниками: «от Анапы через Раевскую на Новороссийск». Большинство
-      повторяется из ночи в ночь — {night_share}% маршрутов приходится на
-      ночные часы. Ниже — общая карта всех повторившихся плеч и галерея
-      самых устойчивых коридоров.</p>
+      источниками, и восстановила {links}
+      {plural(links, "переход", "перехода", "переходов")} по
+      последовательности фиксаций в своей базе. {night_share}% маршрутов —
+      ночные. Карту можно приближать колесом и тянуть мышью.</p>
 
       <a class="map" href="/">Открыть живую карту</a>
 
-      <div class="hero">{hero}</div>
-      <p class="hero-note">Толщина линии — сколько раз источники называли
-      это плечо. Единичные упоминания не показаны.</p>
+      <div class="hero-wrap">
+        <div class="hero">{hero}</div>
+        <div class="hero-legend">
+          <span><i class="solid"></i> маршрут, названный источниками</span>
+          <span><i class="dash"></i> восстановлен по фиксациям</span>
+        </div>
+        <div class="hero-zoom">
+          <button type="button" data-z="+" aria-label="Приблизить">+</button>
+          <button type="button" data-z="-" aria-label="Отдалить">−</button>
+          <button type="button" data-z="0" aria-label="Сброс">⌂</button>
+        </div>
+      </div>
+      <p class="hero-note">Толщина линии — сколько раз повторился коридор.
+      Прибрежные дуги идут над морем: «Туапсе — Сочи» не значит «через
+      города». Единичные упоминания не показаны.</p>
 
       <h2>Устойчивые коридоры</h2>
       <p>Каждая карточка — один коридор: бледные линии — все его маршруты,
-      яркая стрелка — самый частый вариант пути.</p>
+      стрелка — самый частый вариант пути.</p>
       <div class="gallery">{cards}</div>
 
       <h2>Как это читать</h2>
-      <p>Маршрут попадает в базу, только когда источник сам описал путь —
-      с началом, направлением и промежуточными точками. Карта ничего не
-      достраивает и не соединяет события между собой: повтор коридора —
-      это повтор формулировок в открытых сообщениях, а не вычисленная
-      траектория. Число повторов зависит и от активности каналов
-      региона.</p>
+      <p>Сплошные линии — маршруты, которые источник описал сам: с началом,
+      направлением и промежуточными точками; карта их только пересказывает.
+      Пунктирные — переходы, восстановленные из собственной базы: две
+      точечные фиксации подряд, вторая в пределах 50 минут и 130 км от
+      первой. Одна такая связка — догадка, поэтому в счёт идут только
+      связки, повторившиеся от {MIN_TRANSITION} раз за всю историю
+      наблюдений. Число повторов зависит и от активности каналов региона.</p>
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по
@@ -475,21 +729,38 @@ def build_page(routes: list[dict], updated: str) -> str:
         <a href="/svodka/">Сводки по дням</a>
       </footer>
     </main>
+    <script>{PANZOOM_JS % {"w": HERO_W, "h": HERO_H}}</script>
   </body>
 </html>
 """
 
 
+def load_cities(connection: sqlite3.Connection) -> list[tuple[str, float, float]]:
+    best: dict[str, tuple[str, float, float, int]] = {}
+    for row in connection.execute(
+            """SELECT name_ru, lat, lon, population FROM zones
+               WHERE level = 'place' AND population >= ?
+                 AND lat IS NOT NULL""", (CITY_MIN_POPULATION,)):
+        current = best.get(row["name_ru"])
+        if current is None or row["population"] > current[3]:
+            best[row["name_ru"]] = (row["name_ru"], row["lat"], row["lon"],
+                                    row["population"])
+    return [(name, lat, lon) for name, lat, lon, _ in best.values()]
+
+
 def build(connection: sqlite3.Connection) -> int:
-    """Собрать dist/marshruty/index.html; вернуть число коридоров."""
+    """Собрать dist/marshruty/index.html; вернуть число коридоров галереи."""
     routes = load_routes(connection)
+    transitions = load_transitions(connection)
+    land = Land()
+    land.cities = load_cities(connection)
     today = now_utc().astimezone(MSK)
     updated = f"{today.day} {MONTHS[today.month - 1]}, {today:%H:%M} МСК"
     directory = OUT / "marshruty"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "index.html").write_text(
-        build_page(routes, updated), encoding="utf-8")
-    return len(build_corridors(routes))
+        build_page(routes, transitions, land, updated), encoding="utf-8")
+    return len(build_corridors(routes)[:MAX_CARDS])
 
 
 def main() -> int:
