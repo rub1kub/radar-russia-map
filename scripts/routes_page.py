@@ -1,19 +1,23 @@
-"""Страница «Маршруты БПЛА»: устойчивые коридоры из исторических данных.
+"""Страница «Маршруты БПЛА»: граф устойчивых коридоров из исторических данных.
 
     PYTHONPATH=.:ingest ingest/.venv/bin/python -m scripts.routes_page
 
-Два источника, честно разделённые на карте:
+Карта — не пучок отдельных линий, а граф: все точки маршрутов
+кластеризуются в узлы (~10 км), одинаковые плечи складываются в рёбра с
+весом. Вместо пятнадцати полупараллельных линий между Джанкоем и
+Армянском — одно ребро, у которого видно толщину, направление
+(бегущие штрихи) и подпись узлов.
+
+Два источника данных, честно разделённые в подсказке каждого ребра:
 
   • именованные маршруты — источник сам описал путь («от Анапы через
-    Раевскую на Новороссийск»), таблица routes; рисуются сплошным;
+    Раевскую на Новороссийск»), таблица routes;
   • восстановленные переходы — две точечные фиксации подряд в собственной
     базе событий (вторая в пределах 50 минут и 130 км от первой); каждая
-    связка — догадка, но связка, повторившаяся десятки раз за месяцы, —
-    коридор. Рисуются пунктиром, и легенда говорит об этом прямо.
+    связка — догадка, в счёт идут только повторившиеся.
 
-Прибрежные коридоры (Туапсе → Сочи) борт летит над морем, а не через
-города: сторона выгиба дуги выбирается проверкой «какая сторона — не
-суша» по полигонам субъектов.
+Прибрежные рёбра (Туапсе → Сочи) выгибаются над морем: сторона дуги
+выбирается проверкой «какая сторона — не суша» по полигонам субъектов.
 
 Вызывается из scripts.seo_pages при каждой пересборке посадочных —
 ежечасно по таймеру и при выкатке.
@@ -49,14 +53,30 @@ MONTHS = ("января", "февраля", "марта", "апреля", "ма�
 # десять — закономерность. Карточек не больше шестидесяти.
 MIN_CORRIDOR = 10
 MAX_CARDS = 60
-# На общую карту именованный коридор идёт от пяти повторов, восстановленный
-# переход — тоже от пяти: ниже начинается сыпь единичных догадок.
-HERO_MIN_FLOW = 5
+# Ребро графа живёт от трёх повторов, локальных рёбер не больше трёхсот:
+# ниже порога начинается сыпь единичных догадок.
+MIN_EDGE = 3
+MAX_LOCAL_EDGES = 300
+# Магистрали — самые тяжёлые рёбра: видны всегда, остальное проявляется
+# при приближении.
+TRUNK_EDGES = 120
+# Подписи узлов: первый ярус виден всегда, второй — при приближении.
+LABELS_ALWAYS = 24
+LABELS_ZOOMED = 110
+# Точки узлов на обзоре — только крупнейшие: сотни сёл-узлов на общем
+# плане превращались в сыпь, за которой не видно рёбер.
+DOTS_ALWAYS = 80
+# Порог зума, с которого проявляются локальные ветки и вторые подписи.
+ZOOM_DETAIL = 2.2
+
 MIN_TRANSITION = 5
 # Окно склейки двух фиксаций в переход: ближе трёх минут — это одно и то же
 # сообщение из двух лент, дальше пятидесяти — уже другой борт.
 TRANSITION_MINUTES = (3, 50)
 TRANSITION_KM = (8, 130)
+
+# Кластеризация точек в узлы: шаг сетки ~10 км.
+NODE_LAT_STEP = 0.09
 
 # Театр событий: западная часть, где живут почти все маршруты.
 HERO_BBOX = (42.8, 27.5, 59.5, 55.0)  # lat0, lon0, lat1, lon1
@@ -117,15 +137,12 @@ class Projection:
 
 
 class Land:
-    """Полигоны субъектов: и подложка карты, и ответ на вопрос «это суша?».
-
-    Второе нужно прибрежным коридорам: «Туапсе — Сочи» борт идёт над морем,
-    и дуга должна выгибаться в сторону воды, а не вглубь берега.
-    """
+    """Полигоны субъектов: подложка карты и ответ на вопрос «это суша?»."""
 
     def __init__(self) -> None:
         self.rings: list[tuple[tuple[float, float, float, float], list]] = []
         self.regions: list[tuple[str, float, float]] = []
+        self.cities: list[tuple[str, float, float]] = []
         try:
             collection = json.loads(
                 (DATA / "regions.json").read_text(encoding="utf-8"))
@@ -207,7 +224,6 @@ class Land:
         span = _km(a, b)
         if span < 20:
             return None
-        # Перпендикуляр в градусах: поперёк направления, длиной ~18% плеча.
         dlat = b[0] - a[0]
         dlon = (b[1] - a[1]) * math.cos(math.radians(mid[0]))
         norm = math.hypot(dlat, dlon) or 1.0
@@ -325,14 +341,106 @@ def build_corridors(routes: list[dict],
     return corridors
 
 
+# --- Граф ---------------------------------------------------------------
+
+
+def _cell(lat: float, lon: float) -> tuple[int, int]:
+    lon_step = NODE_LAT_STEP / math.cos(math.radians(lat))
+    return (int(lat / NODE_LAT_STEP), int(lon / lon_step))
+
+
+def build_graph(routes: list[dict], transitions: list[dict]) -> tuple[
+        list[dict], list[dict]]:
+    """Узлы и рёбра: все плечи, слитые по кластерам точек.
+
+    Узел — ячейка сетки ~10 км: имя берётся у самой частой точки в ней,
+    координата — средняя. Ребро A—B хранит оба направления и раскладку
+    источников (пересказ / восстановлено); рисуется в преобладающую
+    сторону.
+    """
+    members: dict[tuple[int, int], dict] = {}
+
+    def visit(lat: float, lon: float, name: str) -> tuple[int, int]:
+        cell = _cell(lat, lon)
+        entry = members.setdefault(
+            cell, {"lat": 0.0, "lon": 0.0, "n": 0, "names": Counter()})
+        entry["lat"] += lat
+        entry["lon"] += lon
+        entry["n"] += 1
+        entry["names"][short_name(name)] += 1
+        return cell
+
+    legs: Counter = Counter()          # (cell_a, cell_b) -> повторы
+    named_legs: Counter = Counter()    # из именованных маршрутов
+    for route in routes:
+        cells = [visit(lat, lon, name) for lat, lon, name in route["points"]]
+        for a, b in zip(cells, cells[1:]):
+            if a == b:
+                continue
+            legs[(a, b)] += 1
+            named_legs[(a, b)] += 1
+    for transition in transitions:
+        a = visit(*transition["a"], transition["start"])
+        b = visit(*transition["b"], transition["end"])
+        if a != b:
+            legs[(a, b)] += transition["count"]
+
+    # Пара направлений сливается в одно ребро с преобладающей стороной.
+    edges: dict[tuple, dict] = {}
+    for (a, b), count in legs.items():
+        key = (a, b) if a <= b else (b, a)
+        edge = edges.setdefault(key, {"ab": 0, "ba": 0,
+                                      "named": 0, "computed": 0})
+        forward = (a, b) == key
+        edge["ab" if forward else "ba"] += count
+        named = named_legs.get((a, b), 0)
+        edge["named"] += named
+        edge["computed"] += count - named
+
+    used_cells: set[tuple[int, int]] = set()
+    kept = []
+    for (a, b), edge in edges.items():
+        total = edge["ab"] + edge["ba"]
+        if total < MIN_EDGE:
+            continue
+        kept.append((a, b, edge, total))
+        used_cells.add(a)
+        used_cells.add(b)
+
+    node_index: dict[tuple[int, int], int] = {}
+    nodes: list[dict] = []
+    for cell in used_cells:
+        entry = members[cell]
+        node_index[cell] = len(nodes)
+        nodes.append({
+            "lat": entry["lat"] / entry["n"],
+            "lon": entry["lon"] / entry["n"],
+            "name": entry["names"].most_common(1)[0][0],
+            "weight": 0,
+        })
+
+    result_edges = []
+    for a, b, edge, total in kept:
+        ia, ib = node_index[a], node_index[b]
+        # Рисуется в преобладающую сторону.
+        if edge["ba"] > edge["ab"]:
+            ia, ib = ib, ia
+            edge["ab"], edge["ba"] = edge["ba"], edge["ab"]
+        nodes[ia]["weight"] += total
+        nodes[ib]["weight"] += total
+        result_edges.append({
+            "a": ia, "b": ib, "count": total,
+            "forward": edge["ab"], "backward": edge["ba"],
+            "named": edge["named"], "computed": edge["computed"],
+        })
+    result_edges.sort(key=lambda e: -e["count"])
+    # Магистрали + локальные ветки, без хвоста из полусотни одиночек.
+    return nodes, result_edges[:TRUNK_EDGES + MAX_LOCAL_EDGES]
+
+
 def flow_path(points_xy: list[tuple[float, float]],
               control_xy: tuple[float, float] | None = None) -> str:
-    """Гладкий путь: дуга по управляющей точке или сглаженная ломаная.
-
-    Ломаная сглаживается квадратичными кривыми через середины отрезков —
-    углы уходят, путь остаётся тем же. Именно изломы делали стрелки
-    «рваными».
-    """
+    """Гладкий путь: дуга по управляющей точке или сглаженная ломаная."""
     (x0, y0) = points_xy[0]
     if control_xy is not None and len(points_xy) == 2:
         (cx, cy), (x1, y1) = control_xy, points_xy[1]
@@ -351,38 +459,40 @@ def flow_path(points_xy: list[tuple[float, float]],
 
 
 def arrow_head(tail: tuple[float, float], tip: tuple[float, float],
-               size: float, color: str, scaled: bool = False) -> str:
-    """Заливной наконечник, посаженный по направлению последнего отрезка.
-
-    scaled=True вешает класс и координаты вершины: при зуме JS контр-
-    масштабирует наконечник вокруг вершины, чтобы он не разрастался
-    вместе с картой.
-    """
+               size: float, color: str) -> str:
+    """Заливной наконечник для карточек галереи."""
     angle = math.atan2(tip[1] - tail[1], tip[0] - tail[0])
     left = (tip[0] - size * math.cos(angle - 0.42),
             tip[1] - size * math.sin(angle - 0.42))
     right = (tip[0] - size * math.cos(angle + 0.42),
              tip[1] - size * math.sin(angle + 0.42))
-    extra = (f' class="fh" data-tx="{tip[0]}" data-ty="{tip[1]}"'
-             if scaled else "")
-    return (f'<path{extra} d="M{round(left[0], 1)} {round(left[1], 1)} '
+    return (f'<path d="M{round(left[0], 1)} {round(left[1], 1)} '
             f'L{tip[0]} {tip[1]} L{round(right[0], 1)} {round(right[1], 1)} '
             f'Z" fill="{color}" fill-opacity="0.85" />')
 
 
-def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
-    """Общая карта: подложка с подписями, поверх — потоки двух слоёв."""
+def edge_title(edge: dict, nodes: list[dict], anchors: dict) -> str:
+    """Подсказка ребра: кто, сколько, в какую сторону, откуда данные."""
+    a, b = nodes[edge["a"]], nodes[edge["b"]]
+    parts = [f'{a["name"]} → {b["name"]}',
+             f'{edge["count"]} {plural(edge["count"], "повтор", "повтора", "повторов")}']
+    if edge["backward"]:
+        parts.append(f'туда {edge["forward"]}, обратно {edge["backward"]}')
+    if edge["computed"]:
+        parts.append(f'восстановлено по фиксациям: {edge["computed"]}')
+    return " · ".join(parts)
+
+
+def hero_svg(nodes: list[dict], edges: list[dict], land: Land,
+             anchors: dict[tuple[str, str], str]) -> str:
+    """Граф коридоров: магистрали всегда, ветки и подписи — при зуме."""
     projection = Projection(HERO_BBOX, HERO_W, HERO_H, pad=10, precision=0)
 
-    # Подложка: суша заметно светлее моря, границы не тают при зуме.
     outline = land.svg_path(projection)
     base = (f'<path d="{outline}" fill="#182019" stroke="#3a463f" '
             f'stroke-width="1" vector-effect="non-scaling-stroke" />'
             if outline else "")
 
-    # Подписи субъектов — тихим цветом, только внутри кадра. Группа
-    # с классом: при зуме JS контр-масштабирует кегль, чтобы подпись
-    # не раздувалась вместе с картой.
     region_labels = []
     for name, lat, lon in land.regions:
         if not projection.inside(lat, lon):
@@ -392,66 +502,109 @@ def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
             f'<text x="{x}" y="{y}" text-anchor="middle">'
             f'{escape(short_name(name))}</text>')
 
-    # Именованные коридоры — сплошные дуги.
-    named = build_corridors(routes, minimum=HERO_MIN_FLOW)
-    named_keys = {(c["start"], c["end"]) for c in named}
-    peak = max((c["count"] for c in named), default=1)
-    solid = []
-    for corridor in sorted(named, key=lambda c: c["count"]):
-        chain = [(p[0], p[1]) for p in corridor["face"]]
-        if not all(projection.inside(lat, lon) for lat, lon in chain):
-            continue
-        share = math.log1p(corridor["count"]) / math.log1p(peak)
-        width = round(1.2 + 4.6 * share, 1)
-        opacity = round(0.45 + 0.5 * share, 2)
-        control = land.sea_control(chain[0], chain[-1]) if len(chain) == 2 else None
-        xy = [projection.xy(lat, lon) for lat, lon in chain]
-        control_xy = projection.xy(*control) if control else None
-        tail_xy = control_xy if control_xy else xy[-2]
-        solid.append(
-            f'<path d="{flow_path(xy, control_xy)}" fill="none" '
-            f'stroke="#e9404f" stroke-width="{width}" '
-            f'stroke-opacity="{opacity}" stroke-linecap="round" '
-            f'stroke-linejoin="round" vector-effect="non-scaling-stroke" />'
-            + arrow_head(tail_xy, xy[-1], 3.2 + width * 1.15, "#f77683",
-                         scaled=True))
-
-    # Восстановленные переходы — пунктирные дуги другим цветом. Пара,
-    # уже названная источниками, второй раз не рисуется.
-    dashed = []
-    peak_t = max((t["count"] for t in transitions), default=1)
-    for transition in sorted(transitions, key=lambda t: t["count"]):
-        if (transition["start"], transition["end"]) in named_keys:
-            continue
-        a, b = transition["a"], transition["b"]
-        if not (projection.inside(*a) and projection.inside(*b)):
-            continue
-        share = math.log1p(transition["count"]) / math.log1p(peak_t)
-        width = round(1.1 + 3.4 * share, 1)
-        control = land.sea_control(a, b)
-        xy = [projection.xy(*a), projection.xy(*b)]
-        control_xy = projection.xy(*control) if control else None
-        tail_xy = control_xy if control_xy else xy[0]
-        dashed.append(
-            f'<path d="{flow_path(xy, control_xy)}" fill="none" '
-            f'stroke="#f7a23b" stroke-width="{width}" stroke-opacity="0.8" '
-            f'stroke-dasharray="7 5" stroke-linecap="round" '
-            f'vector-effect="non-scaling-stroke" />'
-            + arrow_head(tail_xy, xy[1], 3 + width * 1.15, "#f0b46a",
-                         scaled=True))
-
-    # Города-ориентиры. Тоже в группе — кегль контр-масштабируется при зуме.
     cities = []
-    for name, lat, lon in getattr(land, "cities", []):
+    for name, lat, lon in land.cities:
         if not projection.inside(lat, lon):
             continue
         x, y = projection.xy(lat, lon)
         cities.append(
-            f'<circle cx="{x}" cy="{y}" r="2.4" fill="#5b6a62" />'
+            f'<circle cx="{x}" cy="{y}" r="2.4" data-r="2.4" '
+            f'fill="#5b6a62" />'
             f'<text x="{x + 6}" y="{y + 4}">{escape(name)}</text>')
 
+    visible = [e for e in edges
+               if projection.inside(nodes[e["a"]]["lat"], nodes[e["a"]]["lon"])
+               and projection.inside(nodes[e["b"]]["lat"], nodes[e["b"]]["lon"])]
+    peak = max((e["count"] for e in visible), default=1)
+
+    # Магистраль — не просто частое ребро, а частое И длинное: по чистому
+    # счёту в топ пролезали десятикилометровые прыжки между сёлами одного
+    # горячего района, а Анапа — Сочи с её 250 км уходила в «локальные».
+    def importance(edge: dict) -> float:
+        a, b = nodes[edge["a"]], nodes[edge["b"]]
+        span = _km((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+        return edge["count"] * max(span, 15.0)
+
+    visible.sort(key=importance, reverse=True)
+
+    def render_edge(edge: dict, trunk: bool) -> str:
+        a, b = nodes[edge["a"]], nodes[edge["b"]]
+        start, end = (a["lat"], a["lon"]), (b["lat"], b["lon"])
+        control = land.sea_control(start, end)
+        xy = [projection.xy(*start), projection.xy(*end)]
+        control_xy = projection.xy(*control) if control else None
+        path = flow_path(xy, control_xy)
+        share = math.log1p(edge["count"]) / math.log1p(peak)
+        width = round((2.4 + 4.6 * share) if trunk else (1.0 + 1.5 * share), 1)
+        opacity = round(0.7 + 0.3 * share, 2) if trunk else 0.45
+        speed = "f" if share > 0.66 else ("m" if share > 0.33 else "s")
+        title = f"<title>{escape(edge_title(edge, nodes, anchors))}</title>"
+        body = (
+            # Тело ребра: постоянная трасса.
+            f'<path d="{path}" fill="none" stroke="#d63c4a" '
+            f'stroke-width="{width}" stroke-opacity="{opacity}" '
+            f'stroke-linecap="round" vector-effect="non-scaling-stroke" />'
+            # Бегущие штрихи: направление видно без наконечников.
+            f'<path class="ant ant-{speed}" d="{path}" fill="none" '
+            f'stroke="#ffc9ce" stroke-width="{round(width * 0.55, 1)}" '
+            f'vector-effect="non-scaling-stroke" />'
+            # Невидимая широкая накладка — чтобы подсказка ловилась мышью.
+            f'<path d="{path}" fill="none" stroke="#fff" stroke-opacity="0" '
+            f'stroke-width="9" vector-effect="non-scaling-stroke">{title}</path>'
+        )
+        anchor = anchors.get((a["name"], b["name"]))
+        if anchor:
+            body = f'<a href="#{anchor}">{body}</a>'
+        return f'<g class="{"trunk" if trunk else "local"}">{body}</g>'
+
+    trunk_svg = [render_edge(e, True) for e in visible[:TRUNK_EDGES]]
+    local_svg = [render_edge(e, False) for e in visible[TRUNK_EDGES:]]
+
+    # Узлы: размер по трафику, подписи двумя ярусами. Подписи первого
+    # яруса расталкиваются: юг настолько плотный, что двадцать имён без
+    # проверки пересечений ложились друг на друга нечитаемой стопкой.
+    ranked = sorted(range(len(nodes)), key=lambda i: -nodes[i]["weight"])
+    placed_labels: list[tuple[float, float, float]] = []
+
+    def label_fits(x: float, y: float, name: str) -> bool:
+        half = len(name) * 3.4
+        for px0, px1, py in placed_labels:
+            if abs(y - py) < 14 and x - half < px1 and x + half > px0:
+                return False
+        placed_labels.append((x - half, x + half, y))
+        return True
+
+    node_svg = []
+    for rank, index in enumerate(ranked):
+        node = nodes[index]
+        if not node["weight"]:
+            continue
+        if not projection.inside(node["lat"], node["lon"]):
+            continue
+        x, y = projection.xy(node["lat"], node["lon"])
+        radius = round(2.0 + 2.4 * math.log1p(node["weight"]) /
+                       math.log1p(nodes[ranked[0]]["weight"] or 1), 1)
+        tier = ("n1" if rank < LABELS_ALWAYS
+                else "n2" if rank < LABELS_ZOOMED
+                else "nd" if rank < DOTS_ALWAYS else "n3")
+        # Не поместившаяся подпись первого яруса уходит во второй:
+        # точка остаётся, имя появится при приближении.
+        if tier == "n1" and not label_fits(x, y - radius - 4, node["name"]):
+            tier = "n2"
+        label = (f'<text x="{x}" y="{y - radius - 4}" text-anchor="middle">'
+                 f'{escape(node["name"])}</text>'
+                 if tier in ("n1", "n2") else "")
+        node_svg.append(
+            f'<g class="{tier}"><circle cx="{x}" cy="{y}" r="{radius}" '
+            f'data-r="{radius}" fill="#ffb3ba" fill-opacity="0.9" '
+            f'stroke="#0a0e0d" stroke-width="1" '
+            f'vector-effect="non-scaling-stroke">'
+            f'<title>{escape(node["name"])} · узел, '
+            f'{node["weight"]} {plural(node["weight"], "повтор", "повтора", "повторов")}'
+            f'</title></circle>{label}</g>')
+
     return (f'<svg viewBox="0 0 {HERO_W} {HERO_H}" role="img" '
-            f'aria-label="Карта повторяющихся маршрутов БПЛА" '
+            f'aria-label="Граф повторяющихся маршрутов БПЛА" '
             f'xmlns="http://www.w3.org/2000/svg">'
             f'<rect x="-2000" y="-2000" width="5000" height="5000" fill="#0a0e0d" />'
             + base
@@ -459,7 +612,11 @@ def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
               f'{"".join(region_labels)}</g>'
             + f'<g class="map-cities" fill="#77857c" font-size="12">'
               f'{"".join(cities)}</g>'
-            + "".join(dashed) + "".join(solid) + "</svg>")
+            + f'<g class="locals">{"".join(local_svg)}</g>'
+            + f'<g class="trunks">{"".join(trunk_svg)}</g>'
+            + f'<g class="nodes" fill="#dfe6df" font-size="11">'
+              f'{"".join(node_svg)}</g>'
+            + "</svg>")
 
 
 def card_svg(corridor: dict, land: Land) -> str:
@@ -473,8 +630,6 @@ def card_svg(corridor: dict, land: Land) -> str:
     width, height = 280, 170
     projection = Projection(bbox, width, height, pad=12)
 
-    # География кадра: береговая линия и границы — иначе стрелка висит
-    # в пустоте, и прибрежный коридор не отличить от степного.
     outline = land.svg_path(projection, step=3.0)
     base = (f'<path d="{outline}" fill="#161d1a" stroke="#333f39" '
             f'stroke-width="0.8" />' if outline else "")
@@ -525,7 +680,7 @@ THREAT_WORDS = {"uav": "БПЛА", "fpv": "FPV", "rocket": "ракеты",
                 "kab": "КАБ", "bek": "БЭК", "aviation": "авиация"}
 
 
-def card_html(corridor: dict, land: Land) -> str:
+def card_html(corridor: dict, land: Land, anchor: str) -> str:
     threat_keys = [k for k, _ in corridor["threats"].most_common(2)
                    if k != "unknown"]
     threats = ", ".join(THREAT_WORDS.get(k, k) for k in threat_keys) or "БПЛА"
@@ -533,7 +688,7 @@ def card_html(corridor: dict, land: Land) -> str:
     stability = (f"{months} {plural(months, 'месяц', 'месяца', 'месяцев')} подряд"
                  if months > 1 else "в этом месяце")
     return f"""
-    <figure class="corridor">
+    <figure class="corridor" id="{anchor}">
       {card_svg(corridor, land)}
       <figcaption>
         <b>{escape(corridor["start"])} → {escape(corridor["end"])}</b>
@@ -548,29 +703,24 @@ PANZOOM_JS = """
 (function () {
   var box = document.querySelector(".hero");
   var svg = box.querySelector("svg");
-  var W = %(w)d, H = %(h)d;
+  var W = %(w)d, H = %(h)d, DETAIL = %(detail)s;
   var vb = [0, 0, W, H];
-  var labelGroups = svg.querySelectorAll(".map-labels, .map-cities");
-  var cityDots = svg.querySelectorAll(".map-cities circle");
-  var heads = svg.querySelectorAll(".fh");
+  var labelGroups = svg.querySelectorAll(".map-labels, .map-cities, .nodes");
+  var dots = svg.querySelectorAll("circle[data-r]");
   function apply() {
     svg.setAttribute("viewBox", vb.join(" "));
-    // Подписи, точки и наконечники не должны раздуваться вместе с картой:
-    // их размер в юнитах SVG уменьшается пропорционально приближению —
-    // на экране он стоит на месте, а геометрия раздвигается.
+    // Подписи и точки не раздуваются вместе с картой: их размер в юнитах
+    // SVG уменьшается пропорционально приближению.
     var scale = vb[2] / W;
     labelGroups.forEach(function (g) {
-      g.setAttribute("font-size", (12 * scale).toFixed(2));
+      g.setAttribute("font-size",
+        ((g.classList.contains("nodes") ? 11 : 12) * scale).toFixed(2));
     });
-    cityDots.forEach(function (dot) {
-      dot.setAttribute("r", (2.4 * scale).toFixed(2));
+    dots.forEach(function (dot) {
+      dot.setAttribute("r", (dot.dataset.r * scale).toFixed(2));
     });
-    heads.forEach(function (head) {
-      var tx = head.dataset.tx, ty = head.dataset.ty;
-      head.setAttribute("transform",
-        "translate(" + tx + " " + ty + ") scale(" + scale.toFixed(4) +
-        ") translate(-" + tx + " -" + ty + ")");
-    });
+    // Детализация по зуму: локальные ветки и вторые подписи узлов.
+    svg.classList.toggle("zoomed", W / vb[2] >= DETAIL);
   }
   function clamp() {
     vb[2] = Math.min(W, Math.max(W / 14, vb[2]));
@@ -590,13 +740,16 @@ PANZOOM_JS = """
     zoom(e.deltaY < 0 ? 0.82 : 1 / 0.82,
          (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
   }, { passive: false });
-  var drag = null;
+  var drag = null, moved = false;
   box.addEventListener("pointerdown", function (e) {
-    drag = [e.clientX, e.clientY]; box.setPointerCapture(e.pointerId);
+    drag = [e.clientX, e.clientY]; moved = false;
+    box.setPointerCapture(e.pointerId);
   });
   box.addEventListener("pointermove", function (e) {
     if (!drag) return;
     var r = svg.getBoundingClientRect();
+    if (Math.abs(e.clientX - drag[0]) + Math.abs(e.clientY - drag[1]) > 2)
+      moved = true;
     vb[0] -= (e.clientX - drag[0]) / r.width * vb[2];
     vb[1] -= (e.clientY - drag[1]) / r.height * vb[3];
     drag = [e.clientX, e.clientY]; clamp(); apply();
@@ -604,12 +757,17 @@ PANZOOM_JS = """
   ["pointerup", "pointercancel", "pointerleave"].forEach(function (n) {
     box.addEventListener(n, function () { drag = null; });
   });
+  // Случайный клик после перетаскивания не должен прыгать по якорю.
+  box.addEventListener("click", function (e) {
+    if (moved) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   document.querySelectorAll(".hero-zoom button").forEach(function (b) {
     b.addEventListener("click", function () {
       if (b.dataset.z === "0") { vb = [0, 0, W, H]; apply(); return; }
       zoom(b.dataset.z === "+" ? 0.72 : 1 / 0.72, 0.5, 0.5);
     });
   });
+  apply();
 })();
 """
 
@@ -617,6 +775,10 @@ PANZOOM_JS = """
 def build_page(routes: list[dict], transitions: list[dict],
                land: Land, updated: str) -> str:
     corridors = build_corridors(routes)[:MAX_CARDS]
+    anchors = {(c["start"], c["end"]): f"kor-{i}"
+               for i, c in enumerate(corridors)}
+    nodes, edges = build_graph(routes, transitions)
+
     total = len(routes)
     night = sum(
         1 for r in routes
@@ -632,7 +794,7 @@ def build_page(routes: list[dict], transitions: list[dict],
     description = (
         f"{total} маршрутов БПЛА за {span_days} дней из открытых сообщений "
         f"плюс переходы, восстановленные по последовательности фиксаций: "
-        f"карта коридоров с приближением и галерея самых устойчивых.")
+        f"граф коридоров с приближением и галерея самых устойчивых.")
     url = f"{SITE}/marshruty/"
     breadcrumb_ld = json.dumps({
         "@context": "https://schema.org", "@type": "BreadcrumbList",
@@ -650,8 +812,10 @@ def build_page(routes: list[dict], transitions: list[dict],
                      "url": f"{SITE}/"},
     }, ensure_ascii=False)
 
-    cards = "".join(card_html(c, land) for c in corridors)
-    hero = hero_svg(routes, transitions, land)
+    cards = "".join(card_html(c, land, f"kor-{i}")
+                    for i, c in enumerate(corridors))
+    hero = hero_svg(nodes, edges, land, anchors)
+    trunk_count = min(TRUNK_EDGES, len(edges))
 
     return f"""<!doctype html>
 <html lang="ru">
@@ -687,11 +851,27 @@ def build_page(routes: list[dict], transitions: list[dict],
       .hero {{ border-radius:12px; overflow:hidden; cursor:grab;
               border:1px solid rgba(255,255,255,.07); touch-action:none;
               user-select:none; -webkit-user-select:none; }}
-      .hero text {{ pointer-events:none; }}
       .hero:active {{ cursor:grabbing; }}
       .hero svg {{ display:block; width:100%; height:auto; }}
+      .hero text {{ pointer-events:none; }}
+      /* Локальные ветки, мелкие узлы и вторые подписи — при приближении. */
+      .hero .locals, .hero .n2 text, .hero .n3 {{ display:none; }}
+      .hero svg.zoomed .locals, .hero svg.zoomed .n2 text,
+      .hero svg.zoomed .n3 {{ display:initial; }}
+      /* Бегущие штрихи: направление потока без единого наконечника. */
+      .ant {{ stroke-dasharray:3 14; animation:ants 1.4s linear infinite; }}
+      .ant-m {{ animation-duration:2.1s; }}
+      .ant-s {{ animation-duration:3.2s; }}
+      @keyframes ants {{ to {{ stroke-dashoffset:-17; }} }}
+      @media (prefers-reduced-motion: reduce) {{
+        .ant {{ animation:none; stroke-dasharray:none; opacity:0; }} }}
+      .hero a {{ cursor:pointer; }}
       .hero-zoom {{ position:absolute; right:12px; bottom:12px;
                    display:flex; flex-direction:column; gap:6px; }}
+      .hero-zoom button {{ width:36px; height:36px; border-radius:9px;
+                          border:1px solid rgba(255,255,255,.14);
+                          background:#141a17; color:#dfe6df; font-size:17px;
+                          cursor:pointer; }}
       .hero-legend {{ position:absolute; right:12px; top:12px;
                      background:rgba(12,16,15,.88); padding:10px 14px;
                      border:1px solid #28322c; border-radius:9px;
@@ -699,20 +879,20 @@ def build_page(routes: list[dict], transitions: list[dict],
                      font-size:13px; color:#aab4ad; pointer-events:none; }}
       .hero-legend i {{ display:inline-block; width:34px; height:0;
                        vertical-align:middle; margin-right:8px;
-                       border-top:3px solid #e9404f; border-radius:2px; }}
-      .hero-legend i.dash {{ border-top:3px dashed #f7a23b; }}
+                       border-top:4px solid #d63c4a; border-radius:2px; }}
+      .hero-legend i.thin {{ border-top-width:1.5px; }}
+      .hero-legend i.dot {{ width:9px; height:9px; border:0; margin-left:12px;
+                           margin-right:20px; border-radius:50%%;
+                           background:#ffb3ba; }}
       @media (max-width:560px) {{ .hero-legend {{ font-size:11px;
         padding:8px 10px; }} .hero-legend i {{ width:22px; }} }}
-      .hero-zoom button {{ width:36px; height:36px; border-radius:9px;
-                          border:1px solid rgba(255,255,255,.14);
-                          background:#141a17; color:#dfe6df; font-size:17px;
-                          cursor:pointer; }}
-      .hero-note {{ font-size:13px; color:#7d8a83; margin-top:8px; }}
       .gallery {{ display:grid; gap:22px 18px; margin-top:20px;
                  grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
-      figure.corridor {{ margin:0; }}
-      figure.corridor svg {{ display:block; width:100%; height:auto;
+      figure.corridor {{ margin:0; scroll-margin-top:24px; }}
+      figure.corridor svg {{ display:block; width:100%%; height:auto;
                             border-radius:8px; }}
+      figure.corridor:target {{ outline:2px solid #e93e4e;
+                               outline-offset:4px; border-radius:8px; }}
       figcaption {{ margin-top:8px; font-size:13px; line-height:1.45; }}
       figcaption b {{ display:block; font-size:15px; color:#eef2ec; }}
       figcaption span {{ color:#8d988f; }}
@@ -730,16 +910,19 @@ def build_page(routes: list[dict], transitions: list[dict],
       {plural(total, "маршрут", "маршрута", "маршрутов")}, названных самими
       источниками, и восстановила {links}
       {plural(links, "переход", "перехода", "переходов")} по
-      последовательности фиксаций в своей базе. {night_share}% маршрутов —
-      ночные. Карту можно приближать колесом и тянуть мышью.</p>
+      последовательности фиксаций. Всё это слито в граф: узлы — места,
+      которые источники называют снова и снова, рёбра — повторяющиеся
+      плечи между ними. Бегущие штрихи показывают направление.
+      {night_share}% маршрутов — ночные.</p>
 
       <a class="map" href="/">Открыть живую карту</a>
 
       <div class="hero-wrap">
         <div class="hero">{hero}</div>
         <div class="hero-legend">
-          <span><i class="solid"></i> маршрут, названный источниками</span>
-          <span><i class="dash"></i> восстановлен по фиксациям</span>
+          <span><i></i> магистраль ({trunk_count} самых частых)</span>
+          <span><i class="thin"></i> локальная ветка — видна при приближении</span>
+          <span><i class="dot"></i> узел: чем крупнее, тем чаще называют</span>
         </div>
         <div class="hero-zoom">
           <button type="button" data-z="+" aria-label="Приблизить">+</button>
@@ -747,9 +930,11 @@ def build_page(routes: list[dict], transitions: list[dict],
           <button type="button" data-z="0" aria-label="Сброс">⌂</button>
         </div>
       </div>
-      <p class="hero-note">Толщина линии — сколько раз повторился коридор.
-      Прибрежные дуги идут над морем: «Туапсе — Сочи» не значит «через
-      города». Единичные упоминания не показаны.</p>
+      <p class="hero-note">Колесо и кнопки приближают, карта тянется мышью
+      и пальцем. При приближении проявляются локальные ветки и подписи
+      малых узлов. Наведите на ребро или узел — подсказка с числами; клик
+      по ребру ведёт к его карточке ниже. Прибрежные дуги идут над морем:
+      «Туапсе — Сочи» не значит «через города».</p>
 
       <h2>Устойчивые коридоры</h2>
       <p>Каждая карточка — один коридор: бледные линии — все его маршруты,
@@ -757,13 +942,14 @@ def build_page(routes: list[dict], transitions: list[dict],
       <div class="gallery">{cards}</div>
 
       <h2>Как это читать</h2>
-      <p>Сплошные линии — маршруты, которые источник описал сам: с началом,
-      направлением и промежуточными точками; карта их только пересказывает.
-      Пунктирные — переходы, восстановленные из собственной базы: две
-      точечные фиксации подряд, вторая в пределах 50 минут и 130 км от
-      первой. Одна такая связка — догадка, поэтому в счёт идут только
-      связки, повторившиеся от {MIN_TRANSITION} раз за всю историю
-      наблюдений. Число повторов зависит и от активности каналов региона.</p>
+      <p>Узлы графа — кластеры мест (~10 км), которые источники называют
+      постоянно; рёбра — плечи между ними, повторившиеся от {MIN_EDGE}
+      раз. Ребро рисуется в преобладающую сторону; если летали в обе,
+      подсказка показывает счёт туда и обратно. Основа — маршруты, которые
+      источник описал сам; к ним добавлены переходы, восстановленные из
+      базы: две точечные фиксации подряд, вторая в пределах 50 минут и
+      130 км. Доля восстановленного видна в подсказке каждого ребра.
+      Число повторов зависит и от активности каналов региона.</p>
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по
@@ -775,7 +961,7 @@ def build_page(routes: list[dict], transitions: list[dict],
         <a href="/svodka/">Сводки по дням</a>
       </footer>
     </main>
-    <script>{PANZOOM_JS % {"w": HERO_W, "h": HERO_H}}</script>
+    <script>{PANZOOM_JS % {"w": HERO_W, "h": HERO_H, "detail": ZOOM_DETAIL}}</script>
   </body>
 </html>
 """

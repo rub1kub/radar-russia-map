@@ -71,6 +71,35 @@ def test_coastal_corridor_bends_over_the_sea(land):
     assert land.sea_control((52.60, 36.0), (52.97, 37.05)) is None
 
 
+def test_graph_merges_legs_and_directions():
+    routes = [_route([ANAPA, RAEVSKAYA, NOVOROSSIYSK])] * 4
+    routes += [_route([NOVOROSSIYSK, RAEVSKAYA])] * 1  # обратный ход
+    nodes, edges = rp.build_graph(routes, [])
+
+    names = {n["name"] for n in nodes}
+    assert names == {"Анапа", "Раевская", "Новороссийск"}
+    # Два плеча; Раевская—Новороссийск слита из 4 туда + 1 обратно.
+    assert len(edges) == 2
+    merged = next(e for e in edges if e["count"] == 5)
+    assert (nodes[merged["a"]]["name"], nodes[merged["b"]]["name"]) == (
+        "Раевская", "Новороссийск")
+    assert (merged["forward"], merged["backward"]) == (4, 1)
+
+
+def test_graph_counts_computed_transitions_separately():
+    routes = [_route([ANAPA, NOVOROSSIYSK])] * 3
+    transitions = [{
+        "a": (ANAPA[0], ANAPA[1]), "b": (NOVOROSSIYSK[0], NOVOROSSIYSK[1]),
+        "start": "Анапа", "end": "Новороссийск", "count": 7,
+    }]
+    _, edges = rp.build_graph(routes, transitions)
+
+    assert len(edges) == 1
+    assert edges[0]["count"] == 10
+    assert edges[0]["named"] == 3
+    assert edges[0]["computed"] == 7
+
+
 def test_page_is_a_gallery_with_canonical_and_disclaimer(land):
     routes = [_route([ANAPA, RAEVSKAYA, NOVOROSSIYSK])] * 12
     transitions = [{
@@ -82,6 +111,9 @@ def test_page_is_a_gallery_with_canonical_and_disclaimer(land):
     assert 'rel="canonical" href="https://tihoenebo.com/marshruty/"' in html
     assert "Анапа → Новороссийск" in html
     assert html.count("<svg") >= 2  # общая карта и хотя бы одна карточка
-    assert "восстановлен по фиксациям" in html   # легенда двух слоёв
-    assert "hero-zoom" in html                   # управление приближением
+    assert "магистраль" in html                      # легенда графа
+    assert "восстановлено по фиксациям" in html      # раскладка в подсказке
+    assert 'class="ant' in html                      # бегущие штрихи
+    assert "hero-zoom" in html                       # управление приближением
+    assert 'href="#kor-0"' in html                   # ребро ведёт к карточке
     assert "может опаздывать и ошибаться" in html
