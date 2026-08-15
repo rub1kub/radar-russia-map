@@ -53,15 +53,35 @@ function plural(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
+/**
+ * Подсказка трассы — предложениями, а не строкой из цифр через точку.
+ *
+ * «до 51 повтора на плече · встречное движение: 5» владелец прочитать не
+ * смог, и он прав: это внутренняя терминология. Человеку надо знать,
+ * откуда куда летят, сколько раз это видели и насколько данным верить.
+ */
 function chainTip(chain: Chain): string {
-  const via = chain.via.length ? ` (через ${chain.via.join(", ")})` : "";
-  const parts = [
-    `${chain.from} → ${chain.to}${via}`,
-    `до ${chain.n} ${plural(chain.n, "повтора", "повторов", "повторов")} на плече`
-  ];
-  if (chain.r) parts.push(`встречное движение: ${chain.r}`);
-  if (chain.cp) parts.push(`восстановлено по фиксациям: ${chain.cp}`);
-  return parts.join(" · ");
+  const lines = [`<b>${chain.from} → ${chain.to}</b>`];
+  if (chain.via.length) {
+    lines.push(`Путь: ${chain.via.join(" → ")} и дальше.`);
+  }
+  const total = chain.nm + chain.cp;
+  lines.push(
+    `Источники описывали этот путь ${total} ` +
+      `${plural(total, "раз", "раза", "раз")}.`
+  );
+  if (chain.cp) {
+    const share = Math.round((chain.cp / total) * 100);
+    lines.push(
+      `${share}% — не пересказ сообщения, а наша догадка по ` +
+        `последовательности фиксаций.`
+    );
+  }
+  if (chain.r) {
+    lines.push(`Иногда летят и в обратную сторону (${chain.r} раз).`);
+  }
+  if (chain.kor) lines.push("<i>Нажмите — покажу карточку коридора.</i>");
+  return lines.join("<br>");
 }
 
 function init(): void {
@@ -200,9 +220,10 @@ function render(target: HTMLElement, graph: Graph): void {
   // --- Подсказка и переход к карточке ----------------------------------
   const tip = document.createElement("div");
   tip.style.cssText =
-    "position:absolute;pointer-events:none;background:rgba(12,16,15,.94);" +
-    "border:1px solid #28322c;border-radius:8px;padding:7px 11px;" +
-    "font-size:13px;color:#dfe6df;max-width:320px;display:none;z-index:5;";
+    "position:absolute;pointer-events:none;background:rgba(12,16,15,.95);" +
+    "border:1px solid #28322c;border-radius:10px;padding:10px 13px;" +
+    "font-size:13px;line-height:1.5;color:#c9d2cb;max-width:330px;" +
+    "display:none;z-index:5;box-shadow:0 6px 24px rgba(0,0,0,.45);";
   target.appendChild(tip);
 
   map.on("pointermove", (event) => {
@@ -216,7 +237,9 @@ function render(target: HTMLElement, graph: Graph): void {
       return;
     }
     const chain = feature.get("chain") as Chain;
-    tip.textContent = chainTip(chain);
+    // Разметка тут своя, собранная из данных генератора: имена мест уже
+    // прошли справочник, произвольного текста в подсказке нет.
+    tip.innerHTML = chainTip(chain);
     tip.style.display = "block";
     tip.style.left = `${event.pixel[0] + 14}px`;
     tip.style.top = `${event.pixel[1] + 12}px`;

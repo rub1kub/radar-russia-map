@@ -127,7 +127,8 @@ def rebuild(connection) -> dict:
             stats["by_source_region"] = stats.get("by_source_region", 0) + 1
 
         # Маршрут, описанный самим сообщением: линию утверждает источник.
-        route = extract_route(row["text"], observation, resolved)
+        route = extract_route(row["text"], observation, resolved,
+                              geocoder.sea_ids)
         if route:
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)

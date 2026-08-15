@@ -143,6 +143,11 @@ class Land:
         except OSError:
             return
         for feature in collection.get("features", []):
+            # Акватории лежат в том же файле — но для вопроса «это суша?»
+            # они как раз ответ «нет»: без пропуска Азовское и Чёрное моря
+            # считались бы сушей, и прибрежные дуги выгибались бы на берег.
+            if (feature.get("properties") or {}).get("kind") == "sea":
+                continue
             geometry = feature.get("geometry") or {}
             polygons = (geometry.get("coordinates", [])
                         if geometry.get("type") == "MultiPolygon"
@@ -240,11 +245,14 @@ def load_transitions(connection: sqlite3.Connection) -> list[dict]:
     здесь». Одна связка — догадка; в счёт идут только связки, повторившиеся
     MIN_TRANSITION раз за всю историю.
     """
+    # Акватории проходят наравне с точечными зонами: «БПЛА над Азовским
+    # морем» — такое же наблюдение, только над водой, и без него у
+    # приморских трасс обрывался морской конец.
     rows = connection.execute(
         """SELECT e.zone_id, e.lat, e.lon, e.first_seen_at, z.name_ru
            FROM events e JOIN zones z ON z.id = e.zone_id
-           WHERE e.severity >= 8 AND z.level != 'region'
-             AND e.lat IS NOT NULL
+           WHERE e.severity >= 8 AND e.lat IS NOT NULL
+             AND (z.level != 'region' OR z.source_id LIKE '%-sea')
            ORDER BY e.first_seen_at""").fetchall()
     events = [(datetime.fromisoformat(r["first_seen_at"]).timestamp(),
                r["lat"], r["lon"], r["zone_id"], r["name_ru"]) for r in rows]

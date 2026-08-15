@@ -9,14 +9,17 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.geocode import Resolved
 from pipeline.parse import parse
-from pipeline.routes import extract_route
+from pipeline.routes import SEA_OFFSET_KM, extract_route
 
 # Реальная геометрия Кубани: Анапа -> Раевская -> Новороссийск, ~30 км пути.
 ANAPA = Resolved("anapa", "district", "Анапа", 44.89, 37.32, "анапа")
@@ -84,3 +87,53 @@ def test_address_list_zigzag_is_not_a_route():
     text = ("Армавир, Белоглинский район, Новопокровский район, Тбилисский район "
             "опасность БПЛА в направлении Кропоткина")
     assert extract_route(text, parse(text), [armavir, beloglin, novopokr, tbilis]) is None
+
+
+# --- Акватории ---------------------------------------------------------
+# Море лежит в справочнике уровнем «регион», но «в Азовское море» — это
+# описанный путь, а не адресат предупреждения.
+AZOV = Resolved("azovskoe_more", "region", "Азовское море", 46.26, 37.15, "море")
+BERDYANSK = Resolved("berdyanskiy", "district", "Бердянский район",
+                     46.75, 36.79, "бердянский")
+SEAS = frozenset({"azovskoe_more", "chernoe_more"})
+
+
+def test_sea_is_a_route_point_when_named_as_destination():
+    """«Бердянский район пролёты БПЛА в Азовское море» — это маршрут.
+
+    Без акваторий такие сообщения терялись целиком: за две недели корпуса
+    их почти полторы тысячи.
+    """
+    text = "Бердянский район пролёты БПЛА в Азовское море"
+    route = extract_route(text, parse(text), [BERDYANSK, AZOV], SEAS)
+    assert route is not None
+    assert [p[2] for p in route] == ["Бердянский район", "Азовское море"]
+
+
+def test_sea_without_sea_ids_stays_a_region():
+    """Без списка акваторий море остаётся обычным регионом и не рисуется."""
+    text = "Бердянский район пролёты БПЛА в Азовское море"
+    assert extract_route(text, parse(text), [BERDYANSK, AZOV]) is None
+
+
+def test_far_sea_point_is_pulled_to_the_shore():
+    """Центр акватории — сторона света, а не место.
+
+    Чёрное море от Керченского полуострова — 230 км: линия «в направлении
+    Чёрного моря» шла бы через весь Крым. Точка ставится в море рядом с
+    берегом, в ту же сторону.
+    """
+    black = Resolved("chernoe_more", "region", "Чёрное море", 43.61, 34.5, "море")
+    gornostaevka = Resolved("gornostaevka", "place", "Горностаевка",
+                            45.32, 36.28, "горностаевка")
+    text = ("Горностаевка тревога по БПЛА с северо-запада и далее "
+            "в направлении Черного моря")
+    route = extract_route(text, parse(text), [gornostaevka, black], SEAS)
+    assert route is not None
+    lat0, lon0 = route[0][0], route[0][1]
+    lat1, lon1 = route[1][0], route[1][1]
+    dx = (lon1 - lon0) * 111.0 * math.cos(math.radians((lat0 + lat1) / 2))
+    dy = (lat1 - lat0) * 111.0
+    assert math.hypot(dx, dy) == pytest.approx(SEA_OFFSET_KM, rel=0.02)
+    # Направление сохранено: точка лежит юго-западнее берега, в море.
+    assert lat1 < lat0 and lon1 < lon0

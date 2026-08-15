@@ -491,7 +491,8 @@ def run_once(
 
         # Маршрут, описанный самим сообщением, — отдельная строка рядом с
         # событиями: линию утверждает источник, и она живёт своей жизнью.
-        route = extract_route(row["text"], observation, resolved)
+        route = extract_route(row["text"], observation, resolved,
+                              geocoder.sea_ids)
         if route:
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)

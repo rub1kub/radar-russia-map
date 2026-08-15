@@ -365,9 +365,18 @@ class Geocoder:
             stem_sets.setdefault(stem_key(norm), set()).add(zone_id)
 
         for row in self.connection.execute(
-            "SELECT id, parent_id, level, name_ru, lat, lon, population FROM zones"
+            "SELECT id, parent_id, level, name_ru, lat, lon, population,"
+            " source_id FROM zones"
         ):
             self.zones[row["id"]] = dict(row)
+
+        # Акватории лежат в справочнике уровнем «регион» — иначе их не с чем
+        # сравнивать при разборе, — но по смыслу это не субъект: «в Азовское
+        # море» называет направление полёта, и такая точка маршруту нужна.
+        self.sea_ids = {
+            zone_id for zone_id, zone in self.zones.items()
+            if str(zone.get("source_id") or "").endswith("-sea")
+        }
 
         self._add_aliases(name_sets, stem_sets)
 

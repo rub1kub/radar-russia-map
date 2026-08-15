@@ -32,6 +32,10 @@ from .parse import NAME_TAIL
 ROUTE_MARKER_RE = re.compile(
     r"\bчерез\b|в\s+сторону\b|в\s+направлени\w*|курс\w*\s+на\b"
     r"|прош[лаиё]\w*\s+на\b|ид[её]т\s+на\b|лет[ия]т\s+на\b"
+    # «Пролёты БПЛА в Азовское море» — путь, хотя предлог «в». Для суши
+    # так писать нельзя («в Краснодаре» — место), а в море не живут:
+    # уйти «в море» можно только направлением.
+    r"|\bв\s+(?:акватори\w+|азовск\w+\s+мор\w+|ч[её]рн\w+\s+мор\w+)"
     rf"|\bна\s+(?!(?:{NAME_TAIL})\b)(?=(?-i:[А-ЯЁ]))"
     rf"|\bк\s+(?!(?:{NAME_TAIL})\b)(?=(?-i:[А-ЯЁ]))",
     re.IGNORECASE,
@@ -50,6 +54,10 @@ MIN_TOTAL_KM = 5.0
 # Новопокровский... в направлении X» рисовало зигзаг с извилистостью до 8.
 # У настоящих маршрутов корпуса она 1.0-1.1.
 MAX_SINUOSITY = 1.6
+# Насколько далеко от берега ставится точка «в море». Полчаса лёта нашего
+# борта: дальше источник всё равно ничего не видит, а центр акватории —
+# это уже не место, а сторона света.
+SEA_OFFSET_KM = 45.0
 
 
 def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -58,12 +66,19 @@ def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(dx, dy)
 
 
-def extract_route(text: str, observation, resolved) -> list[tuple[float, float, str]] | None:
+def extract_route(text: str, observation, resolved,
+                  sea_ids: frozenset[str] | set[str] = frozenset(),
+                  ) -> list[tuple[float, float, str]] | None:
     """Точки маршрута в порядке текста — или None, если маршрута нет.
 
     resolved — зоны сообщения после drop_covered: порядок совпадает с
     порядком упоминания. Регионы не берутся: «в сторону Белгородской
     области» — направление, а не точка на линии.
+
+    Акватории — исключение: они лежат в справочнике уровнем «регион», но
+    «Бердянский район пролёты БПЛА в Азовское море» описывает именно путь,
+    и без моря такая линия терялась целиком. За две недели корпуса таких
+    сообщений почти полторы тысячи.
     """
     if not observation.relevant:
         return None
@@ -74,17 +89,41 @@ def extract_route(text: str, observation, resolved) -> list[tuple[float, float, 
         return None
 
     points: list[tuple[float, float, str]] = []
+    seas: list[int] = []
     for item in resolved:
-        if item.level == "region" or item.lat is None or item.lon is None:
+        if item.lat is None or item.lon is None:
+            continue
+        sea = item.zone_id in sea_ids
+        if item.level == "region" and not sea:
             continue
         if points and _km((points[-1][0], points[-1][1]), (item.lat, item.lon)) < 1:
             continue
+        if sea:
+            seas.append(len(points))
         points.append((item.lat, item.lon, item.name))
         if len(points) == MAX_POINTS:
             break
 
     if len(points) < 2:
         return None
+
+    # Море — не точка, а сторона света: центр акватории может лежать за
+    # двести километров, и линия «Горностаевка — центр Чёрного моря»
+    # рисовала бы бросок через весь Крым. Берём точку в море рядом с
+    # соседней сушей, в направлении середины акватории.
+    for index in seas:
+        neighbour = points[index - 1] if index else (
+            points[index + 1] if len(points) > index + 1 else None)
+        if neighbour is None:
+            continue
+        lat, lon, name = points[index]
+        span = _km((neighbour[0], neighbour[1]), (lat, lon))
+        if span <= SEA_OFFSET_KM:
+            continue
+        share = SEA_OFFSET_KM / span
+        points[index] = (neighbour[0] + (lat - neighbour[0]) * share,
+                         neighbour[1] + (lon - neighbour[1]) * share,
+                         name)
 
     total = 0.0
     for a, b in zip(points, points[1:]):
@@ -138,7 +177,8 @@ def backfill(connection: sqlite3.Connection, days: int = 90) -> int:
         if not observation.relevant:
             continue
         resolved = geocoder.drop_covered(geocoder.resolve(observation.place_phrases))
-        route = extract_route(row["text"], observation, resolved)
+        route = extract_route(row["text"], observation, resolved,
+                              geocoder.sea_ids)
         if route:
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)
