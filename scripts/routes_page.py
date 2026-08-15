@@ -169,6 +169,33 @@ class Land:
                 return True
         return False
 
+    def svg_path(self, projection: Projection, step: float = 3.0) -> str:
+        """Контуры суши в кадре проекции, прорежённые до читаемости.
+
+        Точки далеко за кадром прижимаются к его границе: форма там не
+        видна, а без прижатия контур Краснодарского края тащил в каждую
+        мини-карту тысячи невидимых точек.
+        """
+        margin = 60.0
+        paths = []
+        for _, ring in self.rings:
+            if not any(projection.inside(lat, lon) for lon, lat in ring):
+                continue
+            previous = None
+            parts = []
+            for lon, lat in ring:
+                x, y = projection.xy(lat, lon)
+                x = min(max(x, -margin), projection.width + margin)
+                y = min(max(y, -margin), projection.height + margin)
+                if previous and abs(x - previous[0]) < step \
+                        and abs(y - previous[1]) < step:
+                    continue
+                parts.append(f"{'M' if previous is None else 'L'}{x} {y}")
+                previous = (x, y)
+            if len(parts) > 2:
+                paths.append("".join(parts) + "Z")
+        return " ".join(paths)
+
     def sea_control(self, a: tuple[float, float],
                     b: tuple[float, float]) -> tuple[float, float] | None:
         """Точка над водой сбоку от середины плеча — управляющая для дуги.
@@ -324,39 +351,34 @@ def flow_path(points_xy: list[tuple[float, float]],
 
 
 def arrow_head(tail: tuple[float, float], tip: tuple[float, float],
-               size: float, color: str) -> str:
-    """Заливной наконечник, посаженный по направлению последнего отрезка."""
+               size: float, color: str, scaled: bool = False) -> str:
+    """Заливной наконечник, посаженный по направлению последнего отрезка.
+
+    scaled=True вешает класс и координаты вершины: при зуме JS контр-
+    масштабирует наконечник вокруг вершины, чтобы он не разрастался
+    вместе с картой.
+    """
     angle = math.atan2(tip[1] - tail[1], tip[0] - tail[0])
     left = (tip[0] - size * math.cos(angle - 0.42),
             tip[1] - size * math.sin(angle - 0.42))
     right = (tip[0] - size * math.cos(angle + 0.42),
              tip[1] - size * math.sin(angle + 0.42))
-    return (f'<path d="M{round(left[0], 1)} {round(left[1], 1)} '
+    extra = (f' class="fh" data-tx="{tip[0]}" data-ty="{tip[1]}"'
+             if scaled else "")
+    return (f'<path{extra} d="M{round(left[0], 1)} {round(left[1], 1)} '
             f'L{tip[0]} {tip[1]} L{round(right[0], 1)} {round(right[1], 1)} '
-            f'Z" fill="{color}" />')
+            f'Z" fill="{color}" fill-opacity="0.85" />')
 
 
 def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
     """Общая карта: подложка с подписями, поверх — потоки двух слоёв."""
     projection = Projection(HERO_BBOX, HERO_W, HERO_H, pad=10, precision=0)
 
-    # Подложка: контуры субъектов, прорежённые до пикселя.
-    base_paths = []
-    for _, ring_data in land.rings:
-        if not any(projection.inside(lat, lon) for lon, lat in ring_data):
-            continue
-        previous = None
-        parts = []
-        for lon, lat in ring_data:
-            x, y = projection.xy(lat, lon)
-            if previous and abs(x - previous[0]) < 3 and abs(y - previous[1]) < 3:
-                continue
-            parts.append(f"{'M' if previous is None else 'L'}{x} {y}")
-            previous = (x, y)
-        if len(parts) > 2:
-            base_paths.append("".join(parts) + "Z")
-    base = (f'<path d="{" ".join(base_paths)}" fill="#151b18" '
-            f'stroke="#28322c" stroke-width="0.7" />') if base_paths else ""
+    # Подложка: суша заметно светлее моря, границы не тают при зуме.
+    outline = land.svg_path(projection)
+    base = (f'<path d="{outline}" fill="#182019" stroke="#3a463f" '
+            f'stroke-width="1" vector-effect="non-scaling-stroke" />'
+            if outline else "")
 
     # Подписи субъектов — тихим цветом, только внутри кадра. Группа
     # с классом: при зуме JS контр-масштабирует кегль, чтобы подпись
@@ -390,8 +412,9 @@ def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
             f'<path d="{flow_path(xy, control_xy)}" fill="none" '
             f'stroke="#e9404f" stroke-width="{width}" '
             f'stroke-opacity="{opacity}" stroke-linecap="round" '
-            f'stroke-linejoin="round" />'
-            + arrow_head(tail_xy, xy[-1], 3.2 + width * 1.15, "#f77683"))
+            f'stroke-linejoin="round" vector-effect="non-scaling-stroke" />'
+            + arrow_head(tail_xy, xy[-1], 3.2 + width * 1.15, "#f77683",
+                         scaled=True))
 
     # Восстановленные переходы — пунктирные дуги другим цветом. Пара,
     # уже названная источниками, второй раз не рисуется.
@@ -412,8 +435,10 @@ def hero_svg(routes: list[dict], transitions: list[dict], land: Land) -> str:
         dashed.append(
             f'<path d="{flow_path(xy, control_xy)}" fill="none" '
             f'stroke="#f7a23b" stroke-width="{width}" stroke-opacity="0.8" '
-            f'stroke-dasharray="7 5" stroke-linecap="round" />'
-            + arrow_head(tail_xy, xy[1], 3 + width * 1.15, "#f0b46a"))
+            f'stroke-dasharray="7 5" stroke-linecap="round" '
+            f'vector-effect="non-scaling-stroke" />'
+            + arrow_head(tail_xy, xy[1], 3 + width * 1.15, "#f0b46a",
+                         scaled=True))
 
     # Города-ориентиры. Тоже в группе — кегль контр-масштабируется при зуме.
     cities = []
@@ -448,6 +473,12 @@ def card_svg(corridor: dict, land: Land) -> str:
     width, height = 280, 170
     projection = Projection(bbox, width, height, pad=12)
 
+    # География кадра: береговая линия и границы — иначе стрелка висит
+    # в пустоте, и прибрежный коридор не отличить от степного.
+    outline = land.svg_path(projection, step=3.0)
+    base = (f'<path d="{outline}" fill="#161d1a" stroke="#333f39" '
+            f'stroke-width="0.8" />' if outline else "")
+
     seen: set[str] = set()
     faint = []
     for route in corridor["routes"][:60]:
@@ -479,7 +510,8 @@ def card_svg(corridor: dict, land: Land) -> str:
     return (f'<svg viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Коридор {escape(corridor["start"])} — '
             f'{escape(corridor["end"])}" xmlns="http://www.w3.org/2000/svg">'
-            f'<rect width="{width}" height="{height}" fill="#0e1311" rx="8" />'
+            f'<rect width="{width}" height="{height}" fill="#0c100f" rx="8" />'
+            + base
             + f'<g fill="none" stroke="#e9404f" stroke-opacity="0.13" '
               f'stroke-width="1.6" stroke-linecap="round">{"".join(faint)}</g>'
             + f'<path d="{flow_path(face_xy, control_xy)}" fill="none" '
@@ -519,13 +551,25 @@ PANZOOM_JS = """
   var W = %(w)d, H = %(h)d;
   var vb = [0, 0, W, H];
   var labelGroups = svg.querySelectorAll(".map-labels, .map-cities");
+  var cityDots = svg.querySelectorAll(".map-cities circle");
+  var heads = svg.querySelectorAll(".fh");
   function apply() {
     svg.setAttribute("viewBox", vb.join(" "));
-    // Подписи не должны раздуваться вместе с картой: кегль в юнитах SVG
-    // уменьшается пропорционально приближению — на экране размер стоит.
+    // Подписи, точки и наконечники не должны раздуваться вместе с картой:
+    // их размер в юнитах SVG уменьшается пропорционально приближению —
+    // на экране он стоит на месте, а геометрия раздвигается.
     var scale = vb[2] / W;
     labelGroups.forEach(function (g) {
       g.setAttribute("font-size", (12 * scale).toFixed(2));
+    });
+    cityDots.forEach(function (dot) {
+      dot.setAttribute("r", (2.4 * scale).toFixed(2));
+    });
+    heads.forEach(function (head) {
+      var tx = head.dataset.tx, ty = head.dataset.ty;
+      head.setAttribute("transform",
+        "translate(" + tx + " " + ty + ") scale(" + scale.toFixed(4) +
+        ") translate(-" + tx + " -" + ty + ")");
     });
   }
   function clamp() {
@@ -641,7 +685,9 @@ def build_page(routes: list[dict], transitions: list[dict],
               border-radius:10px; font-weight:600; }}
       .hero-wrap {{ position:relative; margin:26px 0 8px; }}
       .hero {{ border-radius:12px; overflow:hidden; cursor:grab;
-              border:1px solid rgba(255,255,255,.07); touch-action:none; }}
+              border:1px solid rgba(255,255,255,.07); touch-action:none;
+              user-select:none; -webkit-user-select:none; }}
+      .hero text {{ pointer-events:none; }}
       .hero:active {{ cursor:grabbing; }}
       .hero svg {{ display:block; width:100%; height:auto; }}
       .hero-zoom {{ position:absolute; right:12px; bottom:12px;
