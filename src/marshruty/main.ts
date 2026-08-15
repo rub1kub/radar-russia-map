@@ -70,6 +70,24 @@ function plural(n: number, one: string, few: string, many: string): string {
  * смог, и он прав: это внутренняя терминология. Человеку надо знать,
  * откуда куда летят, сколько раз это видели и насколько данным верить.
  */
+/** Тот же цвет, но полупрозрачный: приглушение невыбранных трасс. */
+function withAlpha(hex: string, alpha: number): string {
+  const value = parseInt(hex.slice(1), 16);
+  return `rgba(${(value >> 16) & 255},${(value >> 8) & 255},${value & 255},${alpha})`;
+}
+
+function chainKm(chain: Chain): number {
+  let total = 0;
+  for (let i = 1; i < chain.pts.length; i += 1) {
+    const [lat0, lon0] = chain.pts[i - 1];
+    const [lat1, lon1] = chain.pts[i];
+    const dx = (lon1 - lon0) * 111 * Math.cos(((lat0 + lat1) / 2) * Math.PI / 180);
+    const dy = (lat1 - lat0) * 111;
+    total += Math.hypot(dx, dy);
+  }
+  return Math.round(total);
+}
+
 function chainTip(chain: Chain): string {
   const lines = [`<b>${chain.from} → ${chain.to}</b>`];
   if (chain.via.length) {
@@ -133,33 +151,58 @@ function render(target: HTMLElement, graph: Graph): void {
   const animate = !window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
 
+  let selected: Chain | null = null;
+
   const chainStyle = (feature: FeatureLike, resolution: number): Style[] => {
     const chain = feature.get("chain") as Chain;
     const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
-    if (!chain.t && zoom < DETAIL_ZOOM) return [];
+    const chosen = selected === chain;
+    // Выбранная трасса видна на любом зуме — иначе она пропадала бы прямо
+    // с открытой карточкой.
+    if (!chain.t && zoom < DETAIL_ZOOM && !chosen) return [];
     const trunk = Boolean(chain.t);
     const ours = chain.cs >= OURS_SHARE;
-    const width = trunk ? 2 + 3.6 * chain.s : 1.1 + 1.6 * chain.s;
-    return [
+    const base = trunk ? 2 + 3.6 * chain.s : 1.1 + 1.6 * chain.s;
+    const width = chosen ? base + 3 : base;
+    // Пока одна трасса выбрана, остальные приглушены: видно, что именно
+    // описано в карточке.
+    const dim = selected !== null && !chosen ? 0.25 : 1;
+    const paint = (color: string) => (dim === 1 ? color : withAlpha(color, dim));
+    const styles = [
       new Style({
         stroke: new Stroke({
-          color: ours ? (trunk ? OURS_TRUNK : OURS_LOCAL)
-                      : (trunk ? TRUNK : LOCAL),
+          color: paint(ours ? (trunk ? OURS_TRUNK : OURS_LOCAL)
+                            : (trunk ? TRUNK : LOCAL)),
           width,
           lineCap: "round",
           lineJoin: "round"
-        })
+        }),
+        zIndex: chosen ? 3 : 1
       }),
       new Style({
         stroke: new Stroke({
-          color: ours ? OURS_ANT : ANT,
+          color: paint(ours ? OURS_ANT : ANT),
           width: Math.max(1, width * 0.45),
           lineDash: [2, 16],
           lineDashOffset: dashOffset,
           lineCap: "round"
-        })
+        }),
+        zIndex: chosen ? 4 : 2
       })
     ];
+    if (chosen) {
+      // Свечение под выбранной линией — чтобы её было видно в клубке.
+      styles.unshift(new Style({
+        stroke: new Stroke({
+          color: "rgba(255,255,255,0.28)",
+          width: width + 8,
+          lineCap: "round",
+          lineJoin: "round"
+        }),
+        zIndex: 2
+      }));
+    }
+    return styles;
   };
 
   const chainLayer = new VectorLayer({
@@ -267,20 +310,110 @@ function render(target: HTMLElement, graph: Graph): void {
     target.style.cursor = chain.kor ? "pointer" : "default";
   });
 
+  // --- Карточка выбранной трассы ---------------------------------------
+  const card = document.createElement("div");
+  card.className = "chain-card";
+  target.appendChild(card);
+
+  function describe(chain: Chain): string {
+    const total = chain.nm + chain.cp;
+    const rows: string[] = [];
+    rows.push(`<dt>Длина</dt><dd>${chainKm(chain)} км</dd>`);
+    rows.push(
+      `<dt>Повторов</dt><dd>${total} ${plural(total, "раз", "раза", "раз")}</dd>`
+    );
+    if (chain.nm) {
+      rows.push(`<dt>Описан источником</dt><dd>${chain.nm}</dd>`);
+    }
+    if (chain.cp) {
+      rows.push(`<dt>Восстановлено нами</dt><dd>${chain.cp}</dd>`);
+    }
+    if (chain.r) {
+      rows.push(`<dt>Обратно</dt><dd>${chain.r}</dd>`);
+    }
+    const path = chain.via.length
+      ? `<p class="path">${[chain.from, ...chain.via, chain.to].join(" → ")}</p>`
+      : "";
+    const link = chain.kor
+      ? `<p style="margin:10px 0 0"><a href="#${chain.kor}">Карточка коридора ниже →</a></p>`
+      : "";
+    return (
+      `<button class="close" type="button" aria-label="Закрыть">×</button>` +
+      `<h3>${chain.from} → ${chain.to}</h3>${path}` +
+      `<dl>${rows.join("")}</dl>${link}`
+    );
+  }
+
+  function select(chain: Chain | null): void {
+    selected = chain;
+    if (chain) {
+      card.innerHTML = describe(chain);
+      card.classList.add("is-open");
+    } else {
+      card.classList.remove("is-open");
+    }
+    chainLayer.changed();
+  }
+
+  card.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).classList.contains("close")) {
+      select(null);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") select(null);
+  });
+
   map.on("click", (event) => {
     const feature = map.forEachFeatureAtPixel(event.pixel, (found) => found, {
       hitTolerance: 6,
       layerFilter: (layer) => layer === chainLayer
     });
-    const anchor = feature?.get("chain")?.kor as string | undefined;
-    if (anchor) {
-      window.location.hash = anchor;
-    }
+    select((feature?.get("chain") as Chain | undefined) ?? null);
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
+/**
+ * Поиск по галерее коридоров.
+ *
+ * Ищет по именам концов и промежуточных точек и по субъектам, которым они
+ * принадлежат: строку собирает генератор в data-q каждой карточки, поэтому
+ * «Крым» находит Джанкой, а «Кубань» — Новороссийск.
+ */
+function initFinder(): void {
+  const input = document.getElementById("finder") as HTMLInputElement | null;
+  const counter = document.getElementById("finder-count");
+  if (!input) return;
+  const cards = Array.from(
+    document.querySelectorAll<HTMLElement>("figure.corridor")
+  );
+
+  const apply = () => {
+    const query = input.value.trim().toLowerCase();
+    let shown = 0;
+    for (const card of cards) {
+      const hit = !query || (card.dataset.q ?? "").includes(query);
+      card.hidden = !hit;
+      if (hit) shown += 1;
+    }
+    if (counter) {
+      counter.textContent = query
+        ? `${shown} из ${cards.length}`
+        : "";
+    }
+  };
+
+  input.addEventListener("input", apply);
+  apply();
+}
+
+function boot(): void {
   init();
+  initFinder();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot);
+} else {
+  boot();
 }

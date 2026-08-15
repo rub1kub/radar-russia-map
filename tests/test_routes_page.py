@@ -214,6 +214,59 @@ def test_assets_are_versioned_against_the_weekly_cache(land):
     assert 'data-version="ccc33333"' in html
 
 
+def test_long_leg_is_routed_through_waypoints():
+    """Тамань — Сочи борт идёт вдоль берега и попадает в Туапсе.
+
+    Раньше длинное плечо рисовалось прямой (или дугой над морем) мимо
+    городов, и вдоль побережья ложился веер параллельных лент.
+    """
+    a = {"lat": 45.21, "lon": 36.71, "name": "Тамань", "weight": 50}
+    b = {"lat": 43.60, "lon": 39.73, "name": "Сочи", "weight": 50}
+    between = [
+        {"lat": 44.89, "lon": 37.32, "name": "Анапа", "weight": 40},
+        {"lat": 44.72, "lon": 37.77, "name": "Новороссийск", "weight": 40},
+        {"lat": 44.10, "lon": 39.08, "name": "Туапсе", "weight": 40},
+        # Далеко в стороне от прямой — не попутный.
+        {"lat": 45.04, "lon": 38.98, "name": "Краснодар", "weight": 40},
+    ]
+    nodes = [a, b, *between]
+
+    picked = rp.waypoints_between(a, b, nodes, {0, 1})
+    names = []
+    for lat, lon in picked:
+        names += [n["name"] for n in nodes
+                  if n["lat"] == lat and n["lon"] == lon]
+
+    assert "Туапсе" in names
+    assert "Краснодар" not in names
+    # Порядок вдоль пути, а не вперемешку.
+    assert names == sorted(names, key=lambda n: {
+        "Анапа": 1, "Новороссийск": 2, "Туапсе": 3}[n])
+
+
+def test_short_leg_keeps_its_straight_line():
+    """Короткое плечо через попутные точки не ведём: это уже петляние."""
+    a = {"lat": 44.89, "lon": 37.32, "name": "Анапа", "weight": 10}
+    b = {"lat": 44.72, "lon": 37.77, "name": "Новороссийск", "weight": 10}
+    middle = {"lat": 44.83, "lon": 37.56, "name": "Раевская", "weight": 10}
+
+    assert rp.waypoints_between(a, b, [a, b, middle], {0, 1}) == []
+
+
+def test_cards_carry_region_names_for_search():
+    """Поиск по галерее должен находить Джанкой по слову «Крым»."""
+    corridor = rp.build_corridors(
+        [_route([(45.7, 34.4, "Джанкой"), (45.2, 33.4, "Раздольное")])] * 12)[0]
+
+    html = rp.card_html(corridor, rp.Land(), "kor-0",
+                        {"Джанкой": "Республика Крым",
+                         "Раздольное": "Республика Крым"})
+
+    assert 'data-q="' in html
+    assert "республика крым" in html
+    assert "джанкой" in html
+
+
 def test_sea_corridors_stay_out_of_the_gallery():
     """«Новороссийск → Чёрное море» — уход за берег, а не коридор."""
     sea = (44.30, 37.20, "Чёрное море")

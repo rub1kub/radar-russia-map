@@ -95,6 +95,17 @@ TRACK_MIN_POINTS = 3
 # Кластеризация точек в узлы: шаг сетки ~10 км.
 NODE_LAT_STEP = 0.09
 
+# Длинное плечо проводится через попутные места, а не по прямой: борт с
+# Тамани на Сочи идёт вдоль берега и залетает в Туапсе, Небуг, Лермонтово —
+# и источники их называют. Раньше такое плечо рисовалось одной дугой над
+# морем, и вдоль побережья ложился веер параллельных лент, каждая мимо
+# городов. Попутным считается узел не дальше DETOUR_BAND_KM от прямой и не
+# ближе DETOUR_STEP_KM к предыдущему выбранному.
+DETOUR_MIN_LEG_KM = 55.0
+DETOUR_BAND_KM = 22.0
+DETOUR_STEP_KM = 18.0
+DETOUR_MAX_POINTS = 8
+
 
 def plural(count: int, one: str, few: str, many: str) -> str:
     mod100, mod10 = abs(count) % 100, abs(count) % 10
@@ -595,6 +606,56 @@ def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
     return chains
 
 
+def waypoints_between(a: dict, b: dict, nodes: list[dict],
+                      skip: set[int]) -> list[tuple[float, float]]:
+    """Попутные места на длинном плече — чтобы линия шла через них.
+
+    Борт с Тамани на Сочи летит вдоль берега и попадает в Туапсе, Небуг,
+    Лермонтово; источники называют их отдельными сообщениями, поэтому все
+    эти места уже есть в графе. Плечо «Анапа — Сочи» одной прямой (или
+    дугой над морем) проходило мимо, и вдоль побережья ложился веер лент.
+    Здесь плечо разворачивается в цепочку узлов, лежащих в узкой полосе
+    вдоль прямой, — линия садится на реальную географию.
+    """
+    span = _km((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+    if span < DETOUR_MIN_LEG_KM:
+        return []
+    cos = math.cos(math.radians((a["lat"] + b["lat"]) / 2))
+    ax, ay = a["lon"] * cos, a["lat"]
+    bx, by = b["lon"] * cos, b["lat"]
+    dx, dy = bx - ax, by - ay
+    norm = dx * dx + dy * dy
+    if norm <= 0:
+        return []
+
+    band = min(DETOUR_BAND_KM, span * 0.25)
+    found: list[tuple[float, float, float]] = []
+    for index, node in enumerate(nodes):
+        if index in skip or not node["weight"]:
+            continue
+        px, py = node["lon"] * cos, node["lat"]
+        t = ((px - ax) * dx + (py - ay) * dy) / norm
+        if not 0.04 < t < 0.96:
+            continue
+        # Расстояние до прямой — в километрах, а не в градусах.
+        offset = abs(dy * (px - ax) - dx * (py - ay)) / math.sqrt(norm) * 111.0
+        if offset > band:
+            continue
+        found.append((t, node["lat"], node["lon"]))
+
+    found.sort()
+    picked: list[tuple[float, float]] = []
+    last_t = 0.0
+    for t, lat, lon in found:
+        if (t - last_t) * span < DETOUR_STEP_KM:
+            continue
+        picked.append((lat, lon))
+        last_t = t
+        if len(picked) == DETOUR_MAX_POINTS:
+            break
+    return picked
+
+
 def export_graph(nodes: list[dict], edges: list[dict], land: Land,
                  anchors: dict[tuple[str, str], str], stats: dict) -> dict:
     """corridors.json: готовые трассы — клиенту остаётся нарисовать линии.
@@ -625,12 +686,19 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
         # идёт вдоль берега, — и всё это одной гладкой линией.
         waypoints: list[tuple[float, float]] = [
             (nodes[chain[0]["a"]]["lat"], nodes[chain[0]["a"]]["lon"])]
+        own = {edge["a"] for edge in chain} | {edge["b"] for edge in chain}
         for edge in chain:
             a, b = nodes[edge["a"]], nodes[edge["b"]]
-            control = land.sea_control((a["lat"], a["lon"]),
-                                       (b["lat"], b["lon"]))
-            if control:
-                waypoints.append(control)
+            through = waypoints_between(a, b, nodes, own)
+            if through:
+                # Линия идёт по земле, через попутные города: дуга над морем
+                # тут только увела бы её от них.
+                waypoints.extend(through)
+            else:
+                control = land.sea_control((a["lat"], a["lon"]),
+                                           (b["lat"], b["lon"]))
+                if control:
+                    waypoints.append(control)
             waypoints.append((b["lat"], b["lon"]))
         points = smooth_path(waypoints)
         top = max(e["count"] for e in chain)
@@ -769,15 +837,28 @@ THREAT_WORDS = {"uav": "БПЛА", "fpv": "FPV", "rocket": "ракеты",
                 "kab": "КАБ", "bek": "БЭК", "aviation": "авиация"}
 
 
-def card_html(corridor: dict, land: Land, anchor: str) -> str:
+def card_html(corridor: dict, land: Land, anchor: str,
+              regions: dict[str, str] | None = None) -> str:
     threat_keys = [k for k, _ in corridor["threats"].most_common(2)
                    if k != "unknown"]
     threats = ", ".join(THREAT_WORDS.get(k, k) for k in threat_keys) or "БПЛА"
     months = len(corridor["months"])
     stability = (f"{months} {plural(months, 'месяц', 'месяца', 'месяцев')} подряд"
                  if months > 1 else "в этом месяце")
+    # Строка для поиска: концы, промежуточные точки и субъекты, которым они
+    # принадлежат, — чтобы «Крым» находил Джанкой, а «Кубань» Новороссийск.
+    regions = regions or {}
+    place_names = [corridor["start"], corridor["end"]]
+    place_names += [point[2] for point in corridor["face"]]
+    haystack = set()
+    for name in place_names:
+        haystack.add(name.lower())
+        region = regions.get(name)
+        if region:
+            haystack.add(region.lower())
+    search = " ".join(sorted(haystack))
     return f"""
-    <figure class="corridor" id="{anchor}">
+    <figure class="corridor" id="{anchor}" data-q="{escape(search)}">
       {card_svg(corridor, land)}
       <figcaption>
         <b>{escape(corridor["start"])} → {escape(corridor["end"])}</b>
@@ -791,7 +872,8 @@ def card_html(corridor: dict, land: Land, anchor: str) -> str:
 def build_page(routes: list[dict], tracks: list[list[dict]],
                land: Land, updated: str,
                skip_names: frozenset[str] | set[str] = frozenset(),
-               versions: dict[str, str] | None = None) -> str:
+               versions: dict[str, str] | None = None,
+               regions: dict[str, str] | None = None) -> str:
     versions = versions or {}
     js_v = f'?v={versions["js"]}' if versions.get("js") else ""
     css_v = f'?v={versions["css"]}' if versions.get("css") else ""
@@ -832,7 +914,7 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                      "url": f"{SITE}/"},
     }, ensure_ascii=False)
 
-    cards = "".join(card_html(c, land, f"kor-{i}")
+    cards = "".join(card_html(c, land, f"kor-{i}", regions)
                     for i, c in enumerate(corridors))
 
     return f"""<!doctype html>
@@ -866,13 +948,49 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       a.map {{ display:inline-block; margin:16px 0 8px; padding:13px 22px;
               background:#e93e4e; color:#fff; text-decoration:none;
               border-radius:10px; font-weight:600; }}
-      #routes-map {{ height:640px; margin:26px 0 8px; border-radius:12px;
+      #routes-map {{ height:640px; margin:22px 0 8px; border-radius:12px;
                     overflow:hidden; border:1px solid rgba(255,255,255,.07);
                     background:#0c100f; position:relative; }}
       @media (max-width:700px) {{ #routes-map {{ height:440px; }} }}
       .map-note {{ font-size:13px; color:#7d8a83; margin-top:8px; }}
+      /* Легенда: два цвета — два происхождения линии. */
+      .legend {{ position:absolute; left:12px; top:12px; z-index:3;
+                background:rgba(12,16,15,.9); border:1px solid #28322c;
+                border-radius:10px; padding:9px 12px; font-size:13px;
+                color:#aab4ad; pointer-events:none; line-height:1.7; }}
+      .legend i {{ display:inline-block; width:26px; height:0;
+                  border-top:4px solid #f0475a; border-radius:2px;
+                  vertical-align:middle; margin-right:8px; }}
+      .legend i.ours {{ border-top-color:#f0b429; }}
+      /* Карточка выбранной трассы поверх карты. */
+      .chain-card {{ position:absolute; right:12px; top:12px; z-index:4;
+                    width:290px; max-width:calc(100% - 24px);
+                    background:rgba(10,14,13,.96); border:1px solid #35413a;
+                    border-radius:12px; padding:14px 16px; font-size:13px;
+                    line-height:1.55; color:#c9d2cb; display:none;
+                    box-shadow:0 10px 32px rgba(0,0,0,.5); }}
+      .chain-card.is-open {{ display:block; }}
+      .chain-card h3 {{ margin:0 8px 8px 0; font-size:16px; color:#eef2ec; }}
+      .chain-card dl {{ margin:0; display:grid;
+                       grid-template-columns:auto 1fr; gap:3px 10px; }}
+      .chain-card dt {{ color:#7d8a83; }}
+      .chain-card dd {{ margin:0; color:#dfe6df; }}
+      .chain-card .path {{ margin:8px 0 10px; color:#9aa79f; }}
+      .chain-card .close {{ position:absolute; right:8px; top:6px;
+                           background:none; border:0; color:#7d8a83;
+                           font-size:20px; line-height:1; cursor:pointer; }}
+      .chain-card a {{ color:#9fd4b0; }}
+      @media (max-width:700px) {{ .chain-card {{ right:8px; left:8px;
+        width:auto; top:auto; bottom:8px; }} .legend {{ font-size:11px; }} }}
+      .finder {{ display:flex; gap:10px; align-items:center; margin:14px 0 4px; }}
+      .finder input {{ flex:1; max-width:420px; padding:11px 14px;
+                      border-radius:10px; border:1px solid #2c352f;
+                      background:#101614; color:#e6ebe6; font-size:15px; }}
+      .finder input::placeholder {{ color:#6f7c74; }}
+      .finder span {{ font-size:13px; color:#7d8a83; }}
       .gallery {{ display:grid; gap:22px 18px; margin-top:20px;
                  grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
+      figure.corridor[hidden] {{ display:none; }}
       figure.corridor {{ margin:0; scroll-margin-top:24px; }}
       figure.corridor svg {{ display:block; width:100%; height:auto;
                             border-radius:8px; }}
@@ -890,49 +1008,51 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
     <main>
       <nav class="crumbs"><a href="/">Карта обстановки</a> → Маршруты</nav>
       <h1>Маршруты БПЛА: повторяющиеся коридоры</h1>
-      <p>За {span_days} {plural(span_days, "день", "дня", "дней")} карта
-      записала <strong>{total}</strong>
-      {plural(total, "маршрут", "маршрута", "маршрутов")}, названных самими
-      источниками, и восстановила <strong>{waves}</strong>
-      {plural(waves, "волну", "волны", "волн")} по движению фиксаций:
-      налёт идёт волнами, борт видят в одном районе, через двадцать минут
-      в соседнем — и эта цепочка собирается обратно в путь
-      ({wave_points} {plural(wave_points, "фиксация", "фиксации", "фиксаций")}
-      легли в треки). Всё вместе сложено в повторяющиеся трассы.
-      {night_share}% маршрутов — ночные.</p>
+      <p>Пути, которыми беспилотники летают снова и снова, — за
+      {span_days} {plural(span_days, "день", "дня", "дней")} наблюдений.
+      <strong>Нажмите на любую линию</strong>, чтобы увидеть подробности.
+      {night_share}% полётов приходится на ночь.</p>
 
-      <a class="map" href="/">Открыть живую карту</a>
-
-      <div id="routes-map" data-version="{data_v}"></div>
-      <p class="map-note">Толщина линии — сколько раз повторилась трасса;
-      штрихи бегут по направлению полёта. При приближении проявляются
-      локальные ветки и подписи малых мест. Наведите на линию — подсказка
-      с числами; клик ведёт к карточке коридора ниже. Прибрежные дуги идут
-      над морем: «Туапсе — Сочи» не значит «через города».</p>
+      <div id="routes-map" data-version="{data_v}">
+        <div class="legend">
+          <div><i></i> путь описал источник</div>
+          <div><i class="ours"></i> путь восстановили мы</div>
+        </div>
+      </div>
+      <p class="map-note">Чем толще линия, тем чаще этим путём летали;
+      штрихи бегут по направлению полёта. Приблизьте — появятся малые
+      сёла и второстепенные пути.</p>
 
       <h2>Устойчивые коридоры</h2>
-      <p>Каждая карточка — один коридор между населёнными пунктами:
-      бледные линии — все его маршруты, стрелка — самый частый вариант
-      пути. Уходы за береговую черту сюда не попадают — их видно на
-      карте выше.</p>
+      <p>Пути между населёнными пунктами, повторившиеся не меньше
+      {MIN_CORRIDOR} раз.</p>
+      <div class="finder">
+        <input id="finder" type="search" autocomplete="off"
+               placeholder="Найти город, район или регион — например, Крым"
+               aria-label="Поиск по коридорам" />
+        <span id="finder-count"></span>
+      </div>
       <div class="gallery">{cards}</div>
 
-      <h2>Как это читать</h2>
-      <p>Трасса — цепочка плеч между местами, которые называют снова и
-      снова; плечо живёт от {MIN_EDGE} повторов и рисуется в преобладающую
-      сторону. Линии гладкие не для красоты: борт самолётной схемы на
+      <h2>Откуда эти линии</h2>
+      <p><b style="color:#f0475a">Красные</b> — пути, которые описал сам
+      источник: «от Анапы через Раевскую на Новороссийск». Мы их только
+      пересказываем.</p>
+      <p><b style="color:#f0b429">Жёлтые</b> — пути, которые мы собрали
+      сами. Налёт идёт волнами: борт видят в одном районе, через
+      3–35 минут в соседнем. Если он мог туда долететь с правдоподобной
+      скоростью (80–260 км/ч при крейсерских 150) и без резкого разворота,
+      фиксации связываются в один трек. За всё время наблюдений так
+      восстановлено {waves} {plural(waves, "волна", "волны", "волн")}
+      из {wave_points}
+      {plural(wave_points, "фиксации", "фиксаций", "фиксаций")}. Это
+      догадка — но догадка по физике полёта, а не по совпадению имён.</p>
+      <p>Линии гладкие не для красоты: борт самолётной схемы на
       крейсерских 150 км/ч разворачивается радиусом около 400 метров — на
-      масштабе карты угол физически невозможен, и ломаная была бы враньём
-      о траектории.</p>
-      <p>Данных два вида, и подсказка всегда говорит, чего сколько.
-      Первый — маршруты, которые источник описал сам: «от Анапы через
-      Раевскую на Новороссийск». Второй — волны, восстановленные из нашей
-      базы: борт видят в одном районе, через 3–35 минут в соседнем, и если
-      он мог туда долететь с правдоподобной скоростью (80–260 км/ч при
-      крейсерских 150) без разворота круче 70°, фиксации связываются в
-      трек. Это догадка — но догадка по физике полёта, а не по
-      совпадению имён. Число повторов зависит и от активности каналов
-      региона.</p>
+      масштабе карты угол физически невозможен. По той же причине длинный
+      путь ведётся через попутные города, а не по прямой. Как часто путь
+      повторялся, зависит и от того, сколько каналов пишет об этом
+      районе.</p>
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по
@@ -969,6 +1089,26 @@ def sea_names(connection: sqlite3.Connection) -> set[str]:
         "SELECT name_ru FROM zones WHERE source_id LIKE '%-sea'")}
 
 
+def region_by_name(connection: sqlite3.Connection) -> dict[str, str]:
+    """Короткое имя места -> субъект, которому оно принадлежит.
+
+    Нужно поиску по галерее: человек ищет «Крым» или «Кубань», а карточки
+    подписаны городами и районами.
+    """
+    regions = {row["id"]: row["name_ru"] for row in connection.execute(
+        "SELECT id, name_ru FROM zones WHERE level = 'region'")}
+    result: dict[str, str] = {}
+    for row in connection.execute(
+            """SELECT z.name_ru AS name, z.parent_id AS parent,
+                      p.parent_id AS grand
+               FROM zones z LEFT JOIN zones p ON p.id = z.parent_id
+               WHERE z.level IN ('place', 'district', 'city')"""):
+        region = regions.get(row["parent"]) or regions.get(row["grand"])
+        if region:
+            result.setdefault(short_name(row["name"]), region)
+    return result
+
+
 def build(connection: sqlite3.Connection) -> int:
     """Собрать corridors.json и dist/marshruty/index.html."""
     routes = load_routes(connection)
@@ -1001,7 +1141,7 @@ def build(connection: sqlite3.Connection) -> int:
     }
     (directory / "index.html").write_text(
         build_page(routes, tracks, land, updated, sea_names(connection),
-                   versions),
+                   versions, region_by_name(connection)),
         encoding="utf-8")
     return len(corridors)
 
