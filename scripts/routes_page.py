@@ -53,17 +53,20 @@ MONTHS = ("января", "февраля", "марта", "апреля", "ма�
 # десять — закономерность. Карточек не больше шестидесяти.
 MIN_CORRIDOR = 10
 MAX_CARDS = 60
-# Ребро графа живёт от трёх повторов, всего рёбер не больше четырёхсот:
-# ниже порога начинается сыпь единичных догадок.
-MIN_EDGE = 3
-MAX_EDGES = 420
-# Магистрали — верх списка по важности (повторы × длина): видны на обзоре,
+# Ребро графа живёт от двух повторов: тройка оставляла север пустым,
+# хотя запуски там почти ежедневно — просто ленты реже повторяются.
+MIN_EDGE = 2
+MAX_EDGES = 700
+# Трассы — верх списка по важности (повторы × длина): видны на обзоре,
 # остальное движок показывает при приближении.
-TRUNK_EDGES = 120
-# Подписи узлов: первый ярус виден всегда, второй — при приближении.
-LABELS_ALWAYS = 24
-LABELS_ZOOMED = 110
-DOTS_ALWAYS = 80
+TRUNK_CHAINS = 60
+# Продолжение трассы: следующее плечо не разворачивается больше чем на
+# ~75° и весит хотя бы треть текущего — иначе это уже другая трасса.
+CHAIN_MAX_TURN = math.pi * 0.42
+CHAIN_MIN_RATIO = 0.3
+# Подписи путевых точек: первый ярус виден всегда, второй — при приближении.
+LABELS_ALWAYS = 26
+LABELS_ZOOMED = 120
 
 MIN_TRANSITION = 5
 # Окно склейки двух фиксаций в переход: ближе трёх минут — это одно и то же
@@ -412,7 +415,7 @@ def build_graph(routes: list[dict], transitions: list[dict]) -> tuple[
 
 
 def _bezier(a: tuple[float, float], control: tuple[float, float],
-            b: tuple[float, float], steps: int = 12) -> list[list[float]]:
+            b: tuple[float, float], steps: int = 10) -> list[list[float]]:
     """Квадратичная дуга, рассчитанная в точки: клиенту остаётся линия."""
     points = []
     for index in range(steps + 1):
@@ -425,58 +428,143 @@ def _bezier(a: tuple[float, float], control: tuple[float, float],
     return points
 
 
+def _bearing(a: dict, b: dict) -> float:
+    return math.atan2((b["lon"] - a["lon"])
+                      * math.cos(math.radians((a["lat"] + b["lat"]) / 2)),
+                      b["lat"] - a["lat"])
+
+
+def _turn(a: float, b: float) -> float:
+    diff = abs(a - b) % (2 * math.pi)
+    return min(diff, 2 * math.pi - diff)
+
+
+def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
+    """Склеить рёбра в трассы: много коротких стрелок — одна длинная.
+
+    Жадная сборка от самого тяжёлого свободного ребра: трасса растёт
+    вперёд и назад, пока у крайнего узла есть непотраченное продолжение
+    без резкого разворота и с сопоставимым весом. Каждое ребро живёт
+    ровно в одной трассе — стрелки не дублируются.
+    """
+    outgoing: dict[int, list[dict]] = defaultdict(list)
+    incoming: dict[int, list[dict]] = defaultdict(list)
+    for edge in edges:
+        outgoing[edge["a"]].append(edge)
+        incoming[edge["b"]].append(edge)
+
+    used: set[int] = set()
+    chains: list[list[dict]] = []
+
+    def bearing_of(edge: dict) -> float:
+        return _bearing(nodes[edge["a"]], nodes[edge["b"]])
+
+    def extend(edge: dict, forward: bool) -> list[dict]:
+        tail: list[dict] = []
+        current = edge
+        while True:
+            node = current["b"] if forward else current["a"]
+            pool = outgoing[node] if forward else incoming[node]
+            best = None
+            for candidate in pool:
+                if id(candidate) in used:
+                    continue
+                if candidate["count"] < current["count"] * CHAIN_MIN_RATIO:
+                    continue
+                turn = _turn(bearing_of(current), bearing_of(candidate))
+                if turn > CHAIN_MAX_TURN:
+                    continue
+                score = candidate["count"] * (1 - turn / math.pi)
+                if best is None or score > best[0]:
+                    best = (score, candidate)
+            if best is None:
+                return tail
+            current = best[1]
+            used.add(id(current))
+            tail.append(current)
+
+    for edge in sorted(edges, key=lambda e: -e["count"]):
+        if id(edge) in used:
+            continue
+        used.add(id(edge))
+        back = extend(edge, forward=False)
+        ahead = extend(edge, forward=True)
+        chains.append(list(reversed(back)) + [edge] + ahead)
+    return chains
+
+
 def export_graph(nodes: list[dict], edges: list[dict], land: Land,
                  anchors: dict[tuple[str, str], str], stats: dict) -> dict:
-    """corridors.json: всё, что нужно OpenLayers-модулю страницы.
+    """corridors.json: готовые трассы — клиенту остаётся нарисовать линии.
 
-    Магистраль — не просто частое ребро, а частое И длинное: по чистому
-    счёту в топ пролезали десятикилометровые прыжки между сёлами одного
-    горячего района, а Анапа — Сочи с её 250 км уходила в «локальные».
+    Трасса — цепочка рёбер; её точки собраны с морскими дугами там, где
+    плечо идёт вдоль берега. Важность трассы — повторы × длина: по
+    чистому счёту в топ пролезали десятикилометровые прыжки между сёлами
+    одного горячего района, а Анапа — Сочи с её 250 км уходила вниз.
     """
-    def importance(edge: dict) -> float:
-        a, b = nodes[edge["a"]], nodes[edge["b"]]
-        return edge["count"] * max(_km((a["lat"], a["lon"]),
-                                       (b["lat"], b["lon"])), 15.0)
-
-    ordered = sorted(edges, key=importance, reverse=True)
+    chains = assemble_chains(nodes, edges)
     peak = max((e["count"] for e in edges), default=1)
 
-    out_edges = []
-    for rank, edge in enumerate(ordered):
-        a, b = nodes[edge["a"]], nodes[edge["b"]]
-        control = land.sea_control((a["lat"], a["lon"]), (b["lat"], b["lon"]))
-        arc = (_bezier((a["lat"], a["lon"]), control, (b["lat"], b["lon"]))
-               if control else None)
-        out_edges.append({
-            "a": edge["a"], "b": edge["b"],
-            "n": edge["count"],
-            "f": edge["forward"], "r": edge["backward"],
-            "nm": edge["named"], "cp": edge["computed"],
-            "s": round(math.log1p(edge["count"]) / math.log1p(peak), 3),
-            "t": 1 if rank < TRUNK_EDGES else 0,
-            **({"arc": arc} if arc else {}),
-            **({"kor": anchors[(a["name"], b["name"])]}
-               if (a["name"], b["name"]) in anchors else {}),
+    def chain_km(chain: list[dict]) -> float:
+        return sum(_km((nodes[e["a"]]["lat"], nodes[e["a"]]["lon"]),
+                       (nodes[e["b"]]["lat"], nodes[e["b"]]["lon"]))
+                   for e in chain)
+
+    def importance(chain: list[dict]) -> float:
+        top = max(e["count"] for e in chain)
+        return top * max(chain_km(chain), 15.0)
+
+    chains.sort(key=importance, reverse=True)
+
+    out_chains = []
+    label_weight: Counter = Counter()
+    for rank, chain in enumerate(chains):
+        points: list[list[float]] = []
+        for index, edge in enumerate(chain):
+            a, b = nodes[edge["a"]], nodes[edge["b"]]
+            start = (a["lat"], a["lon"])
+            end = (b["lat"], b["lon"])
+            control = land.sea_control(start, end)
+            segment = (_bezier(start, control, end) if control
+                       else [[round(start[0], 4), round(start[1], 4)],
+                             [round(end[0], 4), round(end[1], 4)]])
+            points.extend(segment if index == 0 else segment[1:])
+        top = max(e["count"] for e in chain)
+        named = sum(e["named"] for e in chain)
+        computed = sum(e["computed"] for e in chain)
+        backward = sum(e["backward"] for e in chain)
+        start_name = nodes[chain[0]["a"]]["name"]
+        end_name = nodes[chain[-1]["b"]]["name"]
+        via = [nodes[e["a"]]["name"] for e in chain[1:]]
+        for e in chain:
+            label_weight[e["a"]] += e["count"]
+            label_weight[e["b"]] += e["count"]
+        out_chains.append({
+            "pts": points,
+            "from": start_name, "to": end_name,
+            "via": via[:6],
+            "n": top,
+            "nm": named, "cp": computed, "r": backward,
+            "s": round(math.log1p(top) / math.log1p(peak), 3),
+            "t": 1 if rank < TRUNK_CHAINS else 0,
+            **({"kor": anchors[(start_name, end_name)]}
+               if (start_name, end_name) in anchors else {}),
         })
 
-    ranked = sorted(range(len(nodes)), key=lambda i: -nodes[i]["weight"])
-    top_weight = nodes[ranked[0]]["weight"] if ranked else 1
-    out_nodes = []
-    for rank_position, index in enumerate(ranked):
+    # Подписи путевых точек: без кружков, только имена — крупные всегда,
+    # остальные при приближении.
+    ranked = label_weight.most_common(LABELS_ZOOMED)
+    labels = []
+    for position, (index, weight) in enumerate(ranked):
         node = nodes[index]
-        tier = (1 if rank_position < LABELS_ALWAYS
-                else 2 if rank_position < LABELS_ZOOMED
-                else 3 if rank_position < DOTS_ALWAYS else 4)
-        out_nodes.append({
-            "i": index,
+        labels.append({
             "lat": round(node["lat"], 4), "lon": round(node["lon"], 4),
-            "name": node["name"], "w": node["weight"],
-            "s": round(math.log1p(node["weight"]) / math.log1p(top_weight or 1), 3),
-            "t": tier,
+            "name": node["name"],
+            "t": 1 if position < LABELS_ALWAYS else 2,
         })
 
     return {"generated": now_utc().isoformat(), "stats": stats,
-            "nodes": out_nodes, "edges": out_edges}
+            "chains": out_chains, "labels": labels}
 
 
 def flow_path(points_xy: list[tuple[float, float]],

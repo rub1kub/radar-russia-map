@@ -1,13 +1,11 @@
 /**
  * Карта коридоров на странице /marshruty/.
  *
- * Тот же движок и та же тайловая подложка, что у живой карты: границы и
- * берега рисует OpenLayers, а не самодельная SVG-проекция — три подхода
- * к рукодельной картографии показали, что это тупик.
- *
- * Данные — dist/data/corridors.json, его ежечасно пересобирает
- * scripts/routes_page.py. Здесь только отрисовка: рёбра с толщиной по
- * весу, бегущие штрихи по направлению, узлы с подписями (declutter),
+ * Тот же движок и та же тайловая подложка, что у живой карты. Данные —
+ * dist/data/corridors.json (пересобирается ежечасно): готовые ТРАССЫ,
+ * склеенные сервером из многих плеч в длинные линии, с морскими дугами
+ * на прибрежных участках. Здесь только отрисовка: толщина по весу,
+ * бегущие штрихи по направлению, подписи путевых точек (declutter),
  * подсказки и переход к карточке коридора.
  */
 
@@ -22,7 +20,7 @@ import Feature from "ol/Feature";
 import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
 import { fromLonLat, transformExtent } from "ol/proj";
-import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
+import { Fill, Stroke, Style, Text } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { defaults as defaultControls } from "ol/control";
 
@@ -30,24 +28,21 @@ const BASEMAP_URL =
   "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
 const ATTRIBUTION = "© OpenStreetMap contributors, © CARTO";
 
-type GraphNode = {
-  i: number; lat: number; lon: number;
-  name: string; w: number; s: number; t: number;
+type Chain = {
+  pts: [number, number][];
+  from: string; to: string; via: string[];
+  n: number; nm: number; cp: number; r: number;
+  s: number; t: number; kor?: string;
 };
-type GraphEdge = {
-  a: number; b: number; n: number; f: number; r: number;
-  nm: number; cp: number; s: number; t: number;
-  arc?: [number, number][]; kor?: string;
-};
-type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
+type MapLabel = { lat: number; lon: number; name: string; t: number };
+type Graph = { chains: Chain[]; labels: MapLabel[] };
 
 const TRUNK = "#f0475a";
 const LOCAL = "#c33b49";
 const ANT = "#ffd3d7";
-const NODE_FILL = "#ffb3ba";
 
-/** Зум, с которого проявляются локальные ветки и вторые подписи. */
-const DETAIL_ZOOM = 6.6;
+/** Зум, с которого проявляются локальные трассы и вторые подписи. */
+const DETAIL_ZOOM = 6.4;
 
 function plural(n: number, one: string, few: string, many: string): string {
   const m100 = Math.abs(n) % 100;
@@ -58,13 +53,14 @@ function plural(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
-function edgeTip(edge: GraphEdge, nodes: GraphNode[]): string {
+function chainTip(chain: Chain): string {
+  const via = chain.via.length ? ` (через ${chain.via.join(", ")})` : "";
   const parts = [
-    `${nodes[edge.a].name} → ${nodes[edge.b].name}`,
-    `${edge.n} ${plural(edge.n, "повтор", "повтора", "повторов")}`
+    `${chain.from} → ${chain.to}${via}`,
+    `до ${chain.n} ${plural(chain.n, "повтора", "повторов", "повторов")} на плече`
   ];
-  if (edge.r) parts.push(`туда ${edge.f}, обратно ${edge.r}`);
-  if (edge.cp) parts.push(`восстановлено по фиксациям: ${edge.cp}`);
+  if (chain.r) parts.push(`встречное движение: ${chain.r}`);
+  if (chain.cp) parts.push(`восстановлено по фиксациям: ${chain.cp}`);
   return parts.join(" · ");
 }
 
@@ -82,21 +78,15 @@ function init(): void {
 }
 
 function render(target: HTMLElement, graph: Graph): void {
-  const { nodes, edges } = graph;
-  const byIndex = new Map(nodes.map((node) => [node.i, node]));
-  const nodeAt = (index: number) => byIndex.get(index) as GraphNode;
+  const { chains, labels } = graph;
 
-  // --- Рёбра -----------------------------------------------------------
-  const edgeSource = new VectorSource();
-  for (const edge of edges) {
-    const a = nodeAt(edge.a);
-    const b = nodeAt(edge.b);
-    const coords = (edge.arc ?? [[a.lat, a.lon], [b.lat, b.lon]]).map(
-      ([lat, lon]) => fromLonLat([lon, lat])
-    );
+  // --- Трассы ----------------------------------------------------------
+  const chainSource = new VectorSource();
+  for (const chain of chains) {
+    const coords = chain.pts.map(([lat, lon]) => fromLonLat([lon, lat]));
     const feature = new Feature(new LineString(coords));
-    feature.set("edge", edge);
-    edgeSource.addFeature(feature);
+    feature.set("chain", chain);
+    chainSource.addFeature(feature);
   }
 
   // Бегущие штрихи: смещение фазы обновляется таймером, направление
@@ -105,77 +95,66 @@ function render(target: HTMLElement, graph: Graph): void {
   const animate = !window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
 
-  const edgeStyle = (feature: FeatureLike, resolution: number): Style[] => {
-    const edge = feature.get("edge") as GraphEdge;
-    const view = map.getView();
-    const zoom = view.getZoomForResolution(resolution) ?? 5;
-    if (!edge.t && zoom < DETAIL_ZOOM) return [];
-    const trunk = Boolean(edge.t);
-    const width = trunk ? 1.8 + 3.4 * edge.s : 1 + 1.4 * edge.s;
-    const styles = [
+  const chainStyle = (feature: FeatureLike, resolution: number): Style[] => {
+    const chain = feature.get("chain") as Chain;
+    const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
+    if (!chain.t && zoom < DETAIL_ZOOM) return [];
+    const trunk = Boolean(chain.t);
+    const width = trunk ? 2 + 3.6 * chain.s : 1.1 + 1.6 * chain.s;
+    return [
       new Style({
         stroke: new Stroke({
           color: trunk ? TRUNK : LOCAL,
           width,
-          lineCap: "round"
+          lineCap: "round",
+          lineJoin: "round"
         })
       }),
       new Style({
         stroke: new Stroke({
           color: ANT,
-          width: Math.max(1, width * 0.5),
-          lineDash: [2, 14],
+          width: Math.max(1, width * 0.45),
+          lineDash: [2, 16],
           lineDashOffset: dashOffset,
           lineCap: "round"
         })
       })
     ];
-    styles[0].getStroke()!.setLineJoin("round");
-    return styles;
   };
 
-  const edgeLayer = new VectorLayer({
-    source: edgeSource,
-    style: edgeStyle,
+  const chainLayer = new VectorLayer({
+    source: chainSource,
+    style: chainStyle,
     zIndex: 10
   });
 
-  // --- Узлы ------------------------------------------------------------
-  const nodeSource = new VectorSource();
-  for (const node of nodes) {
-    const feature = new Feature(new Point(fromLonLat([node.lon, node.lat])));
-    feature.set("node", node);
-    nodeSource.addFeature(feature);
+  // --- Подписи путевых точек: имена без кружков --------------------------
+  const labelSource = new VectorSource();
+  for (const label of labels) {
+    const feature = new Feature(
+      new Point(fromLonLat([label.lon, label.lat]))
+    );
+    feature.set("label", label);
+    labelSource.addFeature(feature);
   }
 
-  const nodeStyle = (feature: FeatureLike, resolution: number): Style | undefined => {
-    const node = feature.get("node") as GraphNode;
+  const labelStyle = (feature: FeatureLike, resolution: number): Style | undefined => {
+    const label = feature.get("label") as MapLabel;
     const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
-    const detailed = zoom >= DETAIL_ZOOM;
-    if (node.t >= 4 && !detailed) return undefined;
-    const radius = 2.5 + 3.5 * node.s;
-    const labeled = node.t === 1 || (detailed && node.t <= 3);
+    if (label.t > 1 && zoom < DETAIL_ZOOM) return undefined;
     return new Style({
-      image: new CircleStyle({
-        radius,
-        fill: new Fill({ color: NODE_FILL }),
-        stroke: new Stroke({ color: "#0a0e0d", width: 1 })
-      }),
-      text: labeled
-        ? new Text({
-            text: node.name,
-            offsetY: -radius - 7,
-            font: "11px Inter, system-ui, sans-serif",
-            fill: new Fill({ color: "#e6ebe6" }),
-            stroke: new Stroke({ color: "rgba(10,14,13,0.85)", width: 3 })
-          })
-        : undefined
+      text: new Text({
+        text: label.name,
+        font: "11px Inter, system-ui, sans-serif",
+        fill: new Fill({ color: "#dfe6df" }),
+        stroke: new Stroke({ color: "rgba(10,14,13,0.9)", width: 3 })
+      })
     });
   };
 
-  const nodeLayer = new VectorLayer({
-    source: nodeSource,
-    style: nodeStyle,
+  const labelLayer = new VectorLayer({
+    source: labelSource,
+    style: labelStyle,
     declutter: true,
     zIndex: 20
   });
@@ -193,8 +172,8 @@ function render(target: HTMLElement, graph: Graph): void {
           maxZoom: 20
         })
       }),
-      edgeLayer,
-      nodeLayer
+      chainLayer,
+      labelLayer
     ],
     view: new View({
       center: fromLonLat([37.8, 49.4]),
@@ -213,8 +192,8 @@ function render(target: HTMLElement, graph: Graph): void {
     // 30 кадров в секунду достаточно: перерисовка векторного слоя каждые
     // 33 мс — заметно дешевле requestAnimationFrame на слабых телефонах.
     window.setInterval(() => {
-      dashOffset = (dashOffset - 1 + 16) % 16;
-      edgeLayer.changed();
+      dashOffset = (dashOffset - 1 + 18) % 18;
+      chainLayer.changed();
     }, 66);
   }
 
@@ -223,40 +202,33 @@ function render(target: HTMLElement, graph: Graph): void {
   tip.style.cssText =
     "position:absolute;pointer-events:none;background:rgba(12,16,15,.94);" +
     "border:1px solid #28322c;border-radius:8px;padding:7px 11px;" +
-    "font-size:13px;color:#dfe6df;max-width:300px;display:none;z-index:5;";
+    "font-size:13px;color:#dfe6df;max-width:320px;display:none;z-index:5;";
   target.appendChild(tip);
 
   map.on("pointermove", (event) => {
     const feature = map.forEachFeatureAtPixel(event.pixel, (found) => found, {
-      hitTolerance: 6
+      hitTolerance: 6,
+      layerFilter: (layer) => layer === chainLayer
     });
     if (!feature) {
       tip.style.display = "none";
       target.style.cursor = "";
       return;
     }
-    const edge = feature.get("edge") as GraphEdge | undefined;
-    const node = feature.get("node") as GraphNode | undefined;
-    tip.textContent = edge
-      ? edgeTip(edge, nodes)
-      : node
-        ? `${node.name} · узел, ${node.w} ${plural(node.w, "повтор", "повтора", "повторов")}`
-        : "";
-    if (!tip.textContent) {
-      tip.style.display = "none";
-      return;
-    }
+    const chain = feature.get("chain") as Chain;
+    tip.textContent = chainTip(chain);
     tip.style.display = "block";
     tip.style.left = `${event.pixel[0] + 14}px`;
     tip.style.top = `${event.pixel[1] + 12}px`;
-    target.style.cursor = edge?.kor ? "pointer" : "default";
+    target.style.cursor = chain.kor ? "pointer" : "default";
   });
 
   map.on("click", (event) => {
     const feature = map.forEachFeatureAtPixel(event.pixel, (found) => found, {
-      hitTolerance: 6
+      hitTolerance: 6,
+      layerFilter: (layer) => layer === chainLayer
     });
-    const anchor = feature?.get("edge")?.kor as string | undefined;
+    const anchor = feature?.get("chain")?.kor as string | undefined;
     if (anchor) {
       window.location.hash = anchor;
     }

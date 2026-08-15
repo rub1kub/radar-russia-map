@@ -111,16 +111,33 @@ def test_export_graph_marks_trunks_arcs_and_anchors(land):
                             {("Туапсе", "Сочи"): "kor-0"},
                             {"routes": 12})
 
-    assert len(graph["edges"]) == 1
-    edge = graph["edges"][0]
-    assert edge["t"] == 1                       # магистраль
-    assert edge["kor"] == "kor-0"               # ссылка на карточку
-    assert edge["nm"] == 12 and edge["cp"] == 0
+    assert len(graph["chains"]) == 1
+    chain = graph["chains"][0]
+    assert (chain["from"], chain["to"]) == ("Туапсе", "Сочи")
+    assert chain["t"] == 1                      # магистраль
+    assert chain["kor"] == "kor-0"              # ссылка на карточку
+    assert chain["nm"] == 12 and chain["cp"] == 0
     # Туапсе — Сочи идёт вдоль берега: дуга над морем посчитана в точки,
     # клиенту остаётся нарисовать линию.
-    assert "arc" in edge and len(edge["arc"]) >= 10
-    names = {n["name"] for n in graph["nodes"]}
+    assert len(chain["pts"]) >= 10
+    names = {label["name"] for label in graph["labels"]}
     assert names == {"Туапсе", "Сочи"}
+
+
+def test_chains_merge_consecutive_edges_into_one_route():
+    tuapse = (44.10, 39.08, "Туапсе")
+    sochi = (43.60, 39.73, "Сочи")
+    routes = ([_route([ANAPA, NOVOROSSIYSK])] * 6
+              + [_route([NOVOROSSIYSK, tuapse])] * 5
+              + [_route([tuapse, sochi])] * 4)
+    nodes, edges = rp.build_graph(routes, [])
+    chains = rp.assemble_chains(nodes, edges)
+
+    # Три плеча одного направления склеились в одну трассу Анапа — Сочи.
+    assert len(chains) == 1
+    chain = chains[0]
+    assert nodes[chain[0]["a"]]["name"] == "Анапа"
+    assert nodes[chain[-1]["b"]]["name"] == "Сочи"
 
 
 def test_page_is_a_gallery_with_map_container(land):
