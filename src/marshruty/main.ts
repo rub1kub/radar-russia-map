@@ -92,7 +92,11 @@ function init(): void {
   const target = document.getElementById("routes-map");
   if (!target) return;
 
-  fetch("/data/corridors.json")
+  // Метку версии проставляет генератор страницы: имя файла фиксировано, а
+  // Apache отдаёт его с недельным кэшем — без метки браузер неделю
+  // показывал бы вчерашние коридоры.
+  const version = target.dataset.version;
+  fetch(`/data/corridors.json${version ? `?v=${version}` : ""}`)
     .then((response) => response.json())
     .then((graph: Graph) => render(target, graph))
     .catch(() => {

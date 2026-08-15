@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import bisect
+import hashlib
 import json
 import math
 import sqlite3
@@ -777,7 +778,12 @@ def card_html(corridor: dict, land: Land, anchor: str) -> str:
 
 def build_page(routes: list[dict], tracks: list[list[dict]],
                land: Land, updated: str,
-               skip_names: frozenset[str] | set[str] = frozenset()) -> str:
+               skip_names: frozenset[str] | set[str] = frozenset(),
+               versions: dict[str, str] | None = None) -> str:
+    versions = versions or {}
+    js_v = f'?v={versions["js"]}' if versions.get("js") else ""
+    css_v = f'?v={versions["css"]}' if versions.get("css") else ""
+    data_v = versions.get("data", "")
     corridors = build_corridors(routes, skip_names=skip_names)[:MAX_CARDS]
 
     total = len(routes)
@@ -835,7 +841,7 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
     <meta name="theme-color" content="#0e1211" />
     <script type="application/ld+json">{breadcrumb_ld}</script>
     <script type="application/ld+json">{webpage_ld}</script>
-    <link rel="stylesheet" href="/assets/marshruty-map.css" />
+    <link rel="stylesheet" href="/assets/marshruty-map.css{css_v}" />
     <style>
       body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
              font:16px/1.6 Inter, system-ui, -apple-system, sans-serif; }}
@@ -885,7 +891,7 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
 
       <a class="map" href="/">Открыть живую карту</a>
 
-      <div id="routes-map"></div>
+      <div id="routes-map" data-version="{data_v}"></div>
       <p class="map-note">Толщина линии — сколько раз повторилась трасса;
       штрихи бегут по направлению полёта. При приближении проявляются
       локальные ветки и подписи малых мест. Наведите на линию — подсказка
@@ -926,10 +932,24 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
         <a href="/svodka/">Сводки по дням</a>
       </footer>
     </main>
-    <script defer src="/assets/marshruty-map.js"></script>
+    <script defer src="/assets/marshruty-map.js{js_v}"></script>
   </body>
 </html>
 """
+
+
+def asset_version(path: Path) -> str:
+    """Восемь знаков от содержимого файла — метка версии для ссылки.
+
+    Имена бандла и данных фиксированы (страницу собирает сервер, и хешей
+    манифеста ему взять негде), а Apache отдаёт их с недельным кэшем.
+    Без метки браузер неделю показывает старую карту: правки уезжали на
+    боевой, а владелец видел прежнюю версию.
+    """
+    try:
+        return hashlib.md5(path.read_bytes()).hexdigest()[:8]
+    except OSError:
+        return ""
 
 
 def sea_names(connection: sqlite3.Connection) -> set[str]:
@@ -962,8 +982,15 @@ def build(connection: sqlite3.Connection) -> int:
 
     directory = OUT / "marshruty"
     directory.mkdir(parents=True, exist_ok=True)
+    versions = {
+        "js": asset_version(OUT / "assets" / "marshruty-map.js"),
+        "css": asset_version(OUT / "assets" / "marshruty-map.css"),
+        "data": asset_version(data_dir / "corridors.json"),
+    }
     (directory / "index.html").write_text(
-        build_page(routes, tracks, land, updated, sea_names(connection)), encoding="utf-8")
+        build_page(routes, tracks, land, updated, sea_names(connection),
+                   versions),
+        encoding="utf-8")
     return len(corridors)
 
 

@@ -198,6 +198,22 @@ def test_tracks_follow_drone_physics():
     assert [point["zone"] for point in tracks[0]] == ["a", "b", "c"]
 
 
+def test_assets_are_versioned_against_the_weekly_cache(land):
+    """Имена бандла и данных фиксированы, Apache кэширует их на неделю.
+
+    Без метки версии браузер неделю показывал старую карту — правки
+    уезжали на боевой, а владелец видел прежнюю.
+    """
+    routes = [_route([ANAPA, NOVOROSSIYSK])] * 12
+    html = rp.build_page(routes, [], land, "16 августа, 12:00 МСК",
+                         versions={"js": "aaa11111", "css": "bbb22222",
+                                   "data": "ccc33333"})
+
+    assert "/assets/marshruty-map.js?v=aaa11111" in html
+    assert "/assets/marshruty-map.css?v=bbb22222" in html
+    assert 'data-version="ccc33333"' in html
+
+
 def test_sea_corridors_stay_out_of_the_gallery():
     """«Новороссийск → Чёрное море» — уход за берег, а не коридор."""
     sea = (44.30, 37.20, "Чёрное море")
@@ -237,7 +253,7 @@ def test_page_is_a_gallery_with_map_container(land):
     assert 'rel="canonical" href="https://tihoenebo.com/marshruty/"' in html
     assert "Анапа → Новороссийск" in html
     assert html.count("<svg") >= 1               # карточки галереи
-    assert '<div id="routes-map">' in html       # контейнер OpenLayers
+    assert 'id="routes-map"' in html             # контейнер OpenLayers
     assert "/assets/marshruty-map.js" in html
     assert "/assets/marshruty-map.css" in html
     assert 'id="kor-0"' in html                  # якорь карточки для клика
