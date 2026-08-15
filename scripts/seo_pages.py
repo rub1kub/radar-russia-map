@@ -1175,7 +1175,8 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
         служб.
         <br /><a href="/">Вся карта обстановки по России</a> ·
         <a href="/city/">Сводки по городам</a> ·
-        <a href="/rayon/">Сводки по районам</a>
+        <a href="/rayon/">Сводки по районам</a> ·
+        <a href="/marshruty/">Маршруты БПЛА</a>
       </footer>
     </main>
   </body>
@@ -1504,7 +1505,7 @@ def fill_prerender(named: list, stats: dict, updated: str,
         f'style="color:#9fd4b0">Сводки по {city_count} городам России</a>'
         + (f' и <a href="/rayon/" style="color:#9fd4b0">'
            f'{district_count} районам</a>' if district_count else "")
-        + '</p>',
+        + ' · <a href="/marshruty/" style="color:#9fd4b0">Маршруты БПЛА</a></p>',
         '<nav aria-label="Регионы"><h2 style="margin:18px 0 8px;font-size:16px">'
         'Обстановка по регионам</h2>',
         '<ul style="margin:0;padding:0;list-style:none;display:flex;'
@@ -1613,6 +1614,7 @@ def main() -> int:
         (f"{SITE}/", lastmod, "hourly", "1.0"),
         (f"{SITE}/city/", lastmod, "daily", "0.85"),
         (f"{SITE}/rayon/", lastmod, "daily", "0.85"),
+        (f"{SITE}/marshruty/", lastmod, "daily", "0.8"),
         # Правовые страницы генерирует scripts/legal_pages при выкатке —
         # содержимое от данных не зависит. В карту сайта их всё же
         # включаем: страница, которой нет в индексе, не работает.
@@ -1772,6 +1774,10 @@ def main() -> int:
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"{entries}\n</urlset>\n", encoding="utf-8")
+
+    # Страница маршрутов живёт на тех же данных и том же расписании.
+    from scripts.routes_page import main as build_routes_page
+    build_routes_page()
 
     with_data = sum(1 for _, _, _, zone in named if stats.get(zone))
     filled = fill_prerender(named, stats, updated, len(cities), len(rayons))

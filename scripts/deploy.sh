@@ -104,7 +104,8 @@ fi
 # --delete снёс бы их до того, как соберётся новая версия, и всё это время
 # посадочные отдавали бы 404.
 retry rsync -az --delete --exclude "region/" --exclude "city/" \
-  --exclude "rayon/" --exclude "svodka/" --exclude "sitemap.xml" \
+  --exclude "rayon/" --exclude "marshruty/" --exclude "svodka/" \
+  --exclude "sitemap.xml" \
   --exclude "privacy/" --exclude "terms/" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"
 retry ssh "$SERVER" "cd $REMOTE_DIR && PYTHONPATH=$REMOTE_DIR:$REMOTE_DIR/ingest \
