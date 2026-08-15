@@ -57,17 +57,25 @@ MAX_CARDS = 60
 # Ребро графа живёт от двух повторов: тройка оставляла север пустым,
 # хотя запуски там почти ежедневно — просто ленты реже повторяются.
 MIN_EDGE = 2
-MAX_EDGES = 700
+# Потолок — страховка от разрастания файла, а не фильтр: на боевом корпусе
+# рёбер вдвое меньше. Прежние 700 резали именно длинный хвост лёгких плеч,
+# которыми дальние трассы и сшиваются: снятие потолка дало вдвое больше
+# трасс и дальний конец 676 км вместо 401.
+MAX_EDGES = 4000
 # Трассы — верх списка по важности (повторы × длина): видны на обзоре,
 # остальное движок показывает при приближении.
 TRUNK_CHAINS = 60
 # Продолжение трассы: следующее плечо не разворачивается больше чем на
-# ~75° и весит хотя бы треть текущего — иначе это уже другая трасса.
+# ~75°. Порог веса низкий намеренно: борт летит от берега вглубь, и чем
+# дальше, тем реже про него пишут — требовать треть от предыдущего плеча
+# значило обрубать маршрут ровно там, где он становится интересным.
 CHAIN_MAX_TURN = math.pi * 0.42
-CHAIN_MIN_RATIO = 0.3
-# Подписи путевых точек: первый ярус виден всегда, второй — при приближении.
+CHAIN_MIN_RATIO = 0.1
+# Подписи путевых точек тремя ярусами: крупные всегда, средние с зума 6.4,
+# сёла — с 8. Без третьего яруса при приближении подписей не прибавлялось.
 LABELS_ALWAYS = 26
-LABELS_ZOOMED = 120
+LABELS_ZOOMED = 140
+LABELS_CLOSE = 900
 
 # --- Восстановление волн по фиксациям ---------------------------------
 # Пороги — от физики украинских дальнобойных БПЛА самолётной схемы
@@ -641,6 +649,9 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
             "via": via[:6],
             "n": top,
             "nm": named, "cp": computed, "r": backward,
+            # Доля восстановленного: по ней клиент красит трассу — жёлтым
+            # то, что собрано по нашим волнам, а не пересказано источником.
+            "cs": round(computed / max(named + computed, 1), 3),
             "s": round(math.log1p(top) / math.log1p(peak), 3),
             "t": 1 if rank < TRUNK_CHAINS else 0,
             **({"kor": anchors[(start_name, end_name)]}
@@ -649,14 +660,15 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
 
     # Подписи путевых точек: без кружков, только имена — крупные всегда,
     # остальные при приближении.
-    ranked = label_weight.most_common(LABELS_ZOOMED)
+    ranked = label_weight.most_common(LABELS_CLOSE)
     labels = []
     for position, (index, weight) in enumerate(ranked):
         node = nodes[index]
         labels.append({
             "lat": round(node["lat"], 4), "lon": round(node["lon"], 4),
             "name": node["name"],
-            "t": 1 if position < LABELS_ALWAYS else 2,
+            "t": (1 if position < LABELS_ALWAYS
+                  else 2 if position < LABELS_ZOOMED else 3),
         })
 
     return {"generated": now_utc().isoformat(), "stats": stats,

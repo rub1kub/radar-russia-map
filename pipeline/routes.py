@@ -61,6 +61,25 @@ MAX_SINUOSITY = 1.6
 # это уже не место, а сторона света.
 SEA_OFFSET_KM = 45.0
 
+# Роль акватории в предложении. Море попадает в маршрут только тогда, когда
+# текст говорит про движение, и с той стороны, с какой сказано:
+#   цель   — «и далее в Азовское море», «в направлении Чёрного моря»;
+#   откуда — «На Новороссийск фиксации БПЛА С Чёрного моря» (борт идёт с
+#            моря на город, а не наоборот — так и летают);
+#   просто место — «уничтожение БПЛА в акваториИ Чёрного моря», «над
+#            Азовским морем», «по берегу моря»: это где сбили или где
+#            пролетали, точка пути отсюда не следует.
+SEA_TO_RE = re.compile(
+    r"\bв\s+(?:азовское|ч[её]рное)\s+море\b"
+    r"|(?:в\s+сторону|в\s+направлени\w*|курс\w*\s+на|уход\w*\s+в)"
+    r"\s+(?:\w+\s+){0,2}?мор[юя]\b",
+    re.IGNORECASE,
+)
+SEA_FROM_RE = re.compile(
+    r"\b(?:с|со|из)\s+(?:азовск\w+|ч[её]рн\w+)?\s*мор[яе]\b",
+    re.IGNORECASE,
+)
+
 
 def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
     dx = (b[1] - a[1]) * 111.0 * math.cos(math.radians((a[0] + b[0]) / 2))
@@ -90,12 +109,18 @@ def extract_route(text: str, observation, resolved,
     if not ROUTE_MARKER_RE.search(text or ""):
         return None
 
+    sea_role = ("from" if SEA_FROM_RE.search(text or "")
+                else "to" if SEA_TO_RE.search(text or "") else None)
+
     points: list[tuple[float, float, str]] = []
     seas: list[int] = []
     for item in resolved:
         if item.lat is None or item.lon is None:
             continue
         sea = item.zone_id in sea_ids
+        # Море без роли — просто место действия, а не точка пути.
+        if sea and sea_role is None:
+            continue
         if item.level == "region" and not sea:
             continue
         if points and _km((points[-1][0], points[-1][1]), (item.lat, item.lon)) < 1:
@@ -105,6 +130,13 @@ def extract_route(text: str, observation, resolved,
         points.append((item.lat, item.lon, item.name))
         if len(points) == MAX_POINTS:
             break
+
+    # «С Чёрного моря на Новороссийск» источник пишет в обратном порядке —
+    # сначала куда, потом откуда. Море-исток встаёт в начало пути.
+    if sea_role == "from" and seas and seas[0] != 0:
+        index = seas[0]
+        points.insert(0, points.pop(index))
+        seas = [0]
 
     if len(points) < 2:
         return None
@@ -168,6 +200,11 @@ def backfill(connection: sqlite3.Connection, days: int = 90) -> int:
 
     geocoder = Geocoder(connection)
     since = (now_utc() - timedelta(days=days)).isoformat()
+    # Окно очищается перед разбором: store_route умеет заменять строку, но
+    # не умеет убирать ту, которую новый парсер больше не считает маршрутом.
+    # Без этого правки копились призраками — «Новороссийск → Чёрное море»
+    # пережил запрет предложного падежа именно так.
+    connection.execute("DELETE FROM routes WHERE posted_at >= ?", (since,))
     found = 0
     for row in connection.execute(
         "SELECT id, source_key, posted_at, text FROM raw_messages"

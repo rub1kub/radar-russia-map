@@ -32,17 +32,27 @@ type Chain = {
   pts: [number, number][];
   from: string; to: string; via: string[];
   n: number; nm: number; cp: number; r: number;
-  s: number; t: number; kor?: string;
+  s: number; t: number; cs: number; kor?: string;
 };
 type MapLabel = { lat: number; lon: number; name: string; t: number };
 type Graph = { chains: Chain[]; labels: MapLabel[] };
 
+// Красное — пересказ источника, жёлтое — собранное по нашим волнам
+// фиксаций. Цвет отвечает на вопрос «чьё это знание», и потому же
+// подсказка всегда называет доли.
 const TRUNK = "#f0475a";
 const LOCAL = "#c33b49";
 const ANT = "#ffd3d7";
+const OURS_TRUNK = "#f0b429";
+const OURS_LOCAL = "#c08f1f";
+const OURS_ANT = "#ffe9a8";
+/** Больше половины трассы собрано нами — красим её как нашу. */
+const OURS_SHARE = 0.5;
 
 /** Зум, с которого проявляются локальные трассы и вторые подписи. */
 const DETAIL_ZOOM = 6.4;
+/** Зум, с которого подписываются сёла. */
+const CLOSE_ZOOM = 8;
 
 function plural(n: number, one: string, few: string, many: string): string {
   const m100 = Math.abs(n) % 100;
@@ -128,11 +138,13 @@ function render(target: HTMLElement, graph: Graph): void {
     const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
     if (!chain.t && zoom < DETAIL_ZOOM) return [];
     const trunk = Boolean(chain.t);
+    const ours = chain.cs >= OURS_SHARE;
     const width = trunk ? 2 + 3.6 * chain.s : 1.1 + 1.6 * chain.s;
     return [
       new Style({
         stroke: new Stroke({
-          color: trunk ? TRUNK : LOCAL,
+          color: ours ? (trunk ? OURS_TRUNK : OURS_LOCAL)
+                      : (trunk ? TRUNK : LOCAL),
           width,
           lineCap: "round",
           lineJoin: "round"
@@ -140,7 +152,7 @@ function render(target: HTMLElement, graph: Graph): void {
       }),
       new Style({
         stroke: new Stroke({
-          color: ANT,
+          color: ours ? OURS_ANT : ANT,
           width: Math.max(1, width * 0.45),
           lineDash: [2, 16],
           lineDashOffset: dashOffset,
@@ -169,7 +181,8 @@ function render(target: HTMLElement, graph: Graph): void {
   const labelStyle = (feature: FeatureLike, resolution: number): Style | undefined => {
     const label = feature.get("label") as MapLabel;
     const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
-    if (label.t > 1 && zoom < DETAIL_ZOOM) return undefined;
+    if (label.t === 2 && zoom < DETAIL_ZOOM) return undefined;
+    if (label.t === 3 && zoom < CLOSE_ZOOM) return undefined;
     return new Style({
       text: new Text({
         text: label.name,

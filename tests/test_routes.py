@@ -137,3 +137,33 @@ def test_far_sea_point_is_pulled_to_the_shore():
     assert math.hypot(dx, dy) == pytest.approx(SEA_OFFSET_KM, rel=0.02)
     # Направление сохранено: точка лежит юго-западнее берега, в море.
     assert lat1 < lat0 and lon1 < lon0
+
+
+def test_sea_as_a_place_is_not_a_waypoint():
+    """«Уничтожение БПЛА в акваториИ Чёрного моря» — где сбили, а не путь.
+
+    Предложный падеж и слово «акватория» ставили море точкой маршрута, и
+    от черноморских курортов шли стрелки в открытое море — ровно наоборот
+    тому, как летают.
+    """
+    black = Resolved("chernoe_more", "region", "Чёрное море", 43.61, 34.5, "море")
+    sochi = Resolved("sochi", "district", "Сочи", 43.60, 39.73, "сочи")
+    text = ("Сочи Уничтожение вражеского БПЛА в акватории Чёрного моря, "
+            "далее движение к Адлеру")
+    route = extract_route(text, parse(text), [sochi, black], SEAS)
+    assert route is None or "Чёрное море" not in [p[2] for p in route]
+
+
+def test_sea_named_as_origin_starts_the_route():
+    """«На Новороссийск фиксации БПЛА с Чёрного моря» — путь ИЗ моря.
+
+    Источник называет сначала цель, потом исток: без разбора падежа
+    выходила стрелка «Новороссийск → море».
+    """
+    black = Resolved("chernoe_more", "region", "Чёрное море", 43.61, 34.5, "море")
+    novoross = Resolved("novoross", "district", "Новороссийск",
+                        44.72, 37.77, "новороссийск")
+    text = "На Новороссийск Краснодарского края фиксации БПЛА с Чёрного моря"
+    route = extract_route(text, parse(text), [novoross, black], SEAS)
+    assert route is not None
+    assert [p[2] for p in route] == ["Чёрное море", "Новороссийск"]
