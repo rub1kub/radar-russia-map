@@ -77,6 +77,11 @@ TRUNK_CHAINS = 60
 # значило обрубать маршрут ровно там, где он становится интересным.
 CHAIN_MAX_TURN = math.pi * 0.42
 CHAIN_MIN_RATIO = 0.1
+# Из скольких самых тяжёлых рёбер выращиваются магистрали и насколько
+# длинной может быть трасса. Сорок звеньев — это уже полторы тысячи
+# километров, дальше нашего театра просто нет.
+CHAIN_SEEDS = 400
+CHAIN_MAX_LEGS = 40
 # Подписи путевых точек тремя ярусами: крупные всегда, средние с зума 6.4,
 # сёла — с 8. Без третьего яруса при приближении подписей не прибавлялось.
 LABELS_ALWAYS = 26
@@ -568,10 +573,17 @@ def smooth_path(points: list[tuple[float, float]],
 def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
     """Склеить рёбра в трассы: много коротких стрелок — одна длинная.
 
-    Жадная сборка от самого тяжёлого свободного ребра: трасса растёт
-    вперёд и назад, пока у крайнего узла есть непотраченное продолжение
-    без резкого разворота и с сопоставимым весом. Каждое ребро живёт
-    ровно в одной трассе — стрелки не дублируются.
+    Две очереди. Сначала магистрали: от каждого из самых тяжёлых рёбер
+    трасса растёт вперёд и назад, пока есть продолжение без резкого
+    разворота и с сопоставимым весом, — и рёбра при этом НЕ занимаются.
+    Общий участок принадлежит всем трассам, которые по нему идут, ровно
+    как в жизни: под Джанкоем сходятся пути из Херсонской области, с
+    Перекопа и от Азова. Прежняя исключительность рвала дальние маршруты
+    в клочья: медиана трассы была 57 км против нынешних 199, дальний
+    конец — 528 км против 794.
+
+    Потом — то, что не попало ни в одну магистраль: те же правила, но с
+    занятием рёбер, чтобы локальные ветки не размножались копиями.
     """
     outgoing: dict[int, list[dict]] = defaultdict(list)
     incoming: dict[int, list[dict]] = defaultdict(list)
@@ -579,22 +591,22 @@ def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
         outgoing[edge["a"]].append(edge)
         incoming[edge["b"]].append(edge)
 
-    used: set[int] = set()
-    chains: list[list[dict]] = []
-
     def bearing_of(edge: dict) -> float:
         a, b = nodes[edge["a"]], nodes[edge["b"]]
         return _bearing_ll((a["lat"], a["lon"]), (b["lat"], b["lon"]))
 
-    def extend(edge: dict, forward: bool) -> list[dict]:
+    def extend(edge: dict, forward: bool, seen: set[int],
+               used: set[int] | None) -> list[dict]:
         tail: list[dict] = []
         current = edge
-        while True:
+        while len(tail) < CHAIN_MAX_LEGS:
             node = current["b"] if forward else current["a"]
             pool = outgoing[node] if forward else incoming[node]
             best = None
             for candidate in pool:
-                if id(candidate) in used:
+                key = id(candidate)
+                # Петлю по своим же рёбрам не наматываем.
+                if key in seen or (used is not None and key in used):
                     continue
                 if candidate["count"] < current["count"] * CHAIN_MIN_RATIO:
                     continue
@@ -605,19 +617,49 @@ def assemble_chains(nodes: list[dict], edges: list[dict]) -> list[list[dict]]:
                 if best is None or score > best[0]:
                     best = (score, candidate)
             if best is None:
-                return tail
+                break
             current = best[1]
-            used.add(id(current))
+            seen.add(id(current))
+            if used is not None:
+                used.add(id(current))
             tail.append(current)
+        return tail
 
-    for edge in sorted(edges, key=lambda e: -e["count"]):
+    def grow(edge: dict, used: set[int] | None) -> list[dict]:
+        seen = {id(edge)}
+        back = extend(edge, False, seen, used)
+        ahead = extend(edge, True, seen, used)
+        return list(reversed(back)) + [edge] + ahead
+
+    ranked = sorted(edges, key=lambda e: -e["count"])
+    length = lambda chain: sum(
+        _km((nodes[e["a"]]["lat"], nodes[e["a"]]["lon"]),
+            (nodes[e["b"]]["lat"], nodes[e["b"]]["lon"])) for e in chain)
+
+    # Магистрали: рёбра общие, поэтому одна и та же трасса вырастает из
+    # нескольких семян — вложенные и дословные повторы снимаются.
+    grown = [grow(edge, None) for edge in ranked[:CHAIN_SEEDS]]
+    grown.sort(key=length, reverse=True)
+    trunks: list[list[dict]] = []
+    footprints: list[frozenset[int]] = []
+    covered: set[int] = set()
+    for chain in grown:
+        marks = frozenset(id(edge) for edge in chain)
+        if any(marks <= bigger for bigger in footprints):
+            continue
+        trunks.append(chain)
+        footprints.append(marks)
+        covered |= marks
+
+    # Остальное — прежним способом, с занятием рёбер.
+    used = set(covered)
+    rest: list[list[dict]] = []
+    for edge in ranked:
         if id(edge) in used:
             continue
         used.add(id(edge))
-        back = extend(edge, forward=False)
-        ahead = extend(edge, forward=True)
-        chains.append(list(reversed(back)) + [edge] + ahead)
-    return chains
+        rest.append(grow(edge, used))
+    return trunks + rest
 
 
 def waypoints_between(a: dict, b: dict, nodes: list[dict],
@@ -803,12 +845,13 @@ def card_svg(corridor: dict, land: Land) -> str:
     # каждой координате подложки хватало на лишние сотни килобайт.
     projection = Projection(bbox, width, height, pad=12, precision=0)
 
-    # Шаг прорежения крупный намеренно: подложка мини-карты — это узнать
-    # берег и границу, а не разглядеть изгибы. При шаге 3 подложки съедали
-    # 1,3 МБ страницы на 372 карточки — три четверти веса.
-    outline = land.svg_path(projection, step=6.0)
-    base = (f'<path d="{outline}" fill="#161d1a" stroke="#333f39" '
-            f'stroke-width="0.8" />' if outline else "")
+    # Суша заметно светлее воды и с ясной береговой линией: на прошлой
+    # версии подложку было буквально не разглядеть. Шаг прорежения средний —
+    # изгибы на 280 пикселях всё равно не видны, а при шаге 3 подложки
+    # съедали три четверти веса страницы.
+    outline = land.svg_path(projection, step=4.5)
+    base = (f'<path d="{outline}" fill="#20292a" stroke="#55665d" '
+            f'stroke-width="1" />' if outline else "")
 
     seen: set[str] = set()
     faint = []
@@ -841,7 +884,7 @@ def card_svg(corridor: dict, land: Land) -> str:
     return (f'<svg viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Коридор {escape(corridor["start"])} — '
             f'{escape(corridor["end"])}" xmlns="http://www.w3.org/2000/svg">'
-            f'<rect width="{width}" height="{height}" fill="#0c100f" rx="8" />'
+            f'<rect width="{width}" height="{height}" fill="#0e1518" rx="8" />'
             + base
             + f'<g fill="none" stroke="#e9404f" stroke-opacity="0.13" '
               f'stroke-width="1.6" stroke-linecap="round">{"".join(faint)}</g>'
@@ -973,6 +1016,10 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                     background:#0c100f; position:relative; }}
       @media (max-width:700px) {{ #routes-map {{ height:440px; }} }}
       .map-note {{ font-size:13px; color:#7d8a83; margin-top:8px; }}
+      .warn {{ margin:12px 0 4px; padding:11px 14px; border-radius:10px;
+              background:rgba(240,180,41,.09); border:1px solid rgba(240,180,41,.3);
+              color:#cdbb92; font-size:14px; max-width:none; }}
+      .warn b {{ color:#f0c860; }}
       /* Легенда: два цвета — два происхождения линии. */
       .legend {{ position:absolute; left:12px; top:12px; z-index:3;
                 background:rgba(12,16,15,.9); border:1px solid #28322c;
@@ -1044,6 +1091,11 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
           <div><i class="ours"></i> путь восстановили мы</div>
         </div>
       </div>
+      <p class="warn"><b>Это направление, а не точный маршрут.</b>
+      Мы знаем только те места, которые назвали источники, — а между ними
+      борт идёт где угодно: над полями, лесом, вдоль хребта. Линия
+      соединяет названные точки и показывает, откуда и куда шло движение;
+      считать её следом на местности нельзя.</p>
       <p class="map-note">Чем толще линия, тем чаще этим путём летали;
       штрихи бегут по направлению полёта. Приблизьте — появятся малые
       сёла и второстепенные пути.</p>
@@ -1080,6 +1132,12 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       путь ведётся через попутные города, а не по прямой. Как часто путь
       повторялся, зависит и от того, сколько каналов пишет об этом
       районе.</p>
+      <p>И ещё раз о главном: <b>точного маршрута здесь нет и быть не
+      может</b>. Источник называет место — посёлок, район, город, — и это
+      всё, что известно. Борт между двумя названными точками летит не по
+      линейке: над полями, руслами, вдоль хребтов, обходя то, что мы не
+      видим. Карта показывает, откуда куда и как часто шло движение, —
+      направление и повторяемость, а не траекторию.</p>
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по

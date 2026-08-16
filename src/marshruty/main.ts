@@ -337,10 +337,16 @@ function render(target: HTMLElement, graph: Graph): void {
     const link = chain.kor
       ? `<p style="margin:10px 0 0"><a href="#${chain.kor}">Карточка коридора ниже →</a></p>`
       : "";
+    // Оговорка стоит в каждой карточке намеренно: именно здесь человек
+    // видит конкретный путь и легче всего принимает линию за траекторию.
+    const caveat =
+      '<p style="margin:10px 0 0;color:#7d8a83;font-size:12px">' +
+      "Направление, а не точный маршрут: между названными точками борт " +
+      "идёт где угодно.</p>";
     return (
       `<button class="close" type="button" aria-label="Закрыть">×</button>` +
       `<h3>${chain.from} → ${chain.to}</h3>${path}` +
-      `<dl>${rows.join("")}</dl>${link}`
+      `<dl>${rows.join("")}</dl>${link}${caveat}`
     );
   }
 
