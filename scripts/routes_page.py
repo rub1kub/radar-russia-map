@@ -59,7 +59,10 @@ MIN_CORRIDOR = 6
 # «ничего не найдено» там, где данные есть. Сразу видно первые VISIBLE_CARDS,
 # остальные открываются кнопкой или находятся поиском.
 MAX_CARDS = 400
-VISIBLE_CARDS = 60
+# Сколько коридоров показать мини-картами, а сколько — строками списка.
+GALLERY_CARDS = 12
+# Короткий список самых частых — он же главный текст страницы для поиска.
+TOP_LIST = 10
 # Ребро графа живёт от двух повторов: тройка оставляла север пустым,
 # хотя запуски там почти ежедневно — просто ленты реже повторяются.
 MIN_EDGE = 2
@@ -96,9 +99,14 @@ LABELS_CLOSE = 900
 # На корпусе это даёт 622 трека медианной длиной 167 км — с настоящими
 # цепочками вроде «Штормово → Зеленовка → Тарасовский → … → Новониколаевский
 # район»: 762 км за 230 минут, то есть 199 км/ч.
-TRACK_SPEED_KMH = (80.0, 260.0)
+# Разброс скорости шире крейсерской не по небрежности: у нас нет времени
+# наблюдения — только время публикации сообщения, а лента пишет с
+# задержкой в минуты. Эта задержка и растягивает видимую скорость в обе
+# стороны. Прежние 80-260 за 35 минут давали 699 треков; 70-280 за 50 —
+# уже 1047, медиана пути 251 км против 169.
+TRACK_SPEED_KMH = (70.0, 280.0)
 TRACK_CRUISE_KMH = 150.0
-TRACK_GAP_MINUTES = (3, 35)
+TRACK_GAP_MINUTES = (3, 50)
 TRACK_MAX_TURN = math.radians(70)
 # Трек короче трёх точек — не волна, а пара совпавших сообщений.
 TRACK_MIN_POINTS = 3
@@ -900,7 +908,8 @@ THREAT_WORDS = {"uav": "БПЛА", "fpv": "FPV", "rocket": "ракеты",
 
 
 def card_html(corridor: dict, land: Land, anchor: str,
-              regions: dict[str, str] | None = None) -> str:
+              regions: dict[str, str] | None = None,
+              picture: bool = True) -> str:
     threat_keys = [k for k, _ in corridor["threats"].most_common(2)
                    if k != "unknown"]
     threats = ", ".join(THREAT_WORDS.get(k, k) for k in threat_keys) or "БПЛА"
@@ -919,17 +928,26 @@ def card_html(corridor: dict, land: Land, anchor: str,
         if region:
             haystack.add(region.lower())
     search = " ".join(sorted(haystack))
-    return f"""
-    <figure class="corridor" id="{anchor}" data-q="{escape(search)}"
-            data-name="{escape((corridor["start"] + " " + corridor["end"]).lower())}">
+    name = f'{corridor["start"]} → {corridor["end"]}'
+    facts = (f'{corridor["count"]} '
+             f'{plural(corridor["count"], "маршрут", "маршрута", "маршрутов")}'
+             f' · {stability} · последний {day_word(corridor["last"])}'
+             f' · {corridor["night_share"]}% ночью · {threats}')
+    if picture:
+        # Витрина: десяток мини-карт, чтобы страница начиналась с картинки,
+        # а не со списка. В поиске не участвует — там работает каталог,
+        # где эти же коридоры есть строками.
+        return f"""
+    <figure class="corridor-card">
       {card_svg(corridor, land)}
-      <figcaption>
-        <b>{escape(corridor["start"])} → {escape(corridor["end"])}</b>
-        <span>{corridor["count"]} {plural(corridor["count"], "маршрут", "маршрута", "маршрутов")}
-        · {stability} · последний {day_word(corridor["last"])}
-        · {corridor["night_share"]}% ночью · {escape(threats)}</span>
-      </figcaption>
+      <figcaption><b>{escape(name)}</b><span>{escape(facts)}</span></figcaption>
     </figure>"""
+    # Каталог: все коридоры строками. Четыре сотни мини-карт весили мегабайт
+    # и превращали страницу в свалку, а имена мест нужны и поиску, и людям.
+    return f"""
+    <li class="corridor" id="{anchor}" data-q="{escape(search)}"
+        data-name="{escape(name.lower())}">
+      <b>{escape(name)}</b> <span>{escape(facts)}</span></li>"""
 
 
 def build_page(routes: list[dict], tracks: list[list[dict]],
@@ -957,9 +975,9 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
 
     title = "Маршруты БПЛА — повторяющиеся коридоры на карте"
     description = (
-        f"{total} маршрутов БПЛА за {span_days} дней из открытых сообщений "
-        f"плюс {waves} волн, восстановленных по движению фиксаций: "
-        f"интерактивная карта коридоров и галерея самых устойчивых.")
+        f"Куда чаще всего летают беспилотники: {len(corridors)} устойчивых "
+        f"коридоров за {span_days} дней наблюдений — интерактивная карта, "
+        f"число повторов и доля ночных полётов по каждому пути.")
     url = f"{SITE}/marshruty/"
     breadcrumb_ld = json.dumps({
         "@context": "https://schema.org", "@type": "BreadcrumbList",
@@ -975,10 +993,71 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
         "name": title, "description": description,
         "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
                      "url": f"{SITE}/"},
+        "mainEntity": {
+            "@type": "ItemList",
+            "name": "Устойчивые коридоры БПЛА",
+            "numberOfItems": len(corridors),
+            "itemListElement": [
+                {"@type": "ListItem", "position": index + 1,
+                 "name": f'{c["start"]} — {c["end"]}',
+                 "url": f"{url}#kor-{index}"}
+                for index, c in enumerate(corridors[:TOP_LIST])
+            ],
+        },
     }, ensure_ascii=False)
+    # Вопросы — те, что люди и задают поиску: куда летают, откуда данные,
+    # можно ли верить линии. Ответы с живыми числами: три страницы с
+    # дословно одинаковым FAQ поисковик склеит, с разными — нет.
+    top_names = ", ".join(f'{c["start"]} — {c["end"]}'
+                          for c in corridors[:3])
+    qa = [
+        ("Какими маршрутами чаще всего летают беспилотники?",
+         f"За {span_days} дней наблюдений карта собрала {len(corridors)} "
+         f"устойчивых коридоров. Самые частые: {top_names}. У каждого видно, "
+         f"сколько раз путь повторился, когда был последний раз и какая доля "
+         f"полётов приходится на ночь."),
+        ("Это точный маршрут беспилотника?",
+         "Нет. Известны только те места, которые назвали источники: между "
+         "ними борт идёт где угодно — над полями, лесом, вдоль хребта. Линия "
+         "показывает направление и повторяемость, а не след на местности."),
+        ("Откуда берутся маршруты?",
+         f"Два источника. Первый — {total} путей, которые источник описал "
+         f"сам: «от Анапы через Раевскую на Новороссийск». Второй — "
+         f"{waves} волн, восстановленных по движению фиксаций: борт видят в "
+         f"одном районе, через полчаса в соседнем, и если он мог туда "
+         f"долететь с правдоподобной скоростью, фиксации связываются в трек."),
+        ("Почему линии изогнутые, а не прямые?",
+         "Беспилотник самолётной схемы на крейсерских 150 км/ч "
+         "разворачивается радиусом около 400 метров — на масштабе карты "
+         "угол физически невозможен. Длинный путь ведётся через попутные "
+         "города, потому что борт летит вдоль обжитой полосы, а не по "
+         "линейке."),
+    ]
+    faq_ld = json.dumps({
+        "@context": "https://schema.org", "@type": "FAQPage",
+        "mainEntity": [
+            {"@type": "Question", "name": question,
+             "acceptedAnswer": {"@type": "Answer", "text": answer}}
+            for question, answer in qa
+        ],
+    }, ensure_ascii=False)
+    faq_html = "".join(
+        f"<h3>{escape(question)}</h3><p>{escape(answer)}</p>"
+        for question, answer in qa)
 
-    cards = "".join(card_html(c, land, f"kor-{i}", regions)
-                    for i, c in enumerate(corridors))
+    # Первые — карточками с мини-картой, хвост — строками: глаз цепляется
+    # за десяток картинок, а четыре сотни превращаются в шум и мегабайт.
+    cards = "".join(card_html(c, land, "", regions)
+                    for c in corridors[:GALLERY_CARDS])
+    listed = "".join(
+        card_html(c, land, f"kor-{i}", regions, picture=False)
+        for i, c in enumerate(corridors))
+    top = "".join(
+        f'<li><b>{escape(c["start"])} → {escape(c["end"])}</b>'
+        f'<span>{c["count"]} '
+        f'{plural(c["count"], "маршрут", "маршрута", "маршрутов")}'
+        f' · {c["night_share"]}% ночью</span></li>'
+        for c in corridors[:TOP_LIST])
 
     return f"""<!doctype html>
 <html lang="ru">
@@ -998,19 +1077,26 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
     <meta name="theme-color" content="#0e1211" />
     <script type="application/ld+json">{breadcrumb_ld}</script>
     <script type="application/ld+json">{webpage_ld}</script>
+    <script type="application/ld+json">{faq_ld}</script>
     <link rel="stylesheet" href="/assets/marshruty-map.css{css_v}" />
     <style>
       body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
              font:16px/1.6 Inter, system-ui, -apple-system, sans-serif; }}
-      main {{ max-width:1120px; margin:0 auto; padding:40px 20px 80px; }}
-      h1 {{ font-size:29px; line-height:1.25; margin:0 0 14px; max-width:760px; }}
-      h2 {{ font-size:19px; margin:38px 0 10px; }}
-      p {{ color:#aab4ad; max-width:760px; }}
-      nav.crumbs {{ font-size:13px; color:#7d8a83; margin:0 0 18px; }}
+      main {{ max-width:1080px; margin:0 auto; padding:36px 20px 72px; }}
+      h1 {{ font-size:32px; line-height:1.2; margin:0 0 12px; max-width:760px;
+           letter-spacing:-0.01em; }}
+      h2 {{ font-size:20px; margin:46px 0 8px; letter-spacing:-0.01em; }}
+      main h3 {{ font-size:15.5px; margin:22px 0 4px; color:#dfe6df; }}
+      p {{ color:#aab4ad; max-width:720px; }}
+      .lede {{ font-size:17px; color:#c2ccc5; margin:0 0 4px; }}
+      nav.crumbs {{ font-size:13px; color:#7d8a83; margin:0 0 16px; }}
       nav.crumbs a {{ color:#9fd4b0; text-decoration:none; }}
-      a.map {{ display:inline-block; margin:16px 0 8px; padding:13px 22px;
-              background:#e93e4e; color:#fff; text-decoration:none;
-              border-radius:10px; font-weight:600; }}
+      /* Сводка числами: три факта вместо абзаца — глаз берёт их сразу. */
+      .facts {{ display:flex; flex-wrap:wrap; gap:26px; margin:18px 0 0;
+               padding:0; list-style:none; }}
+      .facts b {{ display:block; font-size:25px; color:#eef2ec;
+                 line-height:1.2; font-weight:650; }}
+      .facts span {{ font-size:13px; color:#7d8a83; }}
       #routes-map {{ height:640px; margin:22px 0 8px; border-radius:12px;
                     overflow:hidden; border:1px solid rgba(255,255,255,.07);
                     background:#0c100f; position:relative; }}
@@ -1055,22 +1141,43 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                       background:#101614; color:#e6ebe6; font-size:15px; }}
       .finder input::placeholder {{ color:#6f7c74; }}
       .finder span {{ font-size:13px; color:#7d8a83; }}
-      .gallery {{ display:grid; gap:22px 18px; margin-top:20px;
-                 grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
-      figure.corridor[hidden] {{ display:none; }}
-      .more {{ display:block; margin:24px auto 0; padding:11px 22px;
+      .gallery {{ display:grid; gap:20px 18px; margin-top:18px;
+                 grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }}
+      .corridor[hidden] {{ display:none; }}
+      .more {{ display:block; margin:22px auto 0; padding:11px 22px;
               border-radius:10px; border:1px solid #2c352f; background:#131a17;
               color:#dfe6df; font-size:14px; cursor:pointer; }}
       .more:hover {{ border-color:#3d4a42; }}
       .more[hidden] {{ display:none; }}
-      figure.corridor {{ margin:0; scroll-margin-top:24px; }}
-      figure.corridor svg {{ display:block; width:100%; height:auto;
-                            border-radius:8px; }}
-      figure.corridor:target {{ outline:2px solid #e93e4e;
-                               outline-offset:4px; border-radius:8px; }}
+      figure.corridor-card {{ margin:0; }}
+      figure.corridor-card svg {{ display:block; width:100%; height:auto;
+                                 border-radius:8px; }}
+      .gallery[hidden] {{ display:none; }}
+      .corridor:target {{ outline:2px solid #e93e4e;
+                         outline-offset:4px; border-radius:8px; }}
       figcaption {{ margin-top:8px; font-size:13px; line-height:1.45; }}
       figcaption b {{ display:block; font-size:15px; color:#eef2ec; }}
-      figcaption span {{ color:#8d988f; }}
+      figcaption span, li.corridor span {{ color:#8d988f; }}
+      /* Хвост каталога — плотный список в колонках. */
+      .corridor-list {{ list-style:none; padding:0; margin:22px 0 0;
+                       columns:2; column-gap:34px; }}
+      li.corridor {{ break-inside:avoid; padding:7px 0;
+                    border-bottom:1px solid rgba(255,255,255,.05);
+                    font-size:13px; line-height:1.45; scroll-margin-top:24px; }}
+      li.corridor b {{ display:block; font-size:14.5px; color:#dfe6df;
+                      font-weight:600; }}
+      @media (max-width:640px) {{ .corridor-list {{ columns:1; }} }}
+      /* Топ коридоров: главный текст страницы. */
+      .top-list {{ list-style:none; padding:0; margin:14px 0 0;
+                  counter-reset:top; max-width:720px; }}
+      .top-list li {{ counter-increment:top; display:flex; gap:14px;
+                     align-items:baseline; padding:9px 0;
+                     border-bottom:1px solid rgba(255,255,255,.06); }}
+      .top-list li::before {{ content:counter(top); color:#54615a;
+                             font-size:13px; min-width:18px; }}
+      .top-list b {{ flex:1; font-size:15.5px; color:#eef2ec;
+                    font-weight:600; }}
+      .top-list span {{ font-size:13px; color:#7d8a83; white-space:nowrap; }}
       footer {{ margin-top:46px; padding-top:18px; font-size:13px;
                color:#7d8a83; border-top:1px solid rgba(255,255,255,.08); }}
       footer a {{ color:#9fd4b0; }}
@@ -1079,11 +1186,17 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
   <body>
     <main>
       <nav class="crumbs"><a href="/">Карта обстановки</a> → Маршруты</nav>
-      <h1>Маршруты БПЛА: повторяющиеся коридоры</h1>
-      <p>Пути, которыми беспилотники летают снова и снова, — за
-      {span_days} {plural(span_days, "день", "дня", "дней")} наблюдений.
-      <strong>Нажмите на любую линию</strong>, чтобы увидеть подробности.
-      {night_share}% полётов приходится на ночь.</p>
+      <h1>Маршруты БПЛА</h1>
+      <p class="lede">Пути, которыми беспилотники летают снова и снова, —
+      собраны из открытых сообщений за {span_days}
+      {plural(span_days, "день", "дня", "дней")}. Нажмите на любую линию,
+      чтобы увидеть подробности.</p>
+      <ul class="facts">
+        <li><b>{len(corridors)}</b><span>устойчивых коридоров</span></li>
+        <li><b>{total}</b><span>описанных маршрутов</span></li>
+        <li><b>{waves}</b><span>восстановленных волн</span></li>
+        <li><b>{night_share}%</b><span>полётов ночью</span></li>
+      </ul>
 
       <div id="routes-map" data-version="{data_v}">
         <div class="legend">
@@ -1091,17 +1204,18 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
           <div><i class="ours"></i> путь восстановили мы</div>
         </div>
       </div>
+      <p class="map-note">Чем толще и ярче линия, тем чаще этим путём
+      летали. Приблизьте — появятся названия сёл.</p>
       <p class="warn"><b>Это направление, а не точный маршрут.</b>
-      Мы знаем только те места, которые назвали источники, — а между ними
-      борт идёт где угодно: над полями, лесом, вдоль хребта. Линия
-      соединяет названные точки и показывает, откуда и куда шло движение;
-      считать её следом на местности нельзя.</p>
-      <p class="map-note">Чем толще линия, тем чаще этим путём летали;
-      штрихи бегут по направлению полёта. Приблизьте — появятся малые
-      сёла и второстепенные пути.</p>
+      Известны только те места, которые назвали источники: между ними борт
+      идёт где угодно — над полями, лесом, вдоль хребта. Линия показывает,
+      откуда и куда шло движение, а не след на местности.</p>
 
-      <h2>Устойчивые коридоры</h2>
-      <p>{len(corridors)} путей между населёнными пунктами, каждый
+      <h2>Куда летают чаще всего</h2>
+      <ol class="top-list">{top}</ol>
+
+      <h2>Все коридоры</h2>
+      <p>{len(corridors)} путей между населёнными пунктами; каждый
       повторился не меньше {MIN_CORRIDOR} раз.</p>
       <div class="finder">
         <input id="finder" type="search" autocomplete="off"
@@ -1109,7 +1223,8 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                aria-label="Поиск по коридорам" />
         <span id="finder-count"></span>
       </div>
-      <div class="gallery">{cards}</div>
+      <div class="gallery" id="gallery">{cards}</div>
+      <ul class="corridor-list">{listed}</ul>
       <button id="finder-more" class="more" type="button">
         Показать все {len(corridors)}</button>
 
@@ -1117,27 +1232,22 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       <p><b style="color:#f0475a">Красные</b> — пути, которые описал сам
       источник: «от Анапы через Раевскую на Новороссийск». Мы их только
       пересказываем.</p>
-      <p><b style="color:#f0b429">Жёлтые</b> — пути, которые мы собрали
-      сами. Налёт идёт волнами: борт видят в одном районе, через
-      3–35 минут в соседнем. Если он мог туда долететь с правдоподобной
-      скоростью (80–260 км/ч при крейсерских 150) и без резкого разворота,
-      фиксации связываются в один трек. За всё время наблюдений так
-      восстановлено {waves} {plural(waves, "волна", "волны", "волн")}
-      из {wave_points}
-      {plural(wave_points, "фиксации", "фиксаций", "фиксаций")}. Это
-      догадка — но догадка по физике полёта, а не по совпадению имён.</p>
+      <p><b style="color:#f0b429">Жёлтые</b> — пути, собранные нами. Налёт
+      идёт волнами: борт видят в одном районе, через полчаса в соседнем.
+      Если он мог туда долететь с правдоподобной скоростью (70–280 км/ч
+      при крейсерских 150) и без резкого разворота, фиксации связываются
+      в один трек. За всё время наблюдений так восстановлено {waves}
+      {plural(waves, "волна", "волны", "волн")} из {wave_points}
+      {plural(wave_points, "фиксации", "фиксаций", "фиксаций")}.</p>
       <p>Линии гладкие не для красоты: борт самолётной схемы на
       крейсерских 150 км/ч разворачивается радиусом около 400 метров — на
-      масштабе карты угол физически невозможен. По той же причине длинный
-      путь ведётся через попутные города, а не по прямой. Как часто путь
-      повторялся, зависит и от того, сколько каналов пишет об этом
+      масштабе карты угол физически невозможен. Длинный путь по той же
+      причине ведётся через попутные города, а не по прямой. Как часто
+      путь повторялся, зависит и от того, сколько каналов пишет об этом
       районе.</p>
-      <p>И ещё раз о главном: <b>точного маршрута здесь нет и быть не
-      может</b>. Источник называет место — посёлок, район, город, — и это
-      всё, что известно. Борт между двумя названными точками летит не по
-      линейке: над полями, руслами, вдоль хребтов, обходя то, что мы не
-      видим. Карта показывает, откуда куда и как часто шло движение, —
-      направление и повторяемость, а не траекторию.</p>
+
+      <h2>Вопросы и ответы</h2>
+      {faq_html}
 
       <footer>
         Обновлено {escape(updated)}. Неофициальная сводка: составлена по

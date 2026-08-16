@@ -253,18 +253,27 @@ def test_short_leg_keeps_its_straight_line():
     assert rp.waypoints_between(a, b, [a, b, middle], {0, 1}) == []
 
 
-def test_cards_carry_region_names_for_search():
-    """Поиск по галерее должен находить Джанкой по слову «Крым»."""
+def test_catalogue_rows_carry_region_names_for_search():
+    """Поиск по каталогу должен находить Джанкой по слову «Крым».
+
+    Каталог — строки списка: там все коридоры, и именно он ищется. Витрина
+    с мини-картами в поиске не участвует и на время запроса скрывается.
+    """
     corridor = rp.build_corridors(
         [_route([(45.7, 34.4, "Джанкой"), (45.2, 33.4, "Раздольное")])] * 12)[0]
+    regions = {"Джанкой": "Республика Крым",
+               "Раздольное": "Республика Крым"}
 
-    html = rp.card_html(corridor, rp.Land(), "kor-0",
-                        {"Джанкой": "Республика Крым",
-                         "Раздольное": "Республика Крым"})
+    row = rp.card_html(corridor, rp.Land(), "kor-0", regions, picture=False)
+    card = rp.card_html(corridor, rp.Land(), "", regions)
 
-    assert 'data-q="' in html
-    assert "республика крым" in html
-    assert "джанкой" in html
+    assert 'id="kor-0"' in row
+    assert 'data-q="' in row
+    assert "республика крым" in row
+    assert "джанкой" in row
+    # Витрина не ищется и не якорится: у неё нет ни data-q, ни id.
+    assert "data-q" not in card
+    assert "<svg" in card
 
 
 def test_sea_corridors_stay_out_of_the_gallery():
@@ -309,5 +318,10 @@ def test_page_is_a_gallery_with_map_container(land):
     assert 'id="routes-map"' in html             # контейнер OpenLayers
     assert "/assets/marshruty-map.js" in html
     assert "/assets/marshruty-map.css" in html
-    assert 'id="kor-0"' in html                  # якорь карточки для клика
+    assert 'id="kor-0"' in html                  # якорь строки каталога
     assert "может опаздывать и ошибаться" in html
+    # Оговорка о точности — на самом видном месте, под картой.
+    assert "не точный маршрут" in html
+    # Разметка для поиска: список коридоров и вопросы-ответы.
+    assert '"@type": "ItemList"' in html
+    assert '"@type": "FAQPage"' in html

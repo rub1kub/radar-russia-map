@@ -41,10 +41,8 @@ type Graph = { chains: Chain[]; labels: MapLabel[] };
 // фиксаций. Цвет отвечает на вопрос «чьё это знание», и потому же
 // подсказка всегда называет доли.
 const TRUNK = "#f0475a";
-const LOCAL = "#c33b49";
 const ANT = "#ffd3d7";
 const OURS_TRUNK = "#f0b429";
-const OURS_LOCAL = "#c08f1f";
 const OURS_ANT = "#ffe9a8";
 /** Больше половины трассы собрано нами — красим её как нашу. */
 const OURS_SHARE = 0.5;
@@ -153,43 +151,47 @@ function render(target: HTMLElement, graph: Graph): void {
 
   let selected: Chain | null = null;
 
-  const chainStyle = (feature: FeatureLike, resolution: number): Style[] => {
+  const chainStyle = (feature: FeatureLike): Style[] => {
     const chain = feature.get("chain") as Chain;
-    const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
     const chosen = selected === chain;
-    // Выбранная трасса видна на любом зуме — иначе она пропадала бы прямо
-    // с открытой карточкой.
-    if (!chain.t && zoom < DETAIL_ZOOM && !chosen) return [];
+    // Видно всё и сразу. Прежде на обзоре показывались только шестьдесят
+    // самых тяжёлых трасс, и весь север выглядел пустым: из 575 трасс
+    // севернее Воронежа в эту шестидесятку попадали три. Иерархия теперь
+    // не в прятках, а в толщине и яркости.
     const trunk = Boolean(chain.t);
     const ours = chain.cs >= OURS_SHARE;
-    const base = trunk ? 2 + 3.6 * chain.s : 1.1 + 1.6 * chain.s;
+    const base = 0.7 + 3.6 * Math.pow(chain.s, 1.6);
     const width = chosen ? base + 3 : base;
-    // Пока одна трасса выбрана, остальные приглушены: видно, что именно
-    // описано в карточке.
-    const dim = selected !== null && !chosen ? 0.25 : 1;
-    const paint = (color: string) => (dim === 1 ? color : withAlpha(color, dim));
+    // Яркость — вес трассы: редкий путь виден бледной нитью, частый
+    // горит. Пока одна выбрана, остальные приглушены вдвойне.
+    const alpha = chosen ? 1 : (0.22 + 0.68 * chain.s)
+      * (selected !== null ? 0.3 : 1);
+    const paint = (color: string) => withAlpha(color, Math.min(1, alpha));
     const styles = [
       new Style({
         stroke: new Stroke({
-          color: paint(ours ? (trunk ? OURS_TRUNK : OURS_LOCAL)
-                            : (trunk ? TRUNK : LOCAL)),
+          color: paint(ours ? OURS_TRUNK : TRUNK),
           width,
           lineCap: "round",
           lineJoin: "round"
         }),
-        zIndex: chosen ? 3 : 1
-      }),
-      new Style({
+        zIndex: chosen ? 30 : Math.round(chain.s * 10)
+      })
+    ];
+    // Бегущие штрихи — только на заметных трассах: на девятистах нитях
+    // они превращаются в рябь.
+    if (chosen || chain.s > 0.5) {
+      styles.push(new Style({
         stroke: new Stroke({
           color: paint(ours ? OURS_ANT : ANT),
-          width: Math.max(1, width * 0.45),
+          width: Math.max(0.8, width * 0.42),
           lineDash: [2, 16],
           lineDashOffset: dashOffset,
           lineCap: "round"
         }),
-        zIndex: chosen ? 4 : 2
-      })
-    ];
+        zIndex: chosen ? 31 : 12
+      }));
+    }
     if (chosen) {
       // Свечение под выбранной линией — чтобы её было видно в клубке.
       styles.unshift(new Style({
@@ -260,13 +262,21 @@ function render(target: HTMLElement, graph: Graph): void {
       labelLayer
     ],
     view: new View({
-      center: fromLonLat([37.8, 49.4]),
-      zoom: 5.7,
-      minZoom: 4.4,
+      center: fromLonLat([38, 50]),
+      zoom: 5.4,
+      minZoom: 4.2,
       maxZoom: 11,
       extent: transformExtent([22, 40, 62, 62], "EPSG:4326", "EPSG:3857")
     })
   });
+
+  // Кадр подбирается по самим данным: жёстко заданный центр однажды уже
+  // оставил весь север за краем экрана. Небольшой отступ — чтобы линии не
+  // упирались в рамку.
+  const extent = chainSource.getExtent();
+  if (extent && Number.isFinite(extent[0])) {
+    map.getView().fit(extent, { padding: [28, 28, 28, 28], maxZoom: 6.4 });
+  }
 
   // Контейнер может получить размер позже инициализации (вкладки,
   // свёрнутые панели): OL сам за этим не следит.
@@ -391,38 +401,41 @@ function initFinder(): void {
   const counter = document.getElementById("finder-count");
   const more = document.getElementById("finder-more");
   if (!input) return;
-  const gallery = document.querySelector(".gallery");
-  const cards = Array.from(
-    document.querySelectorAll<HTMLElement>("figure.corridor")
-  );
-  /** Сколько карточек видно без поиска: остальные ждут кнопки. */
+  // Каталог — строки списка: там все коридоры. Витрина с мини-картами
+  // показывает первую дюжину и на время поиска уходит, чтобы результат
+  // начинался с самого точного совпадения, а не с картинок.
+  const rows = Array.from(document.querySelectorAll<HTMLElement>(".corridor"));
+  const gallery = document.getElementById("gallery");
+  const list = rows[0]?.parentElement ?? null;
+  /** Сколько коридоров видно без поиска: остальные ждут кнопки. */
   const VISIBLE = 60;
   let expanded = false;
 
   const apply = () => {
     const query = input.value.trim().toLowerCase();
     let shown = 0;
-    for (const card of cards) {
-      const hit = !query || (card.dataset.q ?? "").includes(query);
+    for (const row of rows) {
+      const hit = !query || (row.dataset.q ?? "").includes(query);
       // Без запроса показываем первые шестьдесят; поиск идёт по всем.
-      card.hidden = !hit || (!query && !expanded && shown >= VISIBLE);
+      row.hidden = !hit || (!query && !expanded && shown >= VISIBLE);
       if (hit) shown += 1;
     }
+    if (gallery) gallery.hidden = Boolean(query);
     if (counter) {
-      counter.textContent = query ? `${shown} из ${cards.length}` : "";
+      counter.textContent = query ? `${shown} из ${rows.length}` : "";
     }
     if (more) {
-      more.hidden = Boolean(query) || expanded || cards.length <= VISIBLE;
+      more.hidden = Boolean(query) || expanded || rows.length <= VISIBLE;
     }
-    // Совпадение по самому названию коридора важнее совпадения по региону:
-    // на запрос «Краснодар» сначала идут пути в Краснодар, а потом всё
+    // Совпадение по названию коридора важнее совпадения по региону: на
+    // запрос «Краснодар» сначала идут пути в Краснодар, а потом всё
     // остальное в Краснодарском крае.
-    if (query && gallery) {
-      const exact = cards.filter(
-        (card) => !card.hidden && (card.dataset.name ?? "").includes(query)
+    if (query && list) {
+      const exact = rows.filter(
+        (row) => !row.hidden && (row.dataset.name ?? "").includes(query)
       );
       for (let index = exact.length - 1; index >= 0; index -= 1) {
-        gallery.prepend(exact[index]);
+        list.prepend(exact[index]);
       }
     }
   };
@@ -432,7 +445,24 @@ function initFinder(): void {
     expanded = true;
     apply();
   });
+
+  // Клик по трассе ведёт к строке каталога, а она может лежать за
+  // шестидесятой — тогда каталог раскрывается сам, иначе переход
+  // упирался в пустоту.
+  const reveal = () => {
+    const anchor = window.location.hash.slice(1);
+    if (!anchor) return;
+    const target = document.getElementById(anchor);
+    if (!target || !target.hidden) return;
+    expanded = true;
+    input.value = "";
+    apply();
+    target.scrollIntoView({ block: "center" });
+  };
+  window.addEventListener("hashchange", reveal);
+
   apply();
+  reveal();
 }
 
 function boot(): void {
