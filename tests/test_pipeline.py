@@ -2192,15 +2192,17 @@ def test_channel_digest_gives_each_place_its_own_signal():
         "Раменский район",
         "Пролеты БПЛА",
     ]
+    from pipeline.parse import signal_for_place
+
     signals = phrase_signals(phrases)
 
-    # Место, у которого своя сводка про ПВО, перехват сохраняет:
-    # в словарь оно не попадает и наследует общий сигнал.
-    assert "Чехов" not in signals
-    # А соседние места получают то, что сказано про них.
-    assert signals["Раменский район"][0] == "detection"
-    assert signals["Уварово"][0] in ("alarm", "danger", "detection")
-    assert signals["Уварово"][0] != "intercept"
+    # Место ищется по основе, которую отдаёт геокодер, а не по фразе
+    # целиком: «раменский» от «Раменский район».
+    assert signal_for_place(signals, "чехов") is None  # наследует перехват
+    assert signal_for_place(signals, "раменский")[0] == "detection"
+    uvarovo = signal_for_place(signals, "уварово")
+    assert uvarovo[0] in ("alarm", "danger", "detection")
+    assert uvarovo[0] != "intercept"
 
 
 def test_enumeration_of_districts_keeps_the_common_signal():
