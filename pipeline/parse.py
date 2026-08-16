@@ -518,8 +518,25 @@ def phrase_signals(phrases: list[str]) -> dict[str, tuple[str, int]]:
         signal, severity = nearest if nearest else ("danger", 5)
         if CLAIM_RANK.get(signal, 0) >= top:
             continue
-        result[phrase] = (signal, severity)
+        result[phrase.lower()] = (signal, severity)
     return result
+
+
+def signal_for_place(segments: dict[str, tuple[str, int]],
+                     token: str) -> tuple[str, int] | None:
+    """Сигнал фразы, в которой геокодер нашёл это место.
+
+    Ключи словаря — фразы сообщения, а геокодер отдаёт нормализованную
+    основу совпадения («домодедов» от «Домодедовский район»), поэтому
+    сопоставление по вхождению, а не по равенству. Совпадений может быть
+    несколько — берётся первое по тексту, как и порядок фраз.
+    """
+    if not token:
+        return None
+    for phrase, signal in segments.items():
+        if token in phrase:
+            return signal
+    return None
 
 # --- Нерелевантное: доклад «ничего не происходит» ---------------------------
 # «Фиксаций над нашим воздушным пространством не наблюдаем», «по обстановке

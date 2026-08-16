@@ -41,7 +41,7 @@ from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import (MAX_RESOLVED_ZONES, parse, phrase_signals,  # noqa: E402
-                    strip_footer)
+                    signal_for_place, strip_footer)
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .source_region import build_fallback, explicit_home_region  # noqa: E402
@@ -516,7 +516,7 @@ def run_once(
 
         for item in resolved:
             local = observation
-            own = segments.get(item.phrase)
+            own = signal_for_place(segments, item.phrase)
             if own and own[0] != observation.signal_type:
                 local = replace(observation, signal_type=own[0],
                                 severity=own[1])
