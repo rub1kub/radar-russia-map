@@ -23,7 +23,7 @@ from .fuse import Fuser  # noqa: E402
 from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
-from .parse import MAX_RESOLVED_ZONES, parse  # noqa: E402
+from .parse import MAX_RESOLVED_ZONES, parse, phrase_signals  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
@@ -147,10 +147,19 @@ def rebuild(connection) -> dict:
 
         # Сообщение может называть несколько независимых мест — каждое
         # становится отдельным наблюдением в своей зоне.
+        # Лента-дайджест: у каждой фразы свой сигнал, иначе перехват из
+        # одного куска красит все места сообщения.
+        segments = phrase_signals(observation.place_phrases)
+
         for item in resolved:
             local = observation
+            own = segments.get(item.phrase)
+            if own and own[0] != observation.signal_type:
+                local = replace(observation, signal_type=own[0],
+                                severity=own[1])
+                stats["as_segment"] = stats.get("as_segment", 0) + 1
             # Работа ПВО публикуется районом, не точкой — см. coarsen_intercept.
-            if observation.signal_type == "intercept":
+            if local.signal_type == "intercept":
                 item = coarsen_intercept(geocoder, item)
             # Место, названное только внутри оговорки о возможном, получает
             # предупреждение, а не сигнал сообщения: «уничтожена группа над
