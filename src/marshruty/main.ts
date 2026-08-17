@@ -24,8 +24,11 @@ import { Fill, Stroke, Style, Text } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { defaults as defaultControls } from "ol/control";
 
+// Подложка с названиями: на карте маршрутов география и есть содержание,
+// а вариант nolabels оставлял человека без единого города между линиями.
+// На живой карте наоборот — там свои слои подписей и своя логика.
 const BASEMAP_URL =
-  "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
+  "https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
 const ATTRIBUTION = "© OpenStreetMap contributors, © CARTO";
 
 type Chain = {
@@ -47,10 +50,10 @@ const OURS_ANT = "#ffe9a8";
 /** Больше половины трассы собрано нами — красим её как нашу. */
 const OURS_SHARE = 0.5;
 
-/** Зум, с которого проявляются локальные трассы и вторые подписи. */
-const DETAIL_ZOOM = 6.4;
+/** Зум, с которого проявляются вторые подписи путевых точек. */
+const DETAIL_ZOOM = 5.8;
 /** Зум, с которого подписываются сёла. */
-const CLOSE_ZOOM = 8;
+const CLOSE_ZOOM = 6.8;
 
 function plural(n: number, one: string, few: string, many: string): string {
   const m100 = Math.abs(n) % 100;
@@ -386,6 +389,69 @@ function render(target: HTMLElement, graph: Graph): void {
       layerFilter: (layer) => layer === chainLayer
     });
     select((feature?.get("chain") as Chain | undefined) ?? null);
+  });
+
+  // Обратный ход: строка каталога показывает свой путь на карте. Без него
+  // список из четырёхсот названий оставался списком — не посмотреть, где
+  // это и куда ведёт.
+  //
+  // Ищется не по имени, а по географии: трасса обычно длиннее коридора и
+  // называется другими концами — «Керчь — Сочи» живёт внутри «Джанкойский
+  // район — Сочи». Берём самую весомую трассу, проходящую близко к обоим
+  // концам коридора.
+  const NEAR_KM = 18;
+
+  function distanceKm(a: [number, number], b: [number, number]): number {
+    const dx = (b[1] - a[1]) * 111 * Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180);
+    const dy = (b[0] - a[0]) * 111;
+    return Math.hypot(dx, dy);
+  }
+
+  function passesNear(chain: Chain, point: [number, number]): boolean {
+    return chain.pts.some((p) => distanceKm(p as [number, number], point) < NEAR_KM);
+  }
+
+  function openCorridor(row: HTMLElement): void {
+    const parse = (value?: string): [number, number] | null => {
+      const parts = (value ?? "").split(",").map(Number);
+      return parts.length === 2 && parts.every(Number.isFinite)
+        ? [parts[0], parts[1]] : null;
+    };
+    const from = parse(row.dataset.a);
+    const to = parse(row.dataset.b);
+    if (!from || !to) return;
+
+    let best: Chain | null = null;
+    for (const chain of chains) {
+      if (!passesNear(chain, from) || !passesNear(chain, to)) continue;
+      if (!best || chain.n > best.n) best = chain;
+    }
+    select(best);
+    // Кадр — по концам коридора, даже если подходящей трассы не нашлось:
+    // человек всё равно увидит, о каком месте речь.
+    const extent = [
+      Math.min(from[1], to[1]), Math.min(from[0], to[0]),
+      Math.max(from[1], to[1]), Math.max(from[0], to[0])
+    ];
+    map.getView().fit(
+      transformExtent(extent, "EPSG:4326", "EPSG:3857"),
+      { padding: [80, 80, 80, 80], maxZoom: 9, duration: 450 }
+    );
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  document.querySelector(".corridor-list")?.addEventListener("click", (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>(".corridor");
+    if (row) openCorridor(row);
+  });
+  document.querySelector(".corridor-list")?.addEventListener("keydown", (event) => {
+    const key = (event as KeyboardEvent).key;
+    if (key !== "Enter" && key !== " ") return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>(".corridor");
+    if (row) {
+      event.preventDefault();
+      openCorridor(row);
+    }
   });
 }
 

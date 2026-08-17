@@ -89,7 +89,10 @@ CHAIN_MAX_LEGS = 40
 # сёла — с 8. Без третьего яруса при приближении подписей не прибавлялось.
 LABELS_ALWAYS = 26
 LABELS_ZOOMED = 140
-LABELS_CLOSE = 900
+# Все узлы графа: каждая точка, которую источники называли, должна иметь
+# имя при приближении. Потолок в 900 обрезал ровно те посёлки, ради
+# которых человек и приближает карту.
+LABELS_CLOSE = 5000
 
 # --- Восстановление волн по фиксациям ---------------------------------
 # Пороги — от физики украинских дальнобойных БПЛА самолётной схемы
@@ -944,9 +947,16 @@ def card_html(corridor: dict, land: Land, anchor: str,
     </figure>"""
     # Каталог: все коридоры строками. Четыре сотни мини-карт весили мегабайт
     # и превращали страницу в свалку, а имена мест нужны и поиску, и людям.
+    # Координаты концов: по ним строка находит на карте трассу, которая
+    # через них проходит. Совпадением имён это не решается — трасса обычно
+    # длиннее коридора и называется другими концами («Керчь — Сочи» живёт
+    # внутри «Джанкойский район — Сочи»).
+    head, tail = corridor["face"][0], corridor["face"][-1]
     return f"""
     <li class="corridor" id="{anchor}" data-q="{escape(search)}"
-        data-name="{escape(name.lower())}">
+        data-name="{escape(name.lower())}" tabindex="0" role="button"
+        data-a="{head[0]:.4f},{head[1]:.4f}"
+        data-b="{tail[0]:.4f},{tail[1]:.4f}">
       <b>{escape(name)}</b> <span>{escape(facts)}</span></li>"""
 
 
@@ -1163,7 +1173,10 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                        columns:2; column-gap:34px; }}
       li.corridor {{ break-inside:avoid; padding:7px 0;
                     border-bottom:1px solid rgba(255,255,255,.05);
-                    font-size:13px; line-height:1.45; scroll-margin-top:24px; }}
+                    font-size:13px; line-height:1.45; scroll-margin-top:24px;
+                    cursor:pointer; }}
+      li.corridor:hover b, li.corridor:focus b {{ color:#ffb3ba; }}
+      li.corridor:focus {{ outline:1px solid #3d4a42; outline-offset:3px; }}
       li.corridor b {{ display:block; font-size:14.5px; color:#dfe6df;
                       font-weight:600; }}
       @media (max-width:640px) {{ .corridor-list {{ columns:1; }} }}
