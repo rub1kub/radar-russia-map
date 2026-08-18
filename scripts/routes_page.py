@@ -123,6 +123,10 @@ NODE_LAT_STEP = 0.09
 # морем, и вдоль побережья ложился веер параллельных лент, каждая мимо
 # городов. Попутным считается узел не дальше DETOUR_BAND_KM от прямой и не
 # ближе DETOUR_STEP_KM к предыдущему выбранному.
+# Насколько трасса уходит от берега. Борт над Причерноморьем идёт не по
+# набережной: его видят из Анапы, Геленджика, Туапсе, но летит он в море,
+# параллельно берегу. Линия по береговой черте — враньё о том, где он был.
+COAST_OFFSET_KM = 24.0
 DETOUR_MIN_LEG_KM = 55.0
 DETOUR_BAND_KM = 22.0
 DETOUR_STEP_KM = 18.0
@@ -188,6 +192,7 @@ class Land:
 
     def __init__(self) -> None:
         self.rings: list[tuple[tuple[float, float, float, float], list]] = []
+        self.sea_rings: list[tuple[tuple[float, float, float, float], list]] = []
         try:
             collection = json.loads(
                 (DATA / "regions.json").read_text(encoding="utf-8"))
@@ -197,8 +202,7 @@ class Land:
             # Акватории лежат в том же файле — но для вопроса «это суша?»
             # они как раз ответ «нет»: без пропуска Азовское и Чёрное моря
             # считались бы сушей, и прибрежные дуги выгибались бы на берег.
-            if (feature.get("properties") or {}).get("kind") == "sea":
-                continue
+            sea = (feature.get("properties") or {}).get("kind") == "sea"
             geometry = feature.get("geometry") or {}
             polygons = (geometry.get("coordinates", [])
                         if geometry.get("type") == "MultiPolygon"
@@ -209,8 +213,8 @@ class Land:
                         continue
                     lons = [p[0] for p in ring]
                     lats = [p[1] for p in ring]
-                    self.rings.append(
-                        ((min(lats), min(lons), max(lats), max(lons)), ring))
+                    box = (min(lats), min(lons), max(lats), max(lons))
+                    (self.sea_rings if sea else self.rings).append((box, ring))
 
     def is_land(self, lat: float, lon: float) -> bool:
         for (lat0, lon0, lat1, lon1), ring in self.rings:
@@ -260,6 +264,32 @@ class Land:
             if len(parts) > 2:
                 paths.append("".join(parts) + "Z")
         return " ".join(paths)
+
+    def is_sea(self, lat: float, lon: float) -> bool:
+        """Точка в акватории.
+
+        Не то же, что «не суша»: за пределами наших полигонов лежат и
+        соседние страны, и Каспий, и просто белые пятна. Но и одного
+        полигона мало: он нарисован с запасом от берега, и у самой кромки
+        отвечал «не море» — трасса так и оставалась на набережной. Поэтому
+        засчитываем и попадание в рамку акватории, если это точно не суша.
+        """
+        for (lat0, lon0, lat1, lon1), ring in self.sea_rings:
+            if (lat0 <= lat <= lat1 and lon0 <= lon <= lon1
+                    and not self.is_land(lat, lon)):
+                return True
+        for (lat0, lon0, lat1, lon1), ring in self.sea_rings:
+            if not (lat0 <= lat <= lat1 and lon0 <= lon <= lon1):
+                continue
+            hit = False
+            for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+                if (ay > lat) != (by > lat):
+                    cross = (bx - ax) * (lat - ay) / (by - ay) + ax
+                    if lon < cross:
+                        hit = not hit
+            if hit:
+                return True
+        return False
 
     def sea_control(self, a: tuple[float, float],
                     b: tuple[float, float]) -> tuple[float, float] | None:
@@ -729,6 +759,53 @@ def waypoints_between(a: dict, b: dict, nodes: list[dict],
     return picked
 
 
+def offshore(waypoints: list[tuple[float, float]],
+             land: Land) -> list[tuple[float, float]]:
+    """Отодвинуть прибрежную трассу от берега в море.
+
+    Источники называют приморские города, потому что оттуда борт видно, —
+    но летит он не над набережной, а в море, параллельно берегу. Линия по
+    береговой черте врёт о том, где борт был.
+
+    Сторона выбирается один раз на всю трассу голосованием точек: берег
+    изгибается, и решение по каждой точке в отдельности перекидывало линию
+    то в море, то обратно на сушу. Сдвигаются только те точки, у которых с
+    выбранной стороны действительно вода.
+    """
+    if len(waypoints) < 2 or not land.sea_rings:
+        return waypoints
+
+    def perpendicular(index: int, sign: int,
+                      reach: float) -> tuple[float, float]:
+        lat, lon = waypoints[index]
+        previous = waypoints[max(0, index - 1)]
+        following = waypoints[min(len(waypoints) - 1, index + 1)]
+        dlat = following[0] - previous[0]
+        dlon = (following[1] - previous[1]) * math.cos(math.radians(lat))
+        norm = math.hypot(dlat, dlon)
+        if norm < 1e-9:
+            return (lat, lon)
+        step = reach / 111.0
+        return (lat + sign * (-dlon) / norm * step,
+                lon + sign * dlat / norm * step / math.cos(math.radians(lat)))
+
+    votes = 0
+    for index in range(len(waypoints)):
+        left = land.is_sea(*perpendicular(index, 1, COAST_OFFSET_KM))
+        right = land.is_sea(*perpendicular(index, -1, COAST_OFFSET_KM))
+        if left != right:
+            votes += 1 if left else -1
+    if not votes:
+        return waypoints
+    side = 1 if votes > 0 else -1
+
+    moved: list[tuple[float, float]] = []
+    for index, point in enumerate(waypoints):
+        shifted = perpendicular(index, side, COAST_OFFSET_KM)
+        moved.append(shifted if land.is_sea(*shifted) else point)
+    return moved
+
+
 def export_graph(nodes: list[dict], edges: list[dict], land: Land,
                  anchors: dict[tuple[str, str], str], stats: dict) -> dict:
     """corridors.json: готовые трассы — клиенту остаётся нарисовать линии.
@@ -773,7 +850,7 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
                 if control:
                     waypoints.append(control)
             waypoints.append((b["lat"], b["lon"]))
-        points = smooth_path(waypoints)
+        points = smooth_path(offshore(waypoints, land))
         top = max(e["count"] for e in chain)
         named = sum(e["named"] for e in chain)
         computed = sum(e["computed"] for e in chain)
@@ -801,7 +878,9 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
 
     # Подписи путевых точек: без кружков, только имена — крупные всегда,
     # остальные при приближении.
-    ranked = label_weight.most_common(LABELS_CLOSE)
+    ranked = [(index, weight) for index, weight
+              in label_weight.most_common(LABELS_CLOSE)
+              if "море" not in nodes[index]["name"]]
     labels = []
     for position, (index, weight) in enumerate(ranked):
         node = nodes[index]

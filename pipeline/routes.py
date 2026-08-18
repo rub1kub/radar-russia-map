@@ -145,9 +145,20 @@ def extract_route(text: str, observation, resolved,
     # двести километров, и линия «Горностаевка — центр Чёрного моря»
     # рисовала бы бросок через весь Крым. Берём точку в море рядом с
     # соседней сушей, в направлении середины акватории.
+    sea_spots = set(seas)
     for index in seas:
-        neighbour = points[index - 1] if index else (
-            points[index + 1] if len(points) > index + 1 else None)
+        # Опорой служит только суша: «от Азовского моря в сторону Чёрного»
+        # ставило точку Азова в 45 км от центра Чёрного — посреди Чёрного
+        # моря, и там же оседала подпись. Без сухопутного соседа море
+        # остаётся своим центром, а слишком длинное плечо отсеется само.
+        neighbour = None
+        for step in range(1, len(points)):
+            for candidate in (index - step, index + step):
+                if 0 <= candidate < len(points) and candidate not in sea_spots:
+                    neighbour = points[candidate]
+                    break
+            if neighbour is not None:
+                break
         if neighbour is None:
             continue
         lat, lon, name = points[index]
