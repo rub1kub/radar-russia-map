@@ -529,7 +529,7 @@ def build_graph(routes: list[dict], tracks: list[list[dict]]) -> tuple[
 
 
 def smooth_path(points: list[tuple[float, float]],
-                steps: int = 12) -> list[list[float]]:
+                steps: int = 7) -> list[list[float]]:
     """Сгладить ломаную по путевым точкам в траекторию полёта.
 
     Излом на карте — артефакт: борт самолётной схемы на крейсерских
@@ -544,7 +544,7 @@ def smooth_path(points: list[tuple[float, float]],
     на резких поворотах, а именно они здесь и встречаются.
     """
     if len(points) < 3:
-        return [[round(lat, 4), round(lon, 4)] for lat, lon in points]
+        return [[round(lat, 3), round(lon, 3)] for lat, lon in points]
 
     # Дублируем концы: кривой нужны соседи слева и справа от каждого звена.
     padded = [points[0]] + list(points) + [points[-1]]
@@ -576,8 +576,14 @@ def smooth_path(points: list[tuple[float, float]],
                   for k in (0, 1)]
             point = [((t2 - t) * b1[k] + (t - t1) * b2[k]) / (t2 - t1)
                      for k in (0, 1)]
-            result.append([round(point[0], 4), round(point[1], 4)])
-    result.append([round(points[-1][0], 4), round(points[-1][1], 4)])
+            spot = [round(point[0], 3), round(point[1], 3)]
+            # После округления соседние точки часто совпадают — держать их
+            # в файле незачем.
+            if not result or result[-1] != spot:
+                result.append(spot)
+    last = [round(points[-1][0], 3), round(points[-1][1], 3)]
+    if not result or result[-1] != last:
+        result.append(last)
     return result
 
 
@@ -786,8 +792,8 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
             "nm": named, "cp": computed, "r": backward,
             # Доля восстановленного: по ней клиент красит трассу — жёлтым
             # то, что собрано по нашим волнам, а не пересказано источником.
-            "cs": round(computed / max(named + computed, 1), 3),
-            "s": round(math.log1p(top) / math.log1p(peak), 3),
+            "cs": round(computed / max(named + computed, 1), 2),
+            "s": round(math.log1p(top) / math.log1p(peak), 2),
             "t": 1 if rank < TRUNK_CHAINS else 0,
             **({"kor": anchors[(start_name, end_name)]}
                if (start_name, end_name) in anchors else {}),
@@ -800,7 +806,7 @@ def export_graph(nodes: list[dict], edges: list[dict], land: Land,
     for position, (index, weight) in enumerate(ranked):
         node = nodes[index]
         labels.append({
-            "lat": round(node["lat"], 4), "lon": round(node["lon"], 4),
+            "lat": round(node["lat"], 3), "lon": round(node["lon"], 3),
             "name": node["name"],
             "t": (1 if position < LABELS_ALWAYS
                   else 2 if position < LABELS_ZOOMED else 3),
