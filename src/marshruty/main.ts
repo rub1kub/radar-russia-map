@@ -20,15 +20,31 @@ import Feature from "ol/Feature";
 import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
 import { fromLonLat, transformExtent } from "ol/proj";
-import { Fill, Stroke, Style, Text } from "ol/style";
+import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { defaults as defaultControls } from "ol/control";
 
-// Подложка с названиями: на карте маршрутов география и есть содержание,
-// а вариант nolabels оставлял человека без единого города между линиями.
-// На живой карте наоборот — там свои слои подписей и своя логика.
+// Подложка без подписей — свои названия рисуем сами. Вариант dark_all
+// подписывает латиницей («MOSCOW», «KYIV»), а сайт русский; города берём
+// из справочника проекта, где имена уже наши.
 const BASEMAP_URL =
-  "https://{a-d}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+  "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
+
+/** Города-ориентиры: имя показывается с того зума, где ему есть место. */
+type City = { name: string; lat: number; lon: number; population: number };
+
+/**
+ * С какого зума подписывать город. Порог от людности: миллионники видны
+ * сразу, райцентры — когда человек уже приблизился к своему району.
+ */
+function cityZoom(population: number): number {
+  if (population >= 700_000) return 0;
+  if (population >= 250_000) return 5.6;
+  if (population >= 100_000) return 6.4;
+  if (population >= 40_000) return 7.2;
+  if (population >= 12_000) return 8;
+  return 8.8;
+}
 const ATTRIBUTION = "© OpenStreetMap contributors, © CARTO";
 
 type Chain = {
@@ -248,6 +264,44 @@ function render(target: HTMLElement, graph: Graph): void {
     zIndex: 20
   });
 
+  // --- Города-ориентиры из справочника проекта ---------------------------
+  const citySource = new VectorSource();
+  const cityLayer = new VectorLayer({
+    source: citySource,
+    declutter: true,
+    zIndex: 15,
+    style: (feature: FeatureLike, resolution: number): Style | undefined => {
+      const city = feature.get("city") as City;
+      const zoom = map.getView().getZoomForResolution(resolution) ?? 5;
+      if (zoom < cityZoom(city.population)) return undefined;
+      const big = city.population >= 250_000;
+      return new Style({
+        image: new CircleStyle({
+          radius: big ? 3 : 2,
+          fill: new Fill({ color: "#6d7d74" })
+        }),
+        text: new Text({
+          text: city.name,
+          offsetY: -10,
+          font: `${big ? 12.5 : 11}px Inter, system-ui, sans-serif`,
+          fill: new Fill({ color: big ? "#9fada4" : "#7d8a83" }),
+          stroke: new Stroke({ color: "rgba(10,14,13,0.9)", width: 3 })
+        })
+      });
+    }
+  });
+  fetch("/data/city-labels.json")
+    .then((response) => response.json())
+    .then((payload: { cities: City[] }) => {
+      for (const city of payload.cities ?? []) {
+        const feature = new Feature(new Point(fromLonLat([city.lon, city.lat])));
+        feature.set("city", city);
+        citySource.addFeature(feature);
+      }
+      cityLayer.changed();
+    })
+    .catch(() => undefined);
+
   // --- Карта -----------------------------------------------------------
   const map = new OlMap({
     target,
@@ -262,6 +316,7 @@ function render(target: HTMLElement, graph: Graph): void {
         })
       }),
       chainLayer,
+      cityLayer,
       labelLayer
     ],
     view: new View({
@@ -273,12 +328,29 @@ function render(target: HTMLElement, graph: Graph): void {
     })
   });
 
-  // Кадр подбирается по самим данным: жёстко заданный центр однажды уже
-  // оставил весь север за краем экрана. Небольшой отступ — чтобы линии не
-  // упирались в рамку.
-  const extent = chainSource.getExtent();
-  if (extent && Number.isFinite(extent[0])) {
-    map.getView().fit(extent, { padding: [28, 28, 28, 28], maxZoom: 6.4 });
+  // Кадр подбирается по данным, но по весомым: одиночные трассы дотягиваются
+  // до Урала, и кадр по ним растягивался от Белоруссии до Екатеринбурга,
+  // сминая весь основной театр в угол. Берём трассы заметного веса, а
+  // дальние остаются в паре движений мышью.
+  const frame = chains.flatMap((chain) => chain.pts);
+  if (frame.length) {
+    // Границы по перцентилям, а не по крайним точкам: единственный коридор
+    // с ошибкой геокодера дотягивался до 132° в.д., и кадр растягивался от
+    // Белоруссии до Хабаровска, сминая весь театр в угол.
+    const span = (values: number[], low: number, high: number) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const at = (share: number) =>
+        sorted[Math.min(sorted.length - 1,
+                        Math.max(0, Math.round(share * (sorted.length - 1))))];
+      return [at(low), at(high)] as [number, number];
+    };
+    const [latLow, latHigh] = span(frame.map((point) => point[0]), 0.01, 0.99);
+    const [lonLow, lonHigh] = span(frame.map((point) => point[1]), 0.01, 0.99);
+    map.getView().fit(
+      transformExtent([lonLow, latLow, lonHigh, latHigh],
+                      "EPSG:4326", "EPSG:3857"),
+      { padding: [30, 30, 30, 30], maxZoom: 6.6 }
+    );
   }
 
   // Контейнер может получить размер позже инициализации (вкладки,

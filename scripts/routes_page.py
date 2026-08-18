@@ -912,7 +912,7 @@ THREAT_WORDS = {"uav": "БПЛА", "fpv": "FPV", "rocket": "ракеты",
 
 def card_html(corridor: dict, land: Land, anchor: str,
               regions: dict[str, str] | None = None,
-              picture: bool = True) -> str:
+              picture: bool = True, rank: int = 0, peak: int = 1) -> str:
     threat_keys = [k for k, _ in corridor["threats"].most_common(2)
                    if k != "unknown"]
     threats = ", ".join(THREAT_WORDS.get(k, k) for k in threat_keys) or "БПЛА"
@@ -937,11 +937,12 @@ def card_html(corridor: dict, land: Land, anchor: str,
              f' · {stability} · последний {day_word(corridor["last"])}'
              f' · {corridor["night_share"]}% ночью · {threats}')
     if picture:
-        # Витрина: десяток мини-карт, чтобы страница начиналась с картинки,
-        # а не со списка. В поиске не участвует — там работает каталог,
-        # где эти же коридоры есть строками.
+        # Витрина: дюжина мини-карт с местом в рейтинге. В поиске не
+        # участвует — там работает каталог, где эти же коридоры есть
+        # строками.
         return f"""
     <figure class="corridor-card">
+      <span class="rank">{rank}</span>
       {card_svg(corridor, land)}
       <figcaption><b>{escape(name)}</b><span>{escape(facts)}</span></figcaption>
     </figure>"""
@@ -952,12 +953,16 @@ def card_html(corridor: dict, land: Land, anchor: str,
     # длиннее коридора и называется другими концами («Керчь — Сочи» живёт
     # внутри «Джанкойский район — Сочи»).
     head, tail = corridor["face"][0], corridor["face"][-1]
+    # Полоска частоты: столбик данных вместо голого числа — по каталогу
+    # видно, какой путь тяжелее, не читая цифр.
+    bar = min(100, round(corridor["count"] / max(peak, 1) * 100))
     return f"""
     <li class="corridor" id="{anchor}" data-q="{escape(search)}"
         data-name="{escape(name.lower())}" tabindex="0" role="button"
         data-a="{head[0]:.4f},{head[1]:.4f}"
         data-b="{tail[0]:.4f},{tail[1]:.4f}">
-      <b>{escape(name)}</b> <span>{escape(facts)}</span></li>"""
+      <b>{escape(name)}</b><span>{escape(facts)}</span>
+      <i class="bar" style="width:{bar}%"></i></li>"""
 
 
 def build_page(routes: list[dict], tracks: list[list[dict]],
@@ -1057,17 +1062,13 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
 
     # Первые — карточками с мини-картой, хвост — строками: глаз цепляется
     # за десяток картинок, а четыре сотни превращаются в шум и мегабайт.
-    cards = "".join(card_html(c, land, "", regions)
-                    for c in corridors[:GALLERY_CARDS])
+    peak = max((c["count"] for c in corridors), default=1)
+    cards = "".join(
+        card_html(c, land, "", regions, rank=index + 1, peak=peak)
+        for index, c in enumerate(corridors[:GALLERY_CARDS]))
     listed = "".join(
-        card_html(c, land, f"kor-{i}", regions, picture=False)
+        card_html(c, land, f"kor-{i}", regions, picture=False, peak=peak)
         for i, c in enumerate(corridors))
-    top = "".join(
-        f'<li><b>{escape(c["start"])} → {escape(c["end"])}</b>'
-        f'<span>{c["count"]} '
-        f'{plural(c["count"], "маршрут", "маршрута", "маршрутов")}'
-        f' · {c["night_share"]}% ночью</span></li>'
-        for c in corridors[:TOP_LIST])
 
     return f"""<!doctype html>
 <html lang="ru">
@@ -1111,19 +1112,25 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                     overflow:hidden; border:1px solid rgba(255,255,255,.07);
                     background:#0c100f; position:relative; }}
       @media (max-width:700px) {{ #routes-map {{ height:440px; }} }}
-      .map-note {{ font-size:13px; color:#7d8a83; margin-top:8px; }}
-      .warn {{ margin:12px 0 4px; padding:11px 14px; border-radius:10px;
-              background:rgba(240,180,41,.09); border:1px solid rgba(240,180,41,.3);
-              color:#cdbb92; font-size:14px; max-width:none; }}
-      .warn b {{ color:#f0c860; }}
+      /* Подпись под картой: подсказка и оговорка в одном спокойном ряду.
+         Жёлтая плашка кричала громче самой карты, хотя это контекст, а не
+         тревога. */
+      .stage {{ margin:24px 0 0; }}
+      .stage figcaption {{ display:flex; gap:10px 28px; flex-wrap:wrap;
+                          margin-top:10px; font-size:13px; line-height:1.5; }}
+      .stage .hint {{ color:#7d8a83; flex:1 1 260px; }}
+      .stage .caveat {{ color:#a8977a; flex:1 1 320px;
+                       border-left:2px solid rgba(240,180,41,.45);
+                       padding-left:11px; }}
       /* Легенда: два цвета — два происхождения линии. */
-      .legend {{ position:absolute; left:12px; top:12px; z-index:3;
-                background:rgba(12,16,15,.9); border:1px solid #28322c;
-                border-radius:10px; padding:9px 12px; font-size:13px;
-                color:#aab4ad; pointer-events:none; line-height:1.7; }}
-      .legend i {{ display:inline-block; width:26px; height:0;
-                  border-top:4px solid #f0475a; border-radius:2px;
-                  vertical-align:middle; margin-right:8px; }}
+      .legend {{ position:absolute; left:12px; bottom:12px; z-index:3;
+                display:flex; gap:16px; flex-wrap:wrap;
+                background:rgba(12,16,15,.82); border:1px solid #232c27;
+                border-radius:9px; padding:7px 11px; font-size:12.5px;
+                color:#9aa79f; pointer-events:none; }}
+      .legend i {{ display:inline-block; width:20px; height:0;
+                  border-top:3px solid #f0475a; border-radius:2px;
+                  vertical-align:middle; margin-right:7px; }}
       .legend i.ours {{ border-top-color:#f0b429; }}
       /* Карточка выбранной трассы поверх карты. */
       .chain-card {{ position:absolute; right:12px; top:12px; z-index:4;
@@ -1151,8 +1158,14 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
                       background:#101614; color:#e6ebe6; font-size:15px; }}
       .finder input::placeholder {{ color:#6f7c74; }}
       .finder span {{ font-size:13px; color:#7d8a83; }}
-      .gallery {{ display:grid; gap:20px 18px; margin-top:18px;
-                 grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }}
+      .gallery {{ display:grid; gap:22px 18px; margin-top:16px;
+                 grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); }}
+      figure.corridor-card {{ position:relative; }}
+      .rank {{ position:absolute; left:10px; top:9px; z-index:2;
+              min-width:21px; height:21px; border-radius:6px;
+              background:rgba(10,14,13,.82); border:1px solid #2b3630;
+              color:#8d988f; font-size:11.5px; line-height:20px;
+              text-align:center; font-variant-numeric:tabular-nums; }}
       .corridor[hidden] {{ display:none; }}
       .more {{ display:block; margin:22px auto 0; padding:11px 22px;
               border-radius:10px; border:1px solid #2c352f; background:#131a17;
@@ -1171,26 +1184,32 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
       /* Хвост каталога — плотный список в колонках. */
       .corridor-list {{ list-style:none; padding:0; margin:22px 0 0;
                        columns:2; column-gap:34px; }}
-      li.corridor {{ break-inside:avoid; padding:7px 0;
+      li.corridor {{ position:relative; break-inside:avoid; padding:8px 0 10px;
                     border-bottom:1px solid rgba(255,255,255,.05);
                     font-size:13px; line-height:1.45; scroll-margin-top:24px;
                     cursor:pointer; }}
+      li.corridor .bar {{ position:absolute; left:0; bottom:-1px; height:2px;
+                         background:linear-gradient(90deg,#e9404f,#f0757f);
+                         opacity:.5; border-radius:1px; }}
+      li.corridor:hover .bar {{ opacity:.9; }}
       li.corridor:hover b, li.corridor:focus b {{ color:#ffb3ba; }}
       li.corridor:focus {{ outline:1px solid #3d4a42; outline-offset:3px; }}
       li.corridor b {{ display:block; font-size:14.5px; color:#dfe6df;
                       font-weight:600; }}
       @media (max-width:640px) {{ .corridor-list {{ columns:1; }} }}
       /* Топ коридоров: главный текст страницы. */
-      .top-list {{ list-style:none; padding:0; margin:14px 0 0;
-                  counter-reset:top; max-width:720px; }}
-      .top-list li {{ counter-increment:top; display:flex; gap:14px;
-                     align-items:baseline; padding:9px 0;
-                     border-bottom:1px solid rgba(255,255,255,.06); }}
-      .top-list li::before {{ content:counter(top); color:#54615a;
-                             font-size:13px; min-width:18px; }}
-      .top-list b {{ flex:1; font-size:15.5px; color:#eef2ec;
-                    font-weight:600; }}
-      .top-list span {{ font-size:13px; color:#7d8a83; white-space:nowrap; }}
+      .sub {{ margin:2px 0 0; font-size:14px; }}
+      .origins {{ display:grid; gap:16px; margin:16px 0 8px;
+                 grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+                 max-width:760px; }}
+      .origin {{ padding:14px 16px; border-radius:12px;
+                border:1px solid rgba(255,255,255,.07); background:#0f1513; }}
+      .origin b {{ display:flex; align-items:center; gap:9px;
+                  font-size:15px; color:#eef2ec; }}
+      .origin p {{ margin:7px 0 0; font-size:13.5px; }}
+      .origin .dot {{ width:22px; height:0; border-top:3px solid #f0475a;
+                     border-radius:2px; }}
+      .origin .dot.ours {{ border-top-color:#f0b429; }}
       footer {{ margin-top:46px; padding-top:18px; font-size:13px;
                color:#7d8a83; border-top:1px solid rgba(255,255,255,.08); }}
       footer a {{ color:#9fd4b0; }}
@@ -1211,47 +1230,58 @@ def build_page(routes: list[dict], tracks: list[list[dict]],
         <li><b>{night_share}%</b><span>полётов ночью</span></li>
       </ul>
 
-      <div id="routes-map" data-version="{data_v}">
-        <div class="legend">
-          <div><i></i> путь описал источник</div>
-          <div><i class="ours"></i> путь восстановили мы</div>
+      <figure class="stage">
+        <div id="routes-map" data-version="{data_v}">
+          <div class="legend">
+            <span><i></i> описал источник</span>
+            <span><i class="ours"></i> восстановили мы</span>
+          </div>
         </div>
-      </div>
-      <p class="map-note">Чем толще и ярче линия, тем чаще этим путём
-      летали. Приблизьте — появятся названия сёл.</p>
-      <p class="warn"><b>Это направление, а не точный маршрут.</b>
-      Известны только те места, которые назвали источники: между ними борт
-      идёт где угодно — над полями, лесом, вдоль хребта. Линия показывает,
-      откуда и куда шло движение, а не след на местности.</p>
+        <figcaption>
+          <span class="hint">Толщина и яркость линии — как часто этим путём
+          летали. Приблизьте, чтобы увидеть названия сёл.</span>
+          <span class="caveat">Это направление, а не точный маршрут:
+          известны только места, которые назвали источники, — между ними
+          борт идёт где угодно.</span>
+        </figcaption>
+      </figure>
 
       <h2>Куда летают чаще всего</h2>
-      <ol class="top-list">{top}</ol>
+      <p class="sub">Двенадцать самых постоянных путей за всё время
+      наблюдений.</p>
+      <div class="gallery" id="gallery">{cards}</div>
 
       <h2>Все коридоры</h2>
-      <p>{len(corridors)} путей между населёнными пунктами; каждый
-      повторился не меньше {MIN_CORRIDOR} раз.</p>
+      <p class="sub">{len(corridors)} путей между населёнными пунктами;
+      каждый повторился не меньше {MIN_CORRIDOR} раз. Нажмите строку —
+      покажу путь на карте.</p>
       <div class="finder">
         <input id="finder" type="search" autocomplete="off"
                placeholder="Найти город, район или регион — например, Краснодар"
                aria-label="Поиск по коридорам" />
         <span id="finder-count"></span>
       </div>
-      <div class="gallery" id="gallery">{cards}</div>
       <ul class="corridor-list">{listed}</ul>
       <button id="finder-more" class="more" type="button">
         Показать все {len(corridors)}</button>
 
       <h2>Откуда эти линии</h2>
-      <p><b style="color:#f0475a">Красные</b> — пути, которые описал сам
-      источник: «от Анапы через Раевскую на Новороссийск». Мы их только
-      пересказываем.</p>
-      <p><b style="color:#f0b429">Жёлтые</b> — пути, собранные нами. Налёт
-      идёт волнами: борт видят в одном районе, через полчаса в соседнем.
-      Если он мог туда долететь с правдоподобной скоростью (70–280 км/ч
-      при крейсерских 150) и без резкого разворота, фиксации связываются
-      в один трек. За всё время наблюдений так восстановлено {waves}
-      {plural(waves, "волна", "волны", "волн")} из {wave_points}
-      {plural(wave_points, "фиксации", "фиксаций", "фиксаций")}.</p>
+      <div class="origins">
+        <div class="origin">
+          <b><i class="dot src"></i>Описал источник</b>
+          <p>«От Анапы через Раевскую на Новороссийск» — путь назван в
+          самом сообщении. Мы его только пересказываем.</p>
+        </div>
+        <div class="origin">
+          <b><i class="dot ours"></i>Восстановили мы</b>
+          <p>Налёт идёт волнами: борт видят в одном районе, через полчаса
+          в соседнем. Если он мог туда долететь с правдоподобной скоростью
+          и без резкого разворота, фиксации связываются в один трек. Так
+          собрано {waves} {plural(waves, "волна", "волны", "волн")} из
+          {wave_points}
+          {plural(wave_points, "фиксации", "фиксаций", "фиксаций")}.</p>
+        </div>
+      </div>
       <p>Линии гладкие не для красоты: борт самолётной схемы на
       крейсерских 150 км/ч разворачивается радиусом около 400 метров — на
       масштабе карты угол физически невозможен. Длинный путь по той же
