@@ -210,7 +210,7 @@ def test_rayon_page_inflects_and_links_district_hub():
         updated="9 августа, 15:00 МСК",
     )
 
-    assert "Тревога и БПЛА в Погарском районе сейчас" in html
+    assert "Карта БПЛА и тревог в Погарском районе" in html
     assert ('rel="canonical" href="https://tihoenebo.com/rayon/pogarskiy/"'
             in html)
     assert '<a href="/rayon/">Районы</a>' in html
@@ -245,7 +245,7 @@ def test_district_index_groups_by_region():
     html = seo.district_index_page(rayons, "9 августа, 18:30 МСК")
 
     assert '<link rel="canonical" href="https://tihoenebo.com/rayon/"' in html
-    assert "Тревога и БПЛА по районам России" in html
+    assert "Карта БПЛА и тревог по районам России" in html
     assert '/rayon/pogarskiy/' in html
     assert '/region/bryanskaya-oblast/' in html
     documents = _json_ld(html)
@@ -351,7 +351,7 @@ def test_city_page_has_canonical_parent_and_valid_structured_data():
         updated="9 августа, 15:00 МСК",
     )
 
-    assert "Тревога и БПЛА в Краснодаре сейчас" in html
+    assert "Карта БПЛА и тревог в Краснодаре" in html
     assert 'rel="canonical" href="https://tihoenebo.com/city/krasnodar/"' in html
     assert '/?region=krasnodarskiy-kray' in html
     assert "городской округ Краснодар" in html
@@ -384,7 +384,7 @@ def test_city_index_groups_regions_and_lists_every_city():
     html = seo.city_index_page(cities, "9 августа, 18:30 МСК")
 
     assert '<link rel="canonical" href="https://tihoenebo.com/city/"' in html
-    assert "Тревога и БПЛА по городам России" in html
+    assert "Карта БПЛА и тревог по городам России" in html
     assert '/region/krasnodarskiy-kray/' in html
     assert '/city/anapa/' in html
     assert '/city/krasnodar/' in html
