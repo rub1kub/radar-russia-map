@@ -2,6 +2,19 @@ import { BellRing, Send, Volume2, VolumeX, X } from "lucide-react";
 import type { RadarState } from "../lib/api";
 import type { Bookmark } from "../lib/bookmarks";
 import { plural, severityColor } from "../lib/format";
+import { insideTelegram } from "../lib/telegram";
+
+/**
+ * Диплинк бота: первое из мест человека уходит в start-payload, и бот
+ * подписывает на него одним нажатием. Payload в Telegram ограничен
+ * 64 знаками; редкий длинный id просто открывает бота без подписки.
+ */
+function botLink(bookmarks: Bookmark[]): string {
+  const base = "https://t.me/Tihoeneborobot";
+  const zoneId = bookmarks[0]?.zone_id;
+  if (zoneId && zoneId.length <= 62) return `${base}?start=w_${zoneId}`;
+  return base;
+}
 
 type Props = {
   bookmarks: Bookmark[];
@@ -120,6 +133,25 @@ export function BookmarksSection({
             );
           })}
         </ul>
+      )}
+
+      {/* Воронка бота. В мини-аппе не показывается: там колокольчик и так
+          подписывает на сообщения в чат. */}
+      {!insideTelegram() && (
+        <a
+          className="tg-funnel"
+          href={botLink(bookmarks)}
+          target="_blank"
+          rel="noreferrer"
+          title={
+            bookmarks.length
+              ? `Бот сразу подпишет на «${bookmarks[0].name}»`
+              : "Бот пришлёт тревогу и отбой сообщением"
+          }
+        >
+          <Send size={13} aria-hidden="true" />
+          Эти уведомления есть и в Telegram — подключить бота
+        </a>
       )}
     </section>
   );

@@ -108,6 +108,8 @@ fi
 # посадочные отдавали бы 404.
 retry rsync -az --delete --exclude "region/" --exclude "city/" \
   --exclude "rayon/" --exclude "marshruty/" --exclude "svodka/" \
+  --exclude "aeroporty/" --exclude "krymskiy-most/" --exclude "og/" \
+  --exclude "widget/" \
   --exclude "sitemap.xml" \
   --exclude "privacy/" --exclude "terms/" \
   -e ssh dist/ "$SERVER:$REMOTE_DIR/dist/"

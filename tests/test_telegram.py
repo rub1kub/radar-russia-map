@@ -34,6 +34,41 @@ def test_start_greets(outbox):
     assert outbox and "карта воздушной обстановки" in outbox[0][1].lower()
 
 
+def test_start_deeplink_subscribes(tmp_path, monkeypatch, outbox):
+    """t.me/бот?start=w_<зона> подписывает на место одним нажатием."""
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    long_id = "x" * 70
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "CREATE TABLE zones (id TEXT PRIMARY KEY, name_ru TEXT, "
+            "level TEXT)")
+        connection.execute(
+            "INSERT INTO zones VALUES ('kurskaya_oblast', "
+            "'Курская область', 'region')")
+        connection.execute(
+            f"INSERT INTO zones VALUES ('{long_id}', 'Дальнее', 'place')")
+        connection.commit()
+
+    telegram.handle_text(5, "/start w_kurskaya_oblast")
+    assert "Курская область" in outbox[-1][1]
+    assert "/unwatch" in outbox[-1][1]
+    with telegram.closing(telegram._connect()) as connection:
+        assert telegram._zones_of(connection, 5) == ["kurskaya_oblast"]
+
+    # Длинный id не влезает в 64 знака payload — едет md5-хвостом.
+    payload = telegram.zone_start_payload(long_id)
+    assert payload.startswith("wh")
+    telegram.handle_text(6, f"/start {payload}")
+    with telegram.closing(telegram._connect()) as connection:
+        assert telegram._zones_of(connection, 6) == [long_id]
+
+    # Неизвестная зона — обычное приветствие, не подписка.
+    telegram.handle_text(7, "/start w_vydumannaya_zona")
+    assert "карта воздушной обстановки" in outbox[-1][1].lower()
+    with telegram.closing(telegram._connect()) as connection:
+        assert telegram._zones_of(connection, 7) == []
+
+
 def test_region_without_argument_explains(outbox):
     telegram.handle_text(1, "/region")
     assert "/region" in outbox[0][1]

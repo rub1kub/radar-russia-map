@@ -26,7 +26,8 @@ def _connection() -> sqlite3.Connection:
             zone_id TEXT,
             signal_type TEXT,
             threat_type TEXT,
-            first_seen_at TEXT
+            first_seen_at TEXT,
+            resolved_at TEXT
         );
         """
     )
@@ -45,7 +46,7 @@ def _connection() -> sqlite3.Connection:
         (11, "detection"), (12, "detection"),
     ):
         connection.execute(
-            "INSERT INTO events VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO events VALUES (?, ?, ?, ?, ?, NULL)",
             (json.dumps(["testograd", "gorodskoy_okrug_testograd_region",
                          "region"]),
              "testograd", signal, "uav",

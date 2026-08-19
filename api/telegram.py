@@ -436,6 +436,37 @@ def watch(chat_id: int, zone_id: str) -> str:
     return f"Слежу за этим местом: <b>{zone_name(zone_id)}</b>."
 
 
+def zone_start_payload(zone_id: str) -> str:
+    """Payload диплинка t.me/бот?start=… — Telegram пускает максимум 64 знака.
+
+    Короткие id идут как есть, читаемыми; редкие длинные (глубокие сёла)
+    сворачиваются в md5-хвост, который deeplink_zone разворачивает обратно
+    перебором таблицы зон.
+    """
+    if len(zone_id) <= 62:
+        return "w_" + zone_id
+    return "wh" + hashlib.md5(zone_id.encode("utf-8")).hexdigest()[:12]
+
+
+def deeplink_zone(payload: str) -> str | None:
+    """Зона из start-payload диплинка; None — payload не про подписку."""
+    if payload.startswith("w_"):
+        zone_id = payload[2:]
+        with closing(_connect()) as connection:
+            row = connection.execute(
+                "SELECT id FROM zones WHERE id = ?", (zone_id,)).fetchone()
+        return row["id"] if row else None
+    if payload.startswith("wh") and len(payload) == 14:
+        tail = payload[2:]
+        with closing(_connect()) as connection:
+            for (zone_id,) in connection.execute(
+                    "SELECT id FROM zones WHERE length(id) > 62"):
+                if hashlib.md5(
+                        zone_id.encode("utf-8")).hexdigest()[:12] == tail:
+                    return zone_id
+    return None
+
+
 def unwatch(chat_id: int, zone_id: str) -> str:
     with closing(_connect()) as connection:
         _touch(connection, chat_id)
@@ -480,6 +511,18 @@ def handle_text(chat_id: int, text: str,
                     (user or {}).get("first_name"))
 
     if command in ("/start",):
+        # Диплинк с сайта: t.me/бот?start=w_<зона> — человек нажал
+        # «Получать уведомления» на странице места, подписываем сразу.
+        zone_id = deeplink_zone(argument) if argument else None
+        if zone_id:
+            record_activity(chat_id, "/start:deeplink")
+            reply = watch(chat_id, zone_id)
+            send(chat_id,
+                 f"{reply}\n\nКогда здесь объявят тревогу, заметят БПЛА или "
+                 f"дадут отбой — придёт сообщение. Отписаться: "
+                 f"/unwatch {zone_name(zone_id)}",
+                 open_map_button())
+            return
         send(chat_id,
              "Это <b>Тихое небо</b> — карта воздушной обстановки по открытым "
              "Telegram-каналам.\n\nОткройте карту кнопкой ниже или спросите "

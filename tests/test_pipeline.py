@@ -788,6 +788,67 @@ def test_geocoder_resolves_oblique_case(geocoder, phrase, expected):
     assert expected in bare_names(geocoder.resolve([phrase]))
 
 
+def test_airport_word_is_not_a_village_named_airport(geocoder):
+    """Слово «аэропорт» — не посёлок Аэропорт.
+
+    norm_key сводит «э» к «е», и «Аэропорт» превращался в «аеропорт» —
+    ровно так в OSM записаны посёлки Аэропорт под Оренбургом и Тарой.
+    Сырой STOPWORDS этого написания не знал, и каждое «аэропорт ввёл
+    ограничения» оседало на посёлке.
+    """
+    resolved = geocoder.resolve(
+        ["Аэропорт ОРЕНБУРГ ВВЕДЕНЫ временные ограничения на прием и "
+         "выпуск воздушных судов"])
+    assert {item.zone_id for item in resolved} == {
+        "gorodskoy_okrug_orenburg_orenburgskaya_oblast"}
+
+
+def test_saratov_airport_named_gagarin_stays_in_saratov(geocoder):
+    """«Аэропорт САРАТОВ (Гагарин)» — не город Гагарин под Смоленском."""
+    resolved = geocoder.resolve(
+        ["Аэропорт САРАТОВ (Гагарин) ВВЕДЕНЫ временные ограничения"])
+    assert {item.zone_id for item in resolved} == {
+        "saratov_saratovskaya_oblast"}
+    # Настоящий Гагарин со своим контекстом остаётся.
+    with_context = geocoder.resolve(
+        ["Смоленская область: в Гагарине опасность БПЛА"])
+    assert "gagarin_gagarinskiy_rayon_smolenskaya_oblast" in {
+        item.zone_id for item in with_context}
+
+
+def test_biggest_airports_resolve_to_their_home_districts(geocoder):
+    """Шереметьево и Пулково не геокодировались вовсе.
+
+    «Шереметьево» в справочнике нет ни под каким именем, «Пулково» —
+    безвестные деревни, которые разбор отбрасывал. Ограничения в двух
+    крупнейших аэропортах страны не попадали на карту.
+    """
+    svo = geocoder.resolve(["Аэропорт ШЕРЕМЕТЬЕВО ВВЕДЕНЫ временные "
+                            "ограничения на прием и выпуск воздушных судов"])
+    assert {item.zone_id for item in svo} == {
+        "gorodskoy_okrug_khimki_moskovskaya_oblast"}
+    led = geocoder.resolve(["Аэропорт ПУЛКОВО ВВЕДЕНЫ временные ограничения"])
+    assert {item.zone_id for item in led} == {"sankt_peterburg"}
+
+
+def test_koltsovo_airport_is_ekaterinburg_not_novosibirsk(geocoder):
+    """«ЕКАТЕРИНБУРГ (Кольцово)» — не наукоград под Новосибирском."""
+    resolved = geocoder.resolve(
+        ["Аэропорт ЕКАТЕРИНБУРГ (Кольцово) ВВЕДЕНЫ временные ограничения"])
+    assert {item.zone_id for item in resolved} == {
+        "gorodskoy_okrug_ekaterinburg_sverdlovskaya_oblast"}
+    with_context = geocoder.resolve(
+        ["Новосибирская область: в Кольцово опасность БПЛА"])
+    assert ("koltsovo_rabochiy_poselok_koltsovo_novosibirskaya_oblast"
+            in {item.zone_id for item in with_context})
+
+
+def test_kuban_is_the_krai_not_a_village(geocoder):
+    """«На Кубани» — Краснодарский край, а не посёлок в Гулькевичском районе."""
+    resolved = geocoder.resolve(["Ракетная опасность на Кубани"])
+    assert {item.zone_id for item in resolved} == {"krasnodarskiy_kray"}
+
+
 def test_lowercase_common_word_is_not_a_village(geocoder):
     """Посёлки Свет и Видим не должны собирать обычную русскую речь.
 

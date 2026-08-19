@@ -448,7 +448,7 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
             "events": 0, "days": set(), "last": None,
             "districts": Counter(), "signals": Counter(),
             "threats": Counter(), "hours": Counter(), "recent": [],
-            "regions": Counter(),
+            "regions": Counter(), "alarms": [],
         }
 
     stats: dict[str, dict] = {}
@@ -522,6 +522,27 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
         dentry["recent"].append(
             (row["first_seen_at"], place_name, row["signal_type"],
              row["threat_type"] or "unknown"))
+    # Длительности закрытых тревог: пара «тревога — отбой» есть только у
+    # событий с resolved_at. Сутки — потолок против мусорных пар, минута —
+    # пол против дублей.
+    for row in connection.execute(
+            """SELECT zone_path, first_seen_at, resolved_at FROM events
+               WHERE signal_type = 'alarm' AND resolved_at IS NOT NULL
+                 AND first_seen_at >= ?""", (since,)):
+        path = json.loads(row["zone_path"] or "[]")
+        if not path:
+            continue
+        minutes = (datetime.fromisoformat(row["resolved_at"])
+                   - datetime.fromisoformat(row["first_seen_at"])
+                   ).total_seconds() / 60
+        if not 1 <= minutes <= 1440:
+            continue
+        stats.setdefault(path[-1], blank())["alarms"].append(minutes)
+        for zone_id in path[:-1]:
+            if zone_id in district_names:
+                city_stats.setdefault(zone_id, blank())["alarms"].append(
+                    minutes)
+
     # Свежие сверху; страница показывает несколько последних — это и есть
     # то, что отличает её от вчерашней копии и от соседнего региона.
     for entry in stats.values():
@@ -826,6 +847,15 @@ def summary_block(name: str, stats: dict | None, page_kind: str = "region") -> s
         parts.append(f"      <p>По времени суток сообщения ложатся неровно: "
                      f"больше всего {window}.</p>")
 
+    alarms = stats.get("alarms") or []
+    if len(alarms) >= 3:
+        median = int(sorted(alarms)[len(alarms) // 2])
+        parts.append(
+            f"      <p>От тревоги до отбоя {where} обычно проходит "
+            f"<strong>около {median} минут</strong> — медиана по "
+            f"{len(alarms)} закрытым {plural(len(alarms), 'тревоге', 'тревогам', 'тревогам')} "
+            f"за месяц. Отдельные тревоги длятся по несколько часов.</p>")
+
     districts = stats["districts"].most_common(TOP_DISTRICTS)
     if districts:
         items = "".join(
@@ -938,6 +968,16 @@ def faq_block(name: str, stats: dict | None,
          "приходить в браузер даже при закрытой вкладке. В Telegram то же "
          "самое делает бот: команда /watch с названием места."),
     ]
+    alarms = (stats.get("alarms") or []) if stats else []
+    if len(alarms) >= 3:
+        median = int(sorted(alarms)[len(alarms) // 2])
+        qa.insert(3, (
+            f"Сколько длится воздушная тревога {where}?",
+            f"По парам «тревога — отбой» за последние 30 дней — обычно "
+            f"около {median} минут (медиана по {len(alarms)} закрытым "
+            f"тревогам). Отдельные тревоги длятся по несколько часов; "
+            f"отбой объявляют те же источники, что и тревогу.",
+        ))
     if name == "Санкт-Петербург":
         qa.insert(2, (
             "Где смотреть тревогу в СПб и Питере?",
@@ -967,6 +1007,8 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
          admin_name: str | None = None,
          child_links: list[tuple[str, str]] | None = None,
          map_region_slug: str | None = None,
+         zone_id: str | None = None,
+         og_image: str | None = None,
          neighbours: list[tuple[str, str]], updated: str) -> str:
     page_kind = path_prefix if path_prefix in ("city", "rayon") else "region"
     where = location_phrase(name, page_kind)
@@ -1038,6 +1080,20 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
                                                      "Соседние регионы")
 
     faq_html, faq_ld = faq_block(name, stats, page_kind)
+
+    # Воронка бота: человек пришёл из поиска узнать про своё место —
+    # диплинк подписывает его на уведомления ровно по этому месту одним
+    # нажатием, без команд и поиска.
+    bot_block = ""
+    if zone_id:
+        from scripts.status_pages import BOT, zone_start_payload
+        bot_link = f"https://t.me/{BOT}?start={zone_start_payload(zone_id)}"
+        bot_block = (
+            '<div class="cta">'
+            f"<p><strong>Тревоги, БПЛА и отбои — сообщением в Telegram.</strong> "
+            f"Бот напишет, когда обстановка {where} изменится.</p>"
+            f'<a class="bot" href="{escape(bot_link)}" rel="nofollow">'
+            f"Получать уведомления — {escape(name)}</a></div>")
 
     map_href = (f"/?region={slug}" if path_prefix == "region"
                 else f"/?region={map_region_slug}" if map_region_slug else "/")
@@ -1124,7 +1180,7 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
     <meta property="og:url" content="{url}" />
     <meta property="og:title" content="{escape(title)}" />
     <meta property="og:description" content="{escape(description)}" />
-    <meta property="og:image" content="{SITE}/preview.png" />
+    <meta property="og:image" content="{og_image or f'{SITE}/preview.png'}" />
     <meta name="theme-color" content="#0e1211" />
     <script type="application/ld+json">{breadcrumb_ld}</script>
     <script type="application/ld+json">{webpage_ld}</script>
@@ -1144,6 +1200,12 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
       a.map {{ display:inline-block; margin:22px 0 6px; padding:13px 22px;
               background:#e93e4e; color:#fff; text-decoration:none;
               border-radius:10px; font-weight:600; }}
+      .cta {{ border:1px solid rgba(159,212,176,.35); border-radius:12px;
+             padding:16px 18px; margin:30px 0; }}
+      .cta p {{ margin:0 0 12px; }}
+      a.bot {{ display:inline-block; padding:11px 20px; background:#2aabee;
+              color:#fff; text-decoration:none; border-radius:10px;
+              font-weight:600; }}
       ul {{ columns:2; column-gap:28px; padding-left:20px; color:#aab4ad; }}
       ul.tops, ul.around {{ columns:1; }}
       ul.around a {{ color:#9fd4b0; }}
@@ -1165,6 +1227,8 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
       <a class="map" href="{map_href}">Открыть карту — {escape(name)}</a>
 
       {summary_block(name, stats, page_kind)}
+
+      {bot_block}
 
       {recent_block(name, stats)}
 
@@ -1197,7 +1261,9 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
         <br /><a href="/">Вся карта обстановки по России</a> ·
         <a href="/city/">Сводки по городам</a> ·
         <a href="/rayon/">Сводки по районам</a> ·
-        <a href="/marshruty/">Маршруты БПЛА</a>
+        <a href="/marshruty/">Маршруты БПЛА</a> ·
+        <a href="/aeroporty/">Аэропорты</a> ·
+        <a href="/krymskiy-most/">Крымский мост</a>
       </footer>
     </main>
   </body>
@@ -1631,6 +1697,35 @@ def main() -> int:
     for item in rayons:
         rayons_by_region.setdefault(item["region_id"], []).append(item)
 
+    # Своя OG-карточка на каждую посадочную: репост сводки по месту в
+    # мессенджере показывает имя места и живую цифру, а не главную сайта.
+    # Без Pillow (свежий чекаут) страницы просто остаются с общей картинкой.
+    def og_line(page_stats: dict | None) -> str:
+        if page_stats and page_stats["events"]:
+            events = page_stats["events"]
+            return (f"{events} {plural(events, 'событие', 'события', 'событий')} "
+                    f"за 30 дней")
+        return "месяц без сообщений об опасности"
+
+    have_og = False
+    try:
+        from scripts.og_images import build as build_og
+        og_cards = [(f"region-{slug}", name, og_line(stats.get(zone_id)))
+                    for name, slug, _, zone_id in named]
+        og_cards += [(f"city-{city['slug']}", city["name"],
+                      og_line(city["stats"])) for city in cities]
+        og_cards += [(f"rayon-{item['slug']}", item["name"],
+                      og_line(item["stats"])) for item in rayons]
+        drawn = build_og(og_cards)
+        have_og = True
+        if drawn:
+            print(f"OG-превью: перерисовано {drawn} из {len(og_cards)}")
+    except Exception as error:  # noqa: BLE001 — страницы важнее картинок
+        print(f"OG-превью пропущены: {error}")
+
+    def og_url(kind: str, slug: str) -> str | None:
+        return f"{SITE}/og/{kind}-{slug}.png" if have_og else None
+
     sitemap: list[tuple[str, str, str, str]] = [
         (f"{SITE}/", lastmod, "hourly", "1.0"),
         (f"{SITE}/city/", lastmod, "daily", "0.85"),
@@ -1667,7 +1762,8 @@ def main() -> int:
         (directory / "index.html").write_text(
             page(name, slug, districts, stats.get(zone_id),
                  neighbours=neighbours, updated=updated,
-                 child_links=child_links),
+                 child_links=child_links, zone_id=zone_id,
+                 og_image=og_url("region", slug)),
             encoding="utf-8")
         sitemap.append((f"{SITE}/region/{slug}/", lastmod, "hourly", "0.8"))
 
@@ -1690,6 +1786,8 @@ def main() -> int:
                         f'{SITE}/region/{city["region_slug"]}/'),
                 admin_name=city["admin_name"],
                 map_region_slug=city["region_slug"],
+                zone_id=city["zone_id"],
+                og_image=og_url("city", city["slug"]),
                 neighbours=neighbours,
                 updated=updated,
             ),
@@ -1717,6 +1815,8 @@ def main() -> int:
                         f'{SITE}/region/{item["region_slug"]}/'),
                 admin_name=item["admin_name"],
                 map_region_slug=item["region_slug"],
+                zone_id=item["zone_id"],
+                og_image=og_url("rayon", item["slug"]),
                 neighbours=neighbours,
                 updated=updated,
             ),
@@ -1785,6 +1885,20 @@ def main() -> int:
                         lastmod if current else day_key,
                         "hourly" if current else "monthly",
                         "0.72" if current else "0.6"))
+
+    # Статусные страницы аэропортов и моста — те же данные, тот же час.
+    from scripts.status_pages import main as build_status_pages
+    for status_url in build_status_pages():
+        sitemap.append((status_url, lastmod, "hourly", "0.85"))
+
+    # Встраиваемый виджет: карточки регионов и витрина с кодом вставки.
+    from scripts.widget_pages import build as build_widgets
+    widget_rows = [
+        (name, slug, zone_id,
+         stats.get(zone_id, {}).get("events", 0) if stats.get(zone_id) else 0)
+        for name, slug, _, zone_id in named]
+    for widget_url in build_widgets(widget_rows, updated):
+        sitemap.append((widget_url, lastmod, "weekly", "0.6"))
 
     entries = "\n".join(
         f"  <url><loc>{url}</loc><lastmod>{modified}</lastmod>"

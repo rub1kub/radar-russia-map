@@ -1493,6 +1493,22 @@ a.source-name:hover { color: rgba(246, 226, 170, 0.95); }
   gap: 5px;
 }
 
+/* Воронка бота под «Моими местами»: строка-ссылка, не баннер. */
+.tg-funnel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: rgba(122, 186, 235, 0.85);
+  text-decoration: none;
+}
+
+.tg-funnel:hover {
+  color: rgba(150, 205, 246, 1);
+  text-decoration: underline;
+}
+
 .bookmarks-list li {
   display: flex;
   align-items: stretch;
