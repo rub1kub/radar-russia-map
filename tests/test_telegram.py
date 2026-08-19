@@ -295,3 +295,29 @@ def test_map_watch_subscribes_chat(tmp_path, monkeypatch):
     bad = asyncio.run(telegram.map_watch(
         FakeRequest({"init_data": forged, "zone_id": "kursk", "on": True})))
     assert bad == {"ok": False}
+
+
+def test_notifications_speak_sentences_not_labels():
+    """«Краснодар — инфраструктура» никому ничего не говорило.
+
+    Уведомление обязано сказать, что происходит: слова из внутреннего
+    словаря сигналов остались в легендах, а человеку идёт предложение.
+    """
+    stamp = "2026-08-18T10:51:00+00:00"
+    line = telegram._event_line({
+        "place_name": "Краснодар", "signal_type": "infra",
+        "threat_type": "infra", "last_seen_at": stamp})
+    assert "инфраструктура" not in line
+    assert "перекрыто движение" in line
+
+    seen = telegram._event_line({
+        "place_name": "Краснодар", "signal_type": "detection",
+        "threat_type": "uav", "last_seen_at": stamp})
+    assert "в небе видят БПЛА" in seen
+
+    danger = telegram._event_line({
+        "place_name": "Севастополь", "signal_type": "danger",
+        "threat_type": "rocket", "last_seen_at": stamp})
+    assert "объявлена ракетная опасность" in danger
+    # Тип угрозы не дублируется хвостом, когда предложение назвало его само.
+    assert "· ракета" not in danger

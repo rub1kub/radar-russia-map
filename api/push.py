@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+from .wording import event_sentence
 import sqlite3
 import time
 from contextlib import closing
@@ -199,10 +201,14 @@ def deliver_once(snapshot: dict) -> int:
                 connection.execute(
                     "INSERT OR IGNORE INTO push_sent (endpoint, event_key, sent_at)"
                     " VALUES (?,?,?)", (row["endpoint"], key, now))
-                title = "Отбой" if cleared else "Тревога по вашему месту"
+                # Заголовок — место, тело — что происходит. Прежний
+                # вариант звал любое событие «Тревогой», даже перекрытый
+                # мост, а в теле стояло только имя города.
+                place = event.get("place_name") or "По вашему месту"
+                sentence = event_sentence(event)
                 _send(connection, row, {
-                    "title": title,
-                    "body": event.get("place_name") or "",
+                    "title": f"{place} — отбой" if cleared else place,
+                    "body": sentence[0].upper() + sentence[1:],
                     "tag": event["id"],
                 })
                 sent_count += 1

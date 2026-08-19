@@ -39,6 +39,8 @@ from pipeline.db import DB_PATH
 from pipeline.textnorm import norm_key, short_name
 from pipeline.timeutil import MSK, now_utc
 
+from .wording import event_sentence
+
 SITE = "https://tihoenebo.com"
 API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -292,16 +294,22 @@ def _moment(iso: str) -> str:
 
 
 def _event_line(event: dict) -> str:
+    """«Краснодар — в небе видят БПЛА, 13:51» — предложение, а не ярлык.
+
+    Раньше здесь стояло слово из внутреннего словаря сигналов, и человек
+    получал «Краснодар — инфраструктура»: правда, но непонятная. Слова
+    сигналов остались в подсказках и легендах; уведомление говорит, что
+    происходит.
+    """
     place = event.get("place_name") or event.get("zone_name") or "—"
-    signal = SIGNAL_WORD.get(event.get("signal_type", ""), event.get("signal_type", ""))
-    # Аэропорты называются прямо, а не общим словом «инфраструктура»:
-    # владелец просил писать как есть. Открытие — та же пара, что закрытие.
-    if event.get("threat_type") == "airport":
-        signal = ("аэропорт открыт" if event.get("status") == "resolved"
-                  else "аэропорт закрыт")
+    sentence = event_sentence(event)
+    # Хвост с типом угрозы — там, где предложение её не назвало само.
     threat = THREAT_WORD.get(event.get("threat_type", ""))
-    tail = f" · {threat}" if threat else ""
-    return f"<b>{place}</b> — {signal}{tail}, {_moment(event['last_seen_at'])}"
+    # По основе слова: «ракетная опасность» уже назвала ракету, хотя
+    # словарное «ракета» в неё дословно не входит.
+    named = bool(threat) and threat.lower()[:5] in sentence.lower()
+    tail = f" · {threat}" if threat and not named else ""
+    return f"<b>{place}</b> — {sentence}{tail}, {_moment(event['last_seen_at'])}"
 
 
 def status_text() -> str:
