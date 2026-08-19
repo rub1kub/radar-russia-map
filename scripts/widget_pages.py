@@ -6,8 +6,11 @@
 
 Каждому региону собирается лёгкая страница /widget/<слаг>/ с вшитым
 именем и месячной цифрой; текущее состояние карточка добирает сама из
-/api/v1/state раз в минуту. Витрина /widget/ показывает предпросмотр и
-даёт готовый код для вставки.
+/api/v1/state раз в минуту. Витрина /widget/ ведёт человека за три шага:
+выбрать регион, скопировать код, вставить.
+
+Дизайн-макеты: артефакт «Статусные страницы Тихого неба»; палитра — с
+живой карты (src/styles.css).
 """
 
 from __future__ import annotations
@@ -79,22 +82,22 @@ def embed_page(name: str, slug: str, zone_id: str, month_events: int) -> str:
     <title>Обстановка — {escape(name)}</title>
     <style>
       html, body {{ margin:0; height:100%; }}
-      body {{ background:#0e1413; color:#e6ebe6; display:flex;
-             font:14px/1.45 Inter, system-ui, -apple-system, sans-serif; }}
+      body {{ background:#0e1413; color:#eef2ec; display:flex;
+             font:14px/1.45 Inter, ui-sans-serif, system-ui, sans-serif; }}
       a.card {{ flex:1; display:flex; flex-direction:column; gap:4px;
                justify-content:center; padding:12px 16px;
                color:inherit; text-decoration:none;
-               border:1px solid rgba(255,255,255,.1); border-radius:10px;
+               border:1px solid rgba(221,230,218,.14); border-radius:10px;
                margin:4px; }}
       .top {{ display:flex; align-items:center; gap:8px; font-weight:600;
              font-size:15px; }}
       .dot {{ width:9px; height:9px; border-radius:50%; flex:none; }}
       .dot.calm {{ background:#5f6f66; }}
-      .dot.warm {{ background:#e8b34b; }}
+      .dot.warm {{ background:#f2b765; }}
       .dot.hot {{ background:#e93e4e; }}
-      #line {{ color:#aab4ad; }}
-      .brand {{ font-size:12px; color:#7d8a83; }}
-      .brand b {{ color:#9fd4b0; font-weight:600; }}
+      #line {{ color:#9da8a0; }}
+      .brand {{ font-size:12px; color:#758178; }}
+      .brand b {{ color:#75c793; font-weight:600; }}
     </style>
   </head>
   <body data-zone="{escape(zone_id, quote=True)}">
@@ -112,7 +115,7 @@ def embed_page(name: str, slug: str, zone_id: str, month_events: int) -> str:
 
 
 def promo_page(named: list[tuple[str, str]], updated: str) -> str:
-    """Витрина /widget/: предпросмотр и код для вставки."""
+    """Витрина /widget/: три шага, предпросмотр, код для вставки."""
     options = "".join(
         f'<option value="{slug}">{escape(name)}</option>'
         for name, slug in named)
@@ -122,6 +125,10 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
         "Живая карточка обстановки региона для вашего сайта: тревоги, "
         "БПЛА и отбои, обновляется каждую минуту. Один iframe, без "
         "скриптов и регистрации.")
+    steps = "".join(
+        f'<div class="step"><span class="n">{i}</span>{escape(text)}</div>'
+        for i, text in ((1, "Выберите регион"), (2, "Скопируйте код"),
+                        (3, "Вставьте на сайт")))
     return f"""<!doctype html>
 <html lang="ru">
   <head>
@@ -138,53 +145,84 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
     <meta property="og:image" content="{SITE}/preview.png" />
     <meta name="theme-color" content="#0e1211" />
     <style>
-      body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
-             font:16px/1.6 Inter, system-ui, -apple-system, sans-serif; }}
-      main {{ max-width:760px; margin:0 auto; padding:40px 20px 80px; }}
-      h1 {{ font-size:29px; line-height:1.25; margin:0 0 14px; }}
-      h2 {{ font-size:19px; margin:34px 0 10px; }}
-      p {{ color:#aab4ad; }}
-      nav.crumbs {{ font-size:13px; color:#7d8a83; margin:0 0 18px; }}
-      nav.crumbs a {{ color:#9fd4b0; text-decoration:none; }}
-      select {{ background:#141b19; color:#e6ebe6; font:inherit;
-               border:1px solid rgba(255,255,255,.15); border-radius:8px;
-               padding:9px 12px; margin:8px 0 18px; max-width:100%; }}
-      iframe {{ border:0; width:100%; max-width:340px; height:110px;
-               border-radius:10px; }}
-      textarea {{ width:100%; box-sizing:border-box; height:96px;
-                 background:#141b19; color:#c6cfc8; font:13px/1.5 ui-monospace,
-                 monospace; border:1px solid rgba(255,255,255,.15);
-                 border-radius:8px; padding:10px; }}
-      footer {{ margin-top:44px; padding-top:18px; font-size:13px;
-               color:#7d8a83; border-top:1px solid rgba(255,255,255,.08); }}
-      footer a {{ color:#9fd4b0; }}
+      body {{ margin:0; background:#0b0d0d; color:#eef2ec;
+             font:16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; }}
+      main {{ max-width:760px; margin:0 auto; padding:36px 20px 72px; }}
+      h1 {{ font-size:29px; line-height:1.22; margin:4px 0 10px; }}
+      p {{ color:#9da8a0; }}
+      nav.crumbs {{ font-size:12.5px; color:#758178; }}
+      nav.crumbs a {{ color:#75c793; text-decoration:none; }}
+      .steps {{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+               gap:10px; margin:22px 0; }}
+      .step {{ display:flex; align-items:center; gap:10px; font-size:13px;
+              color:#9da8a0; }}
+      .step .n {{ width:26px; height:26px; border-radius:50%;
+                 background:#1c2422; color:#f2b765; font-size:13px;
+                 font-weight:700; display:flex; align-items:center;
+                 justify-content:center; flex:none; }}
+      .cols {{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr));
+              gap:20px; align-items:start; }}
+      .label {{ font-size:12.5px; font-weight:600; letter-spacing:.05em;
+               color:#758178; margin:0 0 8px; }}
+      select {{ width:100%; box-sizing:border-box; background:#121615;
+               color:#eef2ec; font:inherit; font-size:14.5px;
+               border:1px solid rgba(221,230,218,.22); border-radius:9px;
+               padding:10px 12px; margin:0 0 16px; }}
+      iframe {{ border:0; width:100%; height:110px; border-radius:10px; }}
+      textarea {{ width:100%; box-sizing:border-box; height:92px;
+                 background:#121615; color:#9da8a0;
+                 font:12px/1.6 ui-monospace, monospace;
+                 border:1px solid rgba(221,230,218,.14); border-radius:9px;
+                 padding:10px 12px; resize:none; }}
+      button.copy {{ width:100%; margin-top:10px; padding:11px 18px;
+                    background:#75c793; color:#0b0d0d; font:inherit;
+                    font-size:13.5px; font-weight:700; border:0;
+                    border-radius:9px; cursor:pointer; }}
+      button.copy:hover {{ background:#8fd8a9; }}
+      .hint {{ font-size:12.5px; color:#758178; line-height:1.55;
+              margin-top:10px; }}
+      footer {{ margin-top:44px; padding-top:18px; font-size:12.5px;
+               color:#758178; border-top:1px solid rgba(255,255,255,.08); }}
+      footer a {{ color:#75c793; }}
+      @media (max-width:600px) {{
+        .steps, .cols {{ grid-template-columns:1fr; }}
+      }}
     </style>
   </head>
   <body>
     <main>
       <nav class="crumbs"><a href="/">Карта обстановки</a> → Виджет</nav>
-      <h1>Виджет обстановки для вашего сайта</h1>
-      <p>Живая карточка региона: тревоги, БПЛА и отбои, обновляется каждую
-      минуту из тех же данных, что и <a href="/" style="color:#9fd4b0">
-      карта</a>. Один iframe — без скриптов, регистрации и платы.
-      Карточка ведёт на сводку региона.</p>
+      <h1>Обстановка региона — на вашем сайте</h1>
+      <p>Живая карточка: тревоги, БПЛА и отбои, обновляется каждую минуту
+      из тех же данных, что и карта. Вставляется одной строкой, без
+      регистрации и платы. Клик по карточке ведёт на сводку региона.</p>
 
-      <h2>Выберите регион</h2>
-      <select id="region">{options}</select>
-      <div><iframe id="preview" loading="lazy" title="Виджет обстановки"
-        src="/widget/belgorodskaya-oblast/"></iframe></div>
+      <div class="steps">{steps}</div>
 
-      <h2>Код для вставки</h2>
-      <textarea id="code" readonly></textarea>
-      <p>Высоту и ширину можно менять под свою колонку — карточка
-      растягивается. Тёмная сама по себе; на светлом сайте смотрится как
-      врезка.</p>
+      <div class="cols">
+        <div>
+          <div class="label">РЕГИОН</div>
+          <select id="region">{options}</select>
+          <div class="label">КОД ДЛЯ ВСТАВКИ</div>
+          <textarea id="code" readonly></textarea>
+          <button type="button" class="copy" id="copy">Скопировать код</button>
+        </div>
+        <div>
+          <div class="label">ТАК ЭТО ВЫГЛЯДИТ</div>
+          <iframe id="preview" loading="lazy" title="Виджет обстановки"
+            src="/widget/belgorodskaya-oblast/"></iframe>
+          <div class="hint">Тёмная карточка сама по себе; на светлом сайте
+          смотрится как врезка. Ширину и высоту можно менять под свою
+          колонку.</div>
+        </div>
+      </div>
 
       <footer>
         Обновлено {updated}. Данные — открытые сообщения, карта
         неофициальная.
         <br /><a href="/">Карта обстановки</a> ·
         <a href="/aeroporty/">Аэропорты</a> ·
+        <a href="/krymskiy-most/">Крымский мост</a> ·
         <a href="/marshruty/">Маршруты БПЛА</a>
       </footer>
     </main>
@@ -192,6 +230,7 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
       var select = document.getElementById("region");
       var frame = document.getElementById("preview");
       var code = document.getElementById("code");
+      var copy = document.getElementById("copy");
       function update() {{
         var slug = select.value;
         frame.src = "/widget/" + slug + "/";
@@ -201,6 +240,21 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
       }}
       select.value = "belgorodskaya-oblast";
       select.addEventListener("change", update);
+      copy.addEventListener("click", function () {{
+        code.select();
+        var done = function () {{
+          copy.textContent = "Скопировано";
+          setTimeout(function () {{
+            copy.textContent = "Скопировать код";
+          }}, 1600);
+        }};
+        if (navigator.clipboard) {{
+          navigator.clipboard.writeText(code.value).then(done);
+        }} else {{
+          document.execCommand("copy");
+          done();
+        }}
+      }});
       update();
     </script>
   </body>
