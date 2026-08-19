@@ -52,8 +52,11 @@ EMBED_JS = """
                     impact: "взрыв", alarm: "воздушная тревога",
                     danger: "опасность", infra: "инфраструктура"}[
                     last.signal_type] || "событие";
-        line.textContent = fresh.length + " активн" +
-          (fresh.length === 1 ? "ое событие" : "ых события(й)") +
+        var n = fresh.length, tail = n % 10, pair = n % 100;
+        var word = (tail === 1 && pair !== 11) ? "активное событие"
+          : (tail >= 2 && tail <= 4 && (pair < 12 || pair > 14))
+            ? "активных события" : "активных событий";
+        line.textContent = n + " " + word +
           " · " + what + (last.place_name ? " — " + last.place_name : "");
       }).catch(function () {});
   }
