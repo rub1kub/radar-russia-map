@@ -259,6 +259,10 @@ const THREAT_SPEED_MPS: Record<string, number> = {
 };
 // Меньше двух километров круг неотличим от самого значка.
 const RADIUS_MIN_M = 2_000;
+// Больше пятидесяти — круг перестаёт быть подсказкой. Через час борт
+// «может быть» в 150 км от точки: обруч в полкрая ничего не сообщает,
+// а владельцу дважды пришлось спрашивать, что это за радиусы.
+const RADIUS_MAX_M = 50_000;
 
 function threatSpeedMps(threat: string): number {
   return THREAT_SPEED_MPS[threat] ?? 0;
@@ -1591,7 +1595,7 @@ export default function App() {
         const ageMs = Math.max(0, referenceMs - new Date(event.last_seen_at).getTime());
         if (!iconVisible(ageMs, event.threat_type)) continue;
         const radiusM = (ageMs / 1000) * threatSpeedMps(event.threat_type);
-        if (radiusM < RADIUS_MIN_M) continue;
+        if (radiusM < RADIUS_MIN_M || radiusM > RADIUS_MAX_M) continue;
         const fresh = iconFreshness(ageMs, event.threat_type);
         const circle = new Feature({
           geometry: new CircleGeom(
