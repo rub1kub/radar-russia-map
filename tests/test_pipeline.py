@@ -383,7 +383,9 @@ def test_retelling_is_not_an_observation(text):
 def test_alert_with_news_words_still_relevant():
     observation = parse("Белгородская область\nТревога по БПЛА")
     assert observation.relevant
-    assert observation.signal_type == "alarm"
+    # Сленговая «тревога по БПЛА» — опасность, а не объявленная тревога:
+    # см. test_bare_alert_slang_is_danger_not_air_alarm.
+    assert observation.signal_type == "danger"
 
 
 def test_long_launch_warning_naming_foreign_origin_survives():
@@ -713,6 +715,88 @@ def test_course_along_a_route_is_still_a_sighting():
     """Компасный курс — не адресат: борт на трассе уже видят."""
     o = parse("По трассе Новоайдар-Счастье на юг БПЛА Хорнет")
     assert o.signal_type == "detection"
+
+
+def test_bare_alert_slang_is_danger_not_air_alarm():
+    """«Тревога по БПЛА» из мониторинговых лент — не воздушная тревога.
+
+    Бот писал «Краснодар — объявлена воздушная тревога» по сообщению
+    «в направлении Краснодар тревога по БПЛА», хотя город тревогу не
+    объявлял. Тревога — только объявленный сигнал; официальную форму те
+    же ленты пишут отдельно: «Воздушная тревога объявлена в Севастополе».
+    """
+    for text in ("Каховка тревога по фпв",
+                 "Тарханкут и близлежащие тревога по ПКР Нептун",
+                 "Мысхако тревога по БПЛА"):
+        o = parse(text)
+        assert o.relevant
+        assert o.signal_type == "danger", text
+    for text in ("Воздушная тревога объявлена в Севастополе.",
+                 "Внимание! Воздушная тревога! Всем укрыться",
+                 "Скадовский район ракетная тревога"):
+        o = parse(text)
+        assert o.signal_type == "alarm", text
+    # Сленговая тревога рядом с фиксацией не гасит наблюдение.
+    assert parse("Фиксация БПЛА над Ейском, тревога сохраняется"
+                 ).signal_type == "detection"
+
+
+def test_direction_enumeration_marks_all_targets():
+    """«В направлении Тихорецк, Тимашевск, Краснодар» — адресаты все три.
+
+    Перечисление режется запятыми на отдельные фразы до разбора
+    направлений, и адресатом считался один Тихорецк — Краснодар получал
+    сигнал наблюдения, и бот слал «тревогу» городу, который борт только
+    ждёт.
+    """
+    from pipeline.parse import split_directions
+    o = parse("Приморско-Ахтарск и близлежащие тревога по БПЛА действует. "
+              "Соблюдаем меры безопасности и далее в тыл в направлении "
+              "Тихорецк, Тимашевск, Краснодар")
+    _, targets = split_directions(o.place_phrases)
+    assert targets == ["Тихорецк", "Тимашевск", "Краснодар"]
+
+    # Сигнальный хвост на последнем элементе не мешает и закрывает список.
+    o = parse("От Темрюк и далее в направлении Славянск на Кубани, "
+              "Ильский, Афипский, Краснодар тревога по БПЛА")
+    _, targets = split_directions(o.place_phrases)
+    assert targets == ["Славянск на Кубани", "Ильский", "Афипский",
+                       "Краснодар"]
+
+    # Фраза с собственным содержанием перечисление не продолжает.
+    observed, targets = split_directions(
+        ["Борт в направлении Ейска", "слышны взрывы в Керчи"])
+    assert targets == ["Ейска"]
+    assert observed == ["Борт", "слышны взрывы в Керчи"]
+
+
+def test_telegraph_blocks_split_point_signal_from_attention_tail():
+    """Сбитие в одном блоке не красит перечисление «Внимание!» в другом.
+
+    «Темрюкский район / Курчанская / Сбитие БПЛА. — Славянский район /
+    … / Краснодар и пригород / Внимание!»: перехват был в Курчанской,
+    а Краснодару сказали лишь «внимание» — класс, который на карту не
+    идёт. Общий сигнал сообщения ставил «Перехват» всем девяти местам.
+    """
+    from pipeline.parse import block_signals, signal_for_place
+    body = ("Темрюкский район \nКурчанская\nСбитие БПЛА. \n\n"
+            "Славянский район \nКрымский район \nИльский \n"
+            "Краснодар и пригород\nАдыгея \nВнимание!")
+    o = parse(body)
+    assert o.signal_type == "intercept"
+    segments = block_signals(o.body)
+    assert signal_for_place(segments, "краснодар")[0] == "caution"
+    assert signal_for_place(segments, "адыгея")[0] == "caution"
+    # Место рядом со сбитием сигнала не меняет.
+    assert signal_for_place(segments, "курчанск") is None
+
+    # «Место, потом отдельным блоком сигнал» — молчаливая шапка наследует
+    # общий сигнал: гасятся только блоки, которые сами просят «внимания».
+    lone = block_signals(parse("Курчанская\n\nСбитие БПЛА.").body)
+    assert lone == {}
+    header = block_signals(parse(
+        "Анапский район\nАлексеевка\n\nЕщё один сбит БПЛА").body)
+    assert header == {}
 
 
 def test_real_fixation_next_to_an_anticipation_stays_red():
@@ -1258,7 +1342,7 @@ def test_detection_still_below_impact():
 
 def test_alarm_sits_between_warning_and_detection():
     warning = parse("Краснодарский край, опасность по БПЛА").severity
-    alarm = parse("Тула, тревога по БПЛА").severity
+    alarm = parse("Тула, воздушная тревога").severity
     detection = parse("Азов, фиксация БПЛА").severity
     assert warning < alarm < detection
 
@@ -2001,10 +2085,10 @@ def test_conditional_intercept_is_not_an_intercept(text):
 
 
 def test_conditional_keeps_the_alarm_it_came_with():
-    """Убрав условие, тревогу терять нельзя: она в том же сообщении."""
+    """Убрав условие, оповещение терять нельзя: оно в том же сообщении."""
     observation = parse("От Тамани до Сочи\nтревога по БПЛА сохраняется\n"
                         "Соблюдайте меры безопасности\nПри сбитиях БПЛА")
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == "danger"
     assert observation.relevant
 
 

@@ -528,6 +528,55 @@ def phrase_signals(phrases: list[str]) -> dict[str, tuple[str, int]]:
     return result
 
 
+# Хвост «внимания»: блок, который лишь просит быть внимательным. Именно
+# такие адресаты не должны наследовать перехват из соседнего блока.
+ATTENTION_TAIL_RE = re.compile(
+    r"\bвнимание\b|мер[ыу]\s+(?:безопасн|предостор)|будьте\s+осторожн",
+    re.IGNORECASE)
+
+
+def block_signals(body: str) -> dict[str, tuple[str, int]]:
+    """Телеграфные блоки «места + сигнал», разделённые пустой строкой.
+
+    «Темрюкский район / Курчанская / Сбитие БПЛА. — Славянский район /
+    … / Краснодар и пригород / Внимание!» — сбитие было в Курчанской,
+    а второй блок только предупреждает соседей. Общий сигнал сообщения
+    красил перехватом все девять мест, и бот слал «Краснодар — перехват»
+    городу, которому сказали лишь «внимание».
+
+    Дележ включается только когда сильное утверждение (перехват, взрыв)
+    заперто в одном блоке. Блоки со своим слабым сигналом сохраняют его;
+    блок без сигнала получает «внимание» — класс, который на карту не
+    идёт, — но только если сам говорит «внимание» или «меры
+    безопасности». Молчаливый блок-шапка («Анапский район / Алексеевка»
+    перед «Ещё один сбит») наследует общий сигнал, как и раньше: иначе
+    место сбития выкидывалось вместе с адресатами.
+    """
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", body)
+              if block.strip()]
+    if len(blocks) < 2:
+        return {}
+    parsed = [parse(block) for block in blocks]
+    ranked = [CLAIM_RANK.get(piece.signal_type, 0) if piece.relevant else 0
+              for piece in parsed]
+    top = max(ranked)
+    if top <= CLAIM_RANK["alarm"] or ranked.count(top) != 1:
+        return {}
+    result: dict[str, tuple[str, int]] = {}
+    for block, piece, rank in zip(blocks, parsed, ranked):
+        if rank == top:
+            continue
+        if piece.relevant and piece.signal_type != "unknown":
+            verdict = (piece.signal_type, piece.severity)
+        elif ATTENTION_TAIL_RE.search(block):
+            verdict = ("caution", 3)
+        else:
+            continue
+        for phrase in candidate_phrases(block):
+            result.setdefault(phrase.lower(), verdict)
+    return result
+
+
 def signal_for_place(segments: dict[str, tuple[str, int]],
                      token: str) -> tuple[str, int] | None:
     """Сигнал фразы, в которой геокодер нашёл это место.
@@ -944,6 +993,17 @@ def forecast_phrases(phrases: list[str]) -> list[str]:
     return []
 
 
+# Хвост сигнала на конце перечисляемого адресата: «Краснодар тревога по
+# БПЛА» — сигнал принадлежит сообщению, а не выделяет Краснодар в
+# наблюдение. После среза остаётся голое имя.
+ENUM_SIGNAL_TAIL_RE = re.compile(
+    r"\s+(?:тревог|опасност)\w*(?:\s+\S+)*$", re.IGNORECASE)
+# Элемент перечисления — голое имя места: одно-четыре слова с заглавных
+# букв, служебные «на/в/и» между ними («Славянск на Кубани»).
+ENUM_ITEM_RE = re.compile(
+    r"[А-ЯЁ][\w-]*(?:\s+(?:на|в|и)\s+[А-ЯЁ][\w-]*|\s+[А-ЯЁ][\w-]*){0,3}")
+
+
 def split_directions(phrases: list[str]) -> tuple[list[str], list[str]]:
     """Фразы наблюдения отдельно, адресаты движения отдельно.
 
@@ -953,20 +1013,40 @@ def split_directions(phrases: list[str]) -> tuple[list[str], list[str]]:
 
     Хвост после оборота движения — адресаты; голова до него — наблюдение.
     «Прошли Ейск в направлении моря»: Ейск остаётся наблюдением.
+
+    Перечисление адресатов режется запятыми на отдельные фразы ещё до
+    этого разбора: в «в направлении Тихорецк, Тимашевск, Краснодар»
+    адресатом считался один Тихорецк, а Тимашевск с Краснодаром получали
+    сигнал наблюдения — и бот слал «Краснодар — тревога» городу, который
+    только ждёт борт. Поэтому голые имена сразу после оборота движения
+    продолжают список адресатов, пока перечисление не оборвётся фразой
+    с собственным содержанием.
     """
     observed: list[str] = []
     targets: list[str] = []
+    absorbing = False
     for phrase in phrases:
         match = MOVING_TO_RE.search(phrase)
-        if not match:
-            observed.append(phrase)
+        if match:
+            head = phrase[:match.start()].strip(" ,—-")
+            tail = phrase[match.end():].strip(" ,—-")
+            if head:
+                observed.append(head)
+            if tail:
+                targets.append(tail)
+            absorbing = bool(tail)
             continue
-        head = phrase[:match.start()].strip(" ,—-")
-        tail = phrase[match.end():].strip(" ,—-")
-        if head:
-            observed.append(head)
-        if tail:
-            targets.append(tail)
+        if absorbing:
+            bare = ENUM_SIGNAL_TAIL_RE.sub("", phrase).strip(" ,—-")
+            if bare and ENUM_ITEM_RE.fullmatch(bare):
+                targets.append(bare)
+                # Сигнальный хвост закрывает перечисление: после «Краснодар
+                # тревога по БПЛА» новых адресатов не бывает.
+                if bare != phrase.strip(" ,—-"):
+                    absorbing = False
+                continue
+            absorbing = False
+        observed.append(phrase)
     return observed, targets
 
 # --- Сигнал: что произошло. Порядок важен, первое совпадение выигрывает -----
@@ -989,9 +1069,18 @@ SIGNALS: list[tuple[str, str, int]] = [
                   r"|не\s+нес\w+\s+опасност|не\s+(?:был\w*\s+)?атакован\w*", 0),
     ("impact",    IMPACT_PATTERN, 9),
     ("intercept", INTERCEPT_PATTERN, 8),
-    # Новые каналы объявляют тревогу без слова «тревога»: «на подлёте»,
+    # Тревога — это объявленный сигнал: «воздушная тревога», «ракетная
+    # тревога», сирены, команды укрыться. Голое «тревога по БПЛА» из
+    # мониторинговых лент — их собственный сленг для «опасности», а не
+    # объявление: бот писал «Краснодар — объявлена воздушная тревога» по
+    # сообщению «в направлении Краснодар тревога по БПЛА», хотя никакой
+    # тревоги город не объявлял. Официальную форму те же ленты пишут
+    # отдельно: «Воздушная тревога объявлена в Севастополе».
+    # Новые каналы объявляют тревогу и без слова «тревога»: «на подлёте»,
     # «готовность», «все в укрытие», «от окон».
-    ("alarm",     r"\bтревог\w*|\bсирен\w*|угроз\w+\s+(непосредств|удара|атаки)"
+    ("alarm",     r"(?:воздушн|ракетн)\w+\s+тревог\w*"
+                  r"|тревог\w+\s+(?:воздушн|ракетн)\w+"
+                  r"|\bсирен\w*|угроз\w+\s+(непосредств|удара|атаки)"
                   r"|на\s+подл[её]те|\bготовность\b|приготов\w+\s+к"
                   r"|в\s+укрыти\w+|укройтесь|укрыти\w+\s+не\s+покида"
                   r"|\bот\s+окон\b|не\s+подходите\s+к\s+окнам"
@@ -1006,6 +1095,9 @@ SIGNALS: list[tuple[str, str, int]] = [
     # Второе конкретнее первого, и раньше они стояли на одном уровне: 711
     # фиксаций, 19% событий, красились тем же жёлтым, что и общая тревожность.
     ("detection", DETECTION_PATTERN, 8),
+    # Сленговая «тревога» стоит НИЖЕ фиксации: «фиксация БПЛА, тревога
+    # сохраняется» — это наблюдение борта, а не только предупреждение.
+    ("danger",    r"\bтревог\w*", 5),
     ("caution",   r"мер[ыу]\s+(безопасн|предостор)|\bвнимание\b|соблюда\w+\s+мер"
                   r"|будьте\s+остор\w+|сохраняйте\s+спокойстви"
                   r"|не\s+подходите\s+к\s+(?:осколк|обломк)"
@@ -1365,7 +1457,9 @@ def parse(text: str) -> Observation:
             and not INTERCEPT_RE.search(FUTURE_WORK_RE.sub(" ", clean))):
         signal, severity = "alarm", 7
     # «С тревогой ждёт сентября» — оборот речи, а не объявленная тревога.
-    if signal == "alarm" and ANXIETY_IDIOM_RE.search(clean):
+    # Сленговая «тревога» теперь классифицируется опасностью, поэтому
+    # идиому ловим в обоих классах.
+    if signal in ("alarm", "danger") and ANXIETY_IDIOM_RE.search(clean):
         rest = ANXIETY_IDIOM_RE.sub(" ", clean)
         signal, severity = classify_signal(rest, observation.threat_type)
     # И с ударом: «готовность к возможному обстрелу» — обстрела ещё не
