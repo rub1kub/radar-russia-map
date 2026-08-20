@@ -29,6 +29,8 @@ from pywebpush import WebPushException, webpush
 
 from pipeline.db import DB_PATH
 
+from . import notify_throttle
+
 DATA_DIR = DB_PATH.parent
 VAPID_PATH = DATA_DIR / "vapid_private.pem"
 # Контакт по стандарту обязателен; почтой не делимся.
@@ -61,6 +63,7 @@ def _connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.executescript(SCHEMA)
+    notify_throttle.ensure_schema(connection)
     return connection
 
 
@@ -198,9 +201,20 @@ def deliver_once(snapshot: dict) -> int:
                 ).fetchone()
                 if known:
                     continue
+                # Опасность/тревога без отбоя между двумя волнами — та же
+                # новость дважды: см. notify_throttle.
+                subscriber = f"push:{row['endpoint']}"
+                if notify_throttle.should_suppress(
+                        connection, subscriber, event, now):
+                    connection.execute(
+                        "INSERT OR IGNORE INTO push_sent (endpoint, event_key, sent_at)"
+                        " VALUES (?,?,?)", (row["endpoint"], key, now))
+                    connection.commit()
+                    continue
                 connection.execute(
                     "INSERT OR IGNORE INTO push_sent (endpoint, event_key, sent_at)"
                     " VALUES (?,?,?)", (row["endpoint"], key, now))
+                notify_throttle.record_sent(connection, subscriber, event, now)
                 # Заголовок — место, тело — что происходит. Прежний
                 # вариант звал любое событие «Тревогой», даже перекрытый
                 # мост, а в теле стояло только имя города.

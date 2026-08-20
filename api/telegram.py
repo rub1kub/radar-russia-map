@@ -39,6 +39,7 @@ from pipeline.db import DB_PATH
 from pipeline.textnorm import norm_key, short_name
 from pipeline.timeutil import MSK, now_utc
 
+from . import notify_throttle
 from .wording import event_sentence
 
 SITE = "https://tihoenebo.com"
@@ -125,6 +126,7 @@ def _connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.executescript(SCHEMA)
+    notify_throttle.ensure_schema(connection)
     for patch in SCHEMA_PATCHES:
         try:
             connection.execute(patch)
@@ -750,6 +752,13 @@ def deliver_once(snapshot: dict) -> int:
                     " VALUES (?,?,?)", (row["chat_id"], key, now)).rowcount
                 if not inserted:
                     continue
+                # Опасность/тревога без отбоя между двумя волнами — та же
+                # новость дважды: см. notify_throttle.
+                subscriber = f"tg:{row['chat_id']}"
+                if notify_throttle.should_suppress(
+                        connection, subscriber, event, now):
+                    connection.commit()
+                    continue
                 # Второй рубеж — сам текст: время события входит в строку,
                 # так что настоящий новый удар от повтора отличим.
                 head = ("🟢 Отбой" if cleared
@@ -766,6 +775,7 @@ def deliver_once(snapshot: dict) -> int:
                 connection.execute(
                     "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
                     " VALUES (?,?,?)", (row["chat_id"], line_key, now))
+                notify_throttle.record_sent(connection, subscriber, event, now)
                 # Отметка коммитится ДО отправки. Раньше коммит был один на
                 # всю пачку в конце: рестарт API между отправкой и коммитом
                 # терял отметки, и следующий такт рассылал всё то же самое

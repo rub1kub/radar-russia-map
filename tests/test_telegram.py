@@ -175,6 +175,56 @@ def test_twin_events_send_one_message(tmp_path, monkeypatch):
     assert len(sent) == 2
 
 
+def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
+    """Вторая «опасность» по тому же месту без отбоя между ними — не новость.
+
+    «Краснодар — объявлена опасность атаки БПЛА» ушло дважды с разницей в
+    24 минуты: fuse.SAME_ZONE_WINDOW (15 мин) развело две волны на разные
+    события, а подписчик получил одно и то же предупреждение подряд.
+    """
+    import json
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "t")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
+            (1, json.dumps(["krasnodar"]), 0))
+        connection.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    def event(eid, signal, at, status="active"):
+        return {"id": eid, "status": status, "zone_id": "krasnodar",
+                "zone_path": ["krasnodar"], "signal_type": signal,
+                "threat_type": "uav", "severity": 5,
+                "zone_name": "Краснодар", "last_seen_at": at}
+
+    telegram.deliver_once({"events": [
+        event("e1", "danger", "2026-08-20T21:31:00+00:00")]})
+    assert len(sent) == 1
+
+    # Вторая опасность 24 минуты спустя, без отбоя между ними — гасится.
+    telegram.deliver_once({"events": [
+        event("e2", "danger", "2026-08-20T21:55:00+00:00")]})
+    assert len(sent) == 1, "повторная опасность без отбоя не должна уходить"
+
+    # Эскалация до тревоги — другой класс, другая новость, проходит.
+    telegram.deliver_once({"events": [
+        event("e3", "alarm", "2026-08-20T22:05:00+00:00")]})
+    assert len(sent) == 2
+
+    # Отбой снимает тормоз — следующая опасность снова уходит.
+    telegram.deliver_once({"events": [
+        event("e3", "alarm", "2026-08-20T22:05:00+00:00", status="resolved")]})
+    assert len(sent) == 3
+    telegram.deliver_once({"events": [
+        event("e4", "danger", "2026-08-20T22:40:00+00:00")]})
+    assert len(sent) == 4
+
+
 def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     """Цвет кружка в уведомлении — та же ранжировка, что в легенде карты.
 
