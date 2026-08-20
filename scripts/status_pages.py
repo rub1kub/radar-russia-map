@@ -527,31 +527,43 @@ def airport_rows(connection: sqlite3.Connection) -> list[dict]:
 def airport_card(row: dict) -> str:
     classes = ("closed" if row["closed"]
                else "open" if row["closures"] else "quiet")
-    if row["closed"]:
-        state = (f"Закрыт {since_clock(row['since'])} — самолёты не "
-                 f"взлетают и не садятся")
-    elif row["reopened"]:
-        state = f"Работает — открыли {clock(row['reopened'])}"
+    # Оба варианта текста уезжают в data-атрибуты: живой скрипт двигает
+    # карточку между «закрыты» и «работают» и обязан переписать и статус,
+    # и строку истории — полкарточки от одного состояния, полкарточки от
+    # другого читались как «Закрыт… Работает» одновременно.
+    state_closed = (
+        f"Закрыт {since_clock(row['since'])} — самолёты не взлетают "
+        f"и не садятся" if row["closed"]
+        else "Закрыт — действуют ограничения")
+    if row["reopened"]:
+        state_open = f"Работает — открыли {clock(row['reopened'])}"
     elif row["closures"]:
-        state = "Работает"
+        state_open = "Работает"
     else:
-        state = "Работает — за месяц не закрывался"
-    if row["closed"] and row["median_minutes"]:
-        hist = (f"Обычно открывают примерно через "
-                f"{minutes_word(row['median_minutes'])}")
-    elif row["closures"]:
+        state_open = "Работает — за месяц не закрывался"
+    hist_closed = (f"Обычно открывают примерно через "
+                   f"{minutes_word(row['median_minutes'])}"
+                   if row["median_minutes"] else "")
+    if row["closures"]:
         typical = (f", обычно на {minutes_word(row['median_minutes'])}"
                    if row["median_minutes"] else "")
-        hist = (f"{row['closures']} "
-                f"{plural(row['closures'], 'закрытие', 'закрытия', 'закрытий')}"
-                f" за месяц{typical}")
+        hist_open = (f"{row['closures']} "
+                     f"{plural(row['closures'], 'закрытие', 'закрытия', 'закрытий')}"
+                     f" за месяц{typical}")
     else:
-        hist = ""
+        hist_open = "За месяц не закрывался"
+    state = state_closed if row["closed"] else state_open
+    hist = hist_closed if row["closed"] else hist_open
     link = (f'<a href="/region/{row["region_slug"]}/">Обстановка — '
             f"{escape(row['city'])}</a>" if row["region_slug"] else "")
     zones = escape(json.dumps(row["zone_ids"]), quote=True)
     query = escape(f"{row['name']} {row['city']}".lower(), quote=True)
-    return (f'<li class="{classes}" data-zones=\'{zones}\' data-q="{query}">'
+    return (f'<li class="{classes}" data-zones=\'{zones}\' data-q="{query}" '
+            f'data-static="{"closed" if row["closed"] else "open"}" '
+            f'data-state-closed="{escape(state_closed, quote=True)}" '
+            f'data-state-open="{escape(state_open, quote=True)}" '
+            f'data-hist-closed="{escape(hist_closed, quote=True)}" '
+            f'data-hist-open="{escape(hist_open, quote=True)}">'
             f'<div class="apt-head"><span class="apt-dot"></span>'
             f'<span class="apt-name">{escape(row["name"])}</span></div>'
             f'<div class="apt-state">{escape(state)}</div>'
@@ -567,6 +579,11 @@ PAGE_JS = """
     document.querySelectorAll("#airports li"));
   var bands = Array.prototype.slice.call(
     document.querySelectorAll(".band"));
+  var closedList = document.getElementById("airports-closed");
+  var openList = document.getElementById("airports-open");
+  var closedBand = document.getElementById("band-closed");
+  var hero = document.getElementById("hero");
+  var heroTitle = document.getElementById("hero-title");
   if (finder) finder.addEventListener("input", function () {
     var query = finder.value.trim().toLowerCase().replace(/ё/g, "е");
     cards.forEach(function (card) {
@@ -577,27 +594,68 @@ PAGE_JS = """
     bands.forEach(function (band) { band.style.display = query ? "none" : ""; });
   });
 
+  function plural(n, one, few, many) {
+    var t = n % 10, p = n % 100;
+    if (t === 1 && p !== 11) return one;
+    if (t >= 2 && t <= 4 && (p < 12 || p > 14)) return few;
+    return many;
+  }
+
+  function setCard(card, closed) {
+    if (closed === card.classList.contains("closed")) return;
+    card.classList.toggle("closed", closed);
+    card.classList.toggle("open", !closed);
+    card.classList.remove("quiet");
+    var state = card.querySelector(".apt-state");
+    if (state) state.textContent = closed
+      ? card.dataset.stateClosed : card.dataset.stateOpen;
+    var hist = card.querySelector(".apt-hist");
+    if (hist) hist.textContent = closed
+      ? card.dataset.histClosed : card.dataset.histOpen;
+    (closed ? closedList : openList).appendChild(card);
+  }
+
+  function redraw() {
+    var closed = cards.filter(function (card) {
+      return card.classList.contains("closed");
+    }).length;
+    if (closedBand) closedBand.style.display = closed ? "" : "none";
+    if (!hero || !heroTitle) return;
+    hero.className = "hero " + (closed ? "bad" : "good");
+    heroTitle.textContent = closed
+      ? "Сейчас " + plural(closed, "закрыт", "закрыты", "закрыты") + " " +
+        closed + " " + plural(closed, "аэропорт", "аэропорта", "аэропортов") +
+        " из " + cards.length
+      : "Все аэропорты работают";
+  }
+
   function refresh() {
     fetch("/api/v1/state").then(function (r) { return r.json(); })
       .then(function (state) {
-        var closedZones = {};
+        // Живые события умеют только два утверждения: свежее закрытие
+        // (активное событие) и свежее открытие (недавний отбой). Тишина в
+        // эфире НЕ значит «работает»: событие на карте гаснет по времени
+        // раньше, чем Росавиация присылает «СНЯТЫ», — карточка без
+        // живого сигнала возвращается к официальной статике.
+        var nowClosed = {}, nowOpened = {};
         (state.events || []).forEach(function (event) {
           if (event.threat_type !== "airport") return;
-          if (event.status === "resolved") return;
-          (event.zone_path || []).concat([event.zone_id])
-            .forEach(function (zone) { closedZones[zone] = true; });
+          var zones = (event.zone_path || []).concat([event.zone_id]);
+          var bucket = event.status === "resolved" ? nowOpened : nowClosed;
+          zones.forEach(function (zone) { bucket[zone] = true; });
         });
         cards.forEach(function (card) {
           if (!card.dataset.zones) return;
           var zones = JSON.parse(card.dataset.zones);
-          var hot = zones.some(function (zone) { return closedZones[zone]; });
-          if (hot === card.classList.contains("closed")) return;
-          card.classList.toggle("closed", hot);
-          card.classList.toggle("open", !hot);
-          var state = card.querySelector(".apt-state");
-          if (state) state.textContent = hot
-            ? "Закрыт — действуют ограничения" : "Работает";
+          if (zones.some(function (z) { return nowClosed[z]; })) {
+            setCard(card, true);
+          } else if (zones.some(function (z) { return nowOpened[z]; })) {
+            setCard(card, false);
+          } else {
+            setCard(card, card.dataset.static === "closed");
+          }
         });
+        redraw();
       }).catch(function () {});
   }
   refresh();
@@ -637,8 +695,8 @@ def airports_page(rows: list[dict], updated: str) -> str:
     else:
         hero_class, hero_title = "good", "Все аэропорты работают"
     hero = (
-        f'<div class="hero {hero_class}"><span class="dot"></span><div>'
-        f'<div class="title">{escape(hero_title)}</div>'
+        f'<div class="hero {hero_class}" id="hero"><span class="dot"></span>'
+        f'<div><div class="title" id="hero-title">{escape(hero_title)}</div>'
         f'<div class="sub">По официальным сообщениям Росавиации · '
         f"обновлено {updated}</div></div></div>")
 
@@ -669,12 +727,15 @@ def airports_page(rows: list[dict], updated: str) -> str:
          "источниками. Сводка неофициальная и может опаздывать: статус "
          "рейса проверяйте на сайте аэропорта или у авиакомпании."),
     ]
-    closed_html = ""
-    if closed:
-        closed_html = ('<div class="band bad">ЗАКРЫТЫ</div>'
-                       '<ul class="status" id="airports-closed">'
-                       + "".join(airport_card(row) for row in closed)
-                       + "</ul>")
+    # Обе секции есть всегда: живой скрипт двигает карточки между ними,
+    # пустая «закрытая» просто спрятана.
+    hidden = "" if closed else ' style="display:none"'
+    closed_html = (
+        f'<div id="band-closed"{hidden}>'
+        '<div class="band bad">ЗАКРЫТЫ</div>'
+        '<ul class="status" id="airports-closed">'
+        + "".join(airport_card(row) for row in closed)
+        + "</ul></div>")
     working_html = ('<div class="band">РАБОТАЮТ</div>'
                     '<ul class="status" id="airports-open">'
                     + "".join(airport_card(row) for row in working)
