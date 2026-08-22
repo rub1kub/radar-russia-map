@@ -742,11 +742,10 @@ def deliver_once(snapshot: dict) -> int:
                 zones = set(json.loads(row["zones"]))
             except ValueError:
                 continue
-            # Подписка на город обязана видеть и тревогу по всему краю —
-            # см. notify_throttle.watched_zone_keys.
-            watched = notify_throttle.watched_zone_keys(connection, zones)
             for event in events:
-                if not watched.intersection(event.get("zone_path") or []):
+                # Подписка на город обязана видеть и тревогу по всему
+                # краю — см. notify_throttle.matches_watch.
+                if not notify_throttle.matches_watch(connection, zones, event):
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]
