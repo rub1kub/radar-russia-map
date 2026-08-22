@@ -190,8 +190,11 @@ def deliver_once(snapshot: dict) -> int:
                 zones = set()
             if not zones:
                 continue
+            # Подписка на город обязана видеть и тревогу по всему краю —
+            # см. notify_throttle.watched_zone_keys.
+            watched = notify_throttle.watched_zone_keys(connection, zones)
             for event in events:
-                if not zones.intersection(event.get("zone_path") or []):
+                if not watched.intersection(event.get("zone_path") or []):
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]

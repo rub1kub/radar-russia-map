@@ -46,6 +46,42 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
 
 
+def watched_zone_keys(connection: sqlite3.Connection,
+                      zones: set[str]) -> set[str]:
+    """Отслеживаемые зоны, расширенные вверх до региона.
+
+    Событие несёт zone_path от своей зоны до региона — оно совпадает с
+    подпиской, только если человек следит за ЭТОЙ зоной или её родителем
+    (наблюдатель региона видит событие в его районе). Обратное — человек
+    следит за городом, а тревога объявлена на весь край без названного
+    района, — не матчилось вовсе: zone_path региональной тревоги состоит
+    из одной этой зоны и не содержит городов внутри неё. Настоящая
+    воздушная тревога по Краснодарскому краю в 2026-08-20T18:28 UTC не
+    дошла до подписчика на Краснодар именно поэтому.
+
+    Расширяем в другую сторону — не событие вниз (список городов внутри
+    региона не хранится и был бы неограниченным), а подписку вверх: для
+    каждой отслеживаемой зоны добавляем всю цепочку её родителей.
+    """
+    expanded: set[str] = set()
+    for zone_id in zones:
+        current = zone_id
+        seen: set[str] = set()
+        while current and current not in seen:
+            seen.add(current)
+            expanded.add(current)
+            try:
+                row = connection.execute(
+                    "SELECT parent_id FROM zones WHERE id = ?",
+                    (current,)).fetchone()
+            except sqlite3.OperationalError:
+                # Таблицы зон нет (тестовая база без справочника) —
+                # остаёмся с тем, что отслеживалось буквально.
+                return zones | expanded
+            current = row["parent_id"] if row else None
+    return expanded
+
+
 def _zone_key(event: dict) -> str:
     # zone_id — самая мелкая зона события; в проде есть всегда, но на
     # случай пробела берём голову zone_path.

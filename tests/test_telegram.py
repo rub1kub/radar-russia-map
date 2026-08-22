@@ -225,6 +225,50 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
     assert len(sent) == 4
 
 
+def test_watching_a_city_still_sees_a_region_wide_alarm(tmp_path, monkeypatch):
+    """Подписка на город обязана видеть тревогу по всему краю.
+
+    Настоящая воздушная тревога по Краснодарскому краю (без названного
+    района — источник назвал только регион) не дошла подписчику на
+    Краснодар: zone_path региональной тревоги состоит из одной этой зоны
+    и не содержит городов внутри неё, а сравнение шло только в эту
+    сторону. Подписку расширяем вверх до региона — событие вниз не
+    расширить, список городов внутри края не хранится и был бы
+    неограниченным.
+    """
+    import json
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "t")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "CREATE TABLE zones (id TEXT PRIMARY KEY, parent_id TEXT)")
+        connection.execute(
+            "INSERT INTO zones VALUES ('gorodskoy_okrug_krasnodar', "
+            "'krasnodarskiy_kray')")
+        connection.execute(
+            "INSERT INTO zones VALUES ('krasnodarskiy_kray', NULL)")
+        connection.execute(
+            "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
+            (1, json.dumps(["gorodskoy_okrug_krasnodar"]), 0))
+        connection.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    # Источник назвал только регион — свой zone_id и zone_path из одной
+    # этой зоны, района или города внутри неё в сообщении нет.
+    telegram.deliver_once({"events": [{
+        "id": "e1", "status": "active", "zone_id": "krasnodarskiy_kray",
+        "zone_path": ["krasnodarskiy_kray"], "signal_type": "alarm",
+        "threat_type": "uav", "severity": 7,
+        "zone_name": "Краснодарский край",
+        "last_seen_at": "2026-08-20T18:28:00+00:00",
+    }]})
+    assert len(sent) == 1, "тревога по всему краю не дошла до подписки на город"
+
+
 def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     """Цвет кружка в уведомлении — та же ранжировка, что в легенде карты.
 
