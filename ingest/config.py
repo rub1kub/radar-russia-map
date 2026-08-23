@@ -263,7 +263,9 @@ SOURCES: list[Source] = [
     Source("radar_engels", "radar_engels", "Радар Энгельс", "regional", 26934, region="saratov", network=None),
     Source("radar_krasdar", "radar_krasdar", "Краснодарский Радар", "regional", 23101, region="krasnodar", network=None),
     Source("krasnodarsirens", "krasnodarsirens", "Радар Краснодарского края", "regional", 13432, region="krasnodar", network=None),
-    Source("radarkrasnodar", "RadarKrasnodar", "Наш Краснодар. Радар", "regional", 4823, region="krasnodar", network="nash"),
+    # radarkrasnodar («Наш Краснодар. Радар», chat_id -1002265802065) убран
+    # решением владельца 23.08.2026 — аккаунт из канала вышел. Исторические
+    # сообщения в корпусе остаются: события на них уже построены.
     Source("bpla_radar", "bpla_radar", "Радар023 | Черноморское побережье", "regional", 323, region="krasnodar", network=None),
     Source("novorossiysk_radar", "novorossiysk_radar", "Радар Новороссийск", "regional", 7994, region="krasnodar", network=None),
     Source("first_radar_novorossiysk", "first_radar_novorossiysk", "Первый Радар | Новороссийск, Геленджик", "regional", 6242, region="krasnodar", network=None),
