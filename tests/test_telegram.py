@@ -292,6 +292,75 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
     assert len(sent) == 4
 
 
+def test_airport_closure_named_two_ways_notifies_once(tmp_path, monkeypatch):
+    """«Пашковский — аэропорт закрыт» и «Краснодар — аэропорт закрыт» —
+    один аэропорт.
+
+    Одна новость рождает события и на посёлке-аэропорте, и на городском
+    округе — каналы называют его то так, то так, — и подписчик получил
+    «закрыт» дважды за 13 минут. Для пары «закрыто — открыто» родство
+    зон гасит в обе стороны, а «открыт» — собственное сообщение со
+    своими дублями, а не сброс тормоза.
+    """
+    import json
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "t")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "CREATE TABLE zones (id TEXT PRIMARY KEY, parent_id TEXT)")
+        connection.execute(
+            "INSERT INTO zones VALUES ('pashkovskiy', "
+            "'gorodskoy_okrug_krasnodar')")
+        connection.execute(
+            "INSERT INTO zones VALUES ('gorodskoy_okrug_krasnodar', "
+            "'krasnodarskiy_kray')")
+        connection.execute(
+            "INSERT INTO zones VALUES ('krasnodarskiy_kray', NULL)")
+        connection.execute(
+            "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
+            (1, json.dumps(["gorodskoy_okrug_krasnodar"]), 0))
+        connection.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    def closure(eid, zone_id, zone_path, at, status="active"):
+        return {"id": eid, "status": status, "zone_id": zone_id,
+                "zone_path": zone_path, "signal_type": "infra",
+                "threat_type": "airport", "severity": 2,
+                "zone_name": zone_id, "last_seen_at": at}
+
+    place = ["pashkovskiy", "gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"]
+    okrug = ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"]
+
+    telegram.deliver_once({"events": [closure(
+        "e1", "pashkovskiy", place, "2026-08-23T14:10:00+00:00")]})
+    assert len(sent) == 1
+
+    # Тот же аэропорт под именем округа, 13 минут спустя. Гасится.
+    telegram.deliver_once({"events": [closure(
+        "e2", "gorodskoy_okrug_krasnodar", okrug,
+        "2026-08-23T14:23:00+00:00")]})
+    assert len(sent) == 1, "закрытие аэропорта ушло дважды под разными именами"
+
+    # Открытие — одно сообщение, его дубль тоже гасится.
+    telegram.deliver_once({"events": [closure(
+        "e1", "pashkovskiy", place, "2026-08-23T15:00:00+00:00",
+        status="resolved")]})
+    assert len(sent) == 2
+    telegram.deliver_once({"events": [closure(
+        "e2", "gorodskoy_okrug_krasnodar", okrug,
+        "2026-08-23T15:05:00+00:00", status="resolved")]})
+    assert len(sent) == 2, "открытие аэропорта ушло дважды под разными именами"
+
+    # Новое закрытие после открытия — снова новость.
+    telegram.deliver_once({"events": [closure(
+        "e3", "pashkovskiy", place, "2026-08-23T15:30:00+00:00")]})
+    assert len(sent) == 3
+
+
 def test_city_watch_never_receives_region_level_events(tmp_path, monkeypatch):
     """Подписка на город не получает событий с краевой привязкой. Никаких.
 
