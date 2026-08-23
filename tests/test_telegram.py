@@ -226,15 +226,14 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
 
 
 def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
-    """«Краснодар — тревога», потом «Краснодарский край — тревога» —
-    одна новость.
+    """«Краснодар — опасность», следом та же опасность на весь край —
+    одна новость для наблюдателя КРАЯ.
 
     Тормоз сравнивал зоны буквально («край» ≠ «город» — другая новость),
     хотя более широкое объявление после узкого не несёт ничего нового.
-    Обратный порядок — сужение с края до конкретно твоего города —
-    остаётся новостью. Класс в тесте — воздушная тревога: после решения
-    владельца от 23.08 с края на подписку города поднимается только она,
-    и краевые повторы остальных классов до тормоза уже не доходят.
+    Наблюдатель здесь подписан на весь край: подписка на город краевых
+    событий не получает вовсе (решение владельца 23.08), и для неё этот
+    тормоз не нужен.
     """
     import json
 
@@ -250,7 +249,7 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
             "INSERT INTO zones VALUES ('krasnodarskiy_kray', NULL)")
         connection.execute(
             "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
-            (1, json.dumps(["gorodskoy_okrug_krasnodar"]), 0))
+            (1, json.dumps(["krasnodarskiy_kray"]), 0))
         connection.commit()
 
     sent = []
@@ -259,8 +258,8 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
 
     def event(eid, zone_id, zone_path, at, status="active"):
         return {"id": eid, "status": status, "zone_id": zone_id,
-                "zone_path": zone_path, "signal_type": "alarm",
-                "threat_type": "uav", "severity": 7,
+                "zone_path": zone_path, "signal_type": "danger",
+                "threat_type": "uav", "severity": 5,
                 "zone_name": zone_id, "last_seen_at": at}
 
     city = ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"]
@@ -271,10 +270,10 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
         "2026-08-23T07:40:00+00:00")]})
     assert len(sent) == 1
 
-    # Та же тревога, теперь на весь край, — без отбоя между ними. Гасится.
+    # Та же опасность, теперь на весь край, — без отбоя между ними. Гасится.
     telegram.deliver_once({"events": [event(
         "e2", "krasnodarskiy_kray", kray, "2026-08-23T08:22:00+00:00")]})
-    assert len(sent) == 1, "краевой повтор той же тревоги ушёл подписчику"
+    assert len(sent) == 1, "краевой повтор той же опасности ушёл подписчику"
 
     # Отбой по городу снимает тормоз.
     telegram.deliver_once({"events": [event(
@@ -282,32 +281,26 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
         "2026-08-23T08:40:00+00:00", status="resolved")]})
     assert len(sent) == 2
 
-    # Обратный порядок: сначала край, потом конкретно город — сужение до
-    # твоего места остаётся новостью.
+    # После отбоя краевая опасность — снова новость.
     telegram.deliver_once({"events": [event(
         "e3", "krasnodarskiy_kray", kray, "2026-08-23T09:00:00+00:00")]})
     assert len(sent) == 3
+    # Сужение до конкретного города после краевой — тоже новость.
     telegram.deliver_once({"events": [event(
         "e4", "gorodskoy_okrug_krasnodar", city,
         "2026-08-23T09:10:00+00:00")]})
     assert len(sent) == 4
 
 
-def test_watching_a_city_still_sees_a_region_wide_alarm(tmp_path, monkeypatch):
-    """Подписка на город обязана видеть тревогу по всему краю — и только её.
+def test_city_watch_never_receives_region_level_events(tmp_path, monkeypatch):
+    """Подписка на город не получает событий с краевой привязкой. Никаких.
 
-    Настоящая воздушная тревога по Краснодарскому краю (без названного
-    района — источник назвал только регион) не дошла подписчику на
-    Краснодар: zone_path региональной тревоги состоит из одной этой зоны
-    и не содержит городов внутри неё, а сравнение шло только в эту
-    сторону.
-
-    Первая попытка чинить это (пересечение zone_path события с подпиской,
-    расширенной вверх до региона) оказалась ШИРЕ, чем нужно: у Анапы и
-    Краснодара общий родитель — тот же край, и подписка на город ловила
-    вообще все события по всему краю, включая соседние города. Проверять
-    нужно zone_id САМОГО события (не всю его цепочку) против цепочки
-    родителей подписки.
+    Решение владельца 23.08 после двух неудачных «улучшений» (сначала
+    все краевые события, потом «только объявления», потом «только
+    тревога»): краевых сирен не существует — тревога объявляется по
+    городам, и событие с одной лишь региональной привязкой означает
+    небрежную атрибуцию источника или огрех геокодинга, а не «тревогу
+    везде». Чинится это в разборе, а не расширением подписок.
     """
     import json
 
@@ -332,37 +325,32 @@ def test_watching_a_city_still_sees_a_region_wide_alarm(tmp_path, monkeypatch):
     monkeypatch.setattr(telegram, "send",
                         lambda chat_id, text, keyboard=None: sent.append(text))
 
-    def event(eid, zone_id, zone_path, at):
+    def event(eid, zone_id, zone_path, signal, severity, at):
         return {"id": eid, "status": "active", "zone_id": zone_id,
-                "zone_path": zone_path, "signal_type": "alarm",
-                "threat_type": "uav", "severity": 7,
+                "zone_path": zone_path, "signal_type": signal,
+                "threat_type": "uav", "severity": severity,
                 "zone_name": zone_id, "last_seen_at": at}
 
-    # Источник назвал только регион — свой zone_id и zone_path из одной
-    # этой зоны, района или города внутри неё в сообщении нет. Доходит.
-    telegram.deliver_once({"events": [event(
-        "e1", "krasnodarskiy_kray", ["krasnodarskiy_kray"],
-        "2026-08-20T18:28:00+00:00")]})
-    assert len(sent) == 1, "тревога по всему краю не дошла до подписки на город"
-
-    # Тревога конкретно в Анапе — тот же край, но другой город. Не доходит.
-    telegram.deliver_once({"events": [event(
-        "e2", "anapa", ["anapa", "krasnodarskiy_kray"],
-        "2026-08-20T19:00:00+00:00")]})
-    assert len(sent) == 1, "тревога по Анапе ушла подписчику на Краснодар"
-
-    # С края на город поднимается ТОЛЬКО воздушная тревога (сирена) —
-    # решение владельца 23.08. Ни наблюдения («работает ПВО ·
-    # Краснодарский край»), ни даже краевая «опасность» подписчику
-    # города не приходят.
-    for signal, severity in (("intercept", 8), ("danger", 5),
+    # Ни один класс с краевой привязкой не доходит — включая тревогу.
+    for signal, severity in (("alarm", 7), ("danger", 5), ("intercept", 8),
                              ("detection", 8), ("impact", 9)):
-        other = event(f"e-{signal}", "krasnodarskiy_kray",
-                      ["krasnodarskiy_kray"], "2026-08-20T20:00:00+00:00")
-        other["signal_type"] = signal
-        other["severity"] = severity
-        telegram.deliver_once({"events": [other]})
-        assert len(sent) == 1, f"краевой {signal} ушёл подписчику на город"
+        telegram.deliver_once({"events": [event(
+            f"e-{signal}", "krasnodarskiy_kray", ["krasnodarskiy_kray"],
+            signal, severity, "2026-08-20T18:28:00+00:00")]})
+        assert not sent, f"краевой {signal} ушёл подписчику на город"
+
+    # Соседний город того же края — тоже нет.
+    telegram.deliver_once({"events": [event(
+        "e-anapa", "anapa", ["anapa", "krasnodarskiy_kray"],
+        "alarm", 7, "2026-08-20T19:00:00+00:00")]})
+    assert not sent, "тревога по Анапе ушла подписчику на Краснодар"
+
+    # Событие в самом городе — доходит.
+    telegram.deliver_once({"events": [event(
+        "e-city", "gorodskoy_okrug_krasnodar",
+        ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"],
+        "alarm", 7, "2026-08-20T20:00:00+00:00")]})
+    assert len(sent) == 1
 
 
 def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
