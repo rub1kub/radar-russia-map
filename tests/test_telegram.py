@@ -350,6 +350,17 @@ def test_watching_a_city_still_sees_a_region_wide_alarm(tmp_path, monkeypatch):
         "2026-08-20T19:00:00+00:00")]})
     assert len(sent) == 1, "тревога по Анапе ушла подписчику на Краснодар"
 
+    # Наблюдение с одной лишь региональной привязкой — «работает ПВО ·
+    # Краснодарский край» — вверх не поднимается: точечное событие
+    # неизвестно где в крае, а не в твоём городе. Вверх ходят только
+    # объявления (тревога, опасность, отбой).
+    intercept = event("e3", "krasnodarskiy_kray", ["krasnodarskiy_kray"],
+                      "2026-08-20T20:00:00+00:00")
+    intercept["signal_type"] = "intercept"
+    intercept["severity"] = 8
+    telegram.deliver_once({"events": [intercept]})
+    assert len(sent) == 1, "краевой перехват ушёл подписчику на город"
+
 
 def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     """Цвет кружка в уведомлении — та же ранжировка, что в легенде карты.
