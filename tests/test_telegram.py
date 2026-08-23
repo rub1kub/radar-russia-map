@@ -225,6 +225,73 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
     assert len(sent) == 4
 
 
+def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
+    """«Краснодар — опасность», потом «Краснодарский край — опасность» —
+    одна новость.
+
+    Подписчик на город получил опасность по городу в 10:40, а в 11:22 —
+    ту же опасность, объявленную на весь край. Тормоз сравнивал зоны
+    буквально («край» ≠ «город» — другая новость), хотя более широкое
+    объявление после узкого не несёт ничего нового. Обратный порядок —
+    сужение с края до конкретно твоего города — остаётся новостью.
+    """
+    import json
+
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
+    monkeypatch.setattr(telegram, "token", lambda: "t")
+    with telegram.closing(telegram._connect()) as connection:
+        connection.execute(
+            "CREATE TABLE zones (id TEXT PRIMARY KEY, parent_id TEXT)")
+        connection.execute(
+            "INSERT INTO zones VALUES ('gorodskoy_okrug_krasnodar', "
+            "'krasnodarskiy_kray')")
+        connection.execute(
+            "INSERT INTO zones VALUES ('krasnodarskiy_kray', NULL)")
+        connection.execute(
+            "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
+            (1, json.dumps(["gorodskoy_okrug_krasnodar"]), 0))
+        connection.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram, "send",
+                        lambda chat_id, text, keyboard=None: sent.append(text))
+
+    def event(eid, zone_id, zone_path, at, status="active"):
+        return {"id": eid, "status": status, "zone_id": zone_id,
+                "zone_path": zone_path, "signal_type": "danger",
+                "threat_type": "uav", "severity": 5,
+                "zone_name": zone_id, "last_seen_at": at}
+
+    city = ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"]
+    kray = ["krasnodarskiy_kray"]
+
+    telegram.deliver_once({"events": [event(
+        "e1", "gorodskoy_okrug_krasnodar", city,
+        "2026-08-23T07:40:00+00:00")]})
+    assert len(sent) == 1
+
+    # Та же опасность, теперь на весь край, — без отбоя между ними. Гасится.
+    telegram.deliver_once({"events": [event(
+        "e2", "krasnodarskiy_kray", kray, "2026-08-23T08:22:00+00:00")]})
+    assert len(sent) == 1, "краевой повтор той же опасности ушёл подписчику"
+
+    # Отбой по городу снимает тормоз.
+    telegram.deliver_once({"events": [event(
+        "e1", "gorodskoy_okrug_krasnodar", city,
+        "2026-08-23T08:40:00+00:00", status="resolved")]})
+    assert len(sent) == 2
+
+    # Обратный порядок: сначала край, потом конкретно город — сужение до
+    # твоего места остаётся новостью.
+    telegram.deliver_once({"events": [event(
+        "e3", "krasnodarskiy_kray", kray, "2026-08-23T09:00:00+00:00")]})
+    assert len(sent) == 3
+    telegram.deliver_once({"events": [event(
+        "e4", "gorodskoy_okrug_krasnodar", city,
+        "2026-08-23T09:10:00+00:00")]})
+    assert len(sent) == 4
+
+
 def test_watching_a_city_still_sees_a_region_wide_alarm(tmp_path, monkeypatch):
     """Подписка на город обязана видеть тревогу по всему краю — и только её.
 

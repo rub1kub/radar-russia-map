@@ -104,17 +104,36 @@ def _zone_key(event: dict) -> str:
 
 def should_suppress(connection: sqlite3.Connection, subscriber: str,
                     event: dict, now: int) -> bool:
-    """Гасить ли эту опасность/тревогу — тот же класс уже был недавно."""
+    """Гасить ли эту опасность/тревогу — тот же класс уже был недавно.
+
+    Сверка не только по точному совпадению зоны: «Краснодар — опасность
+    атаки БПЛА» в 10:40 и «Краснодарский край — опасность атаки БПЛА» в
+    11:22 — одна новость, а не две. Более широкое объявление после уже
+    присланного узкого не несёт подписчику ничего нового — гасится, если
+    зона события лежит в цепочке родителей недавно отправленной. Обратный
+    порядок (край, потом конкретно его город) проходит: сужение до
+    твоего места — новость.
+    """
     signal = event.get("signal_type")
     if event.get("status") == "resolved" or signal not in FORECAST_SIGNALS:
         return False
-    row = connection.execute(
-        "SELECT signal, sent_at FROM notify_cooldown"
-        " WHERE subscriber = ? AND zone_key = ?",
-        (subscriber, _zone_key(event))).fetchone()
-    if row is None or now - row["sent_at"] > COOLDOWN_SEC:
-        return False
-    return row["signal"] == signal
+    threat = event.get("threat_type") or "unknown"
+    event_zone = event.get("zone_id") or next(
+        iter(event.get("zone_path") or []), "")
+    rows = connection.execute(
+        "SELECT zone_key, signal, sent_at FROM notify_cooldown"
+        " WHERE subscriber = ?", (subscriber,)).fetchall()
+    for row in rows:
+        if now - row["sent_at"] > COOLDOWN_SEC or row["signal"] != signal:
+            continue
+        sent_threat, _, sent_zone = row["zone_key"].partition(":")
+        if sent_threat != threat:
+            continue
+        if sent_zone == event_zone:
+            return True
+        if event_zone and event_zone in _ancestors(connection, sent_zone):
+            return True
+    return False
 
 
 def record_sent(connection: sqlite3.Connection, subscriber: str,
