@@ -74,6 +74,104 @@ def test_media_only_message_still_advances_cursor(tmp_path):
     assert last_seen(connection, "source") == 101
 
 
+def test_tiered_cycle_polls_hot_always_and_cold_in_rotation(tmp_path):
+    """Горячие — каждый круг, тихий хвост — каждый четвёртый, лежачие реже.
+
+    258 источников одним аккаунтом — ~5 минут на круг и FloodWait в каждом
+    цикле: быстрее опрашивать всё нельзя. Бюджет перераспределён: активные
+    и официальные каналы опрашиваются каждый круг (задержка падает вдвое),
+    молчаливый хвост — по очереди.
+    """
+    from poll import COLD_EVERY, DEAD_AFTER, DEAD_EVERY, cycle_sources
+
+    connection = connect(tmp_path / "radar.db")
+    ensure_state(connection)
+    # «Активный» канал: свежие сообщения в корпусе.
+    connection.execute(
+        "INSERT INTO raw_messages (source_key, chat_id, message_id,"
+        " posted_at, received_at, text, views) VALUES"
+        " ('busy', -1, 1, datetime('now'), datetime('now'), 'тревога', 1)")
+    connection.commit()
+
+    sources = [
+        Source("official1", "o1", "РСЧС", "official"),
+        Source("busy", "b", "Активный", "regional"),
+    ] + [Source(f"quiet{i}", f"q{i}", "Тихий", "regional")
+         for i in range(8)]
+
+    # Горячие в каждом круге; тихие — по четверти за круг, без пропусков
+    # и повторов на полном обороте.
+    seen_quiet: list[str] = []
+    for cycle in range(COLD_EVERY):
+        batch = [s.key for s in cycle_sources(connection, sources, {}, cycle)]
+        assert "official1" in batch
+        assert "busy" in batch
+        seen_quiet += [key for key in batch if key.startswith("quiet")]
+    assert sorted(seen_quiet) == sorted(f"quiet{i}" for i in range(8))
+
+    # Лежачий канал уходит в редкий ярус и возвращается после успеха.
+    failures = {"quiet0": DEAD_AFTER}
+    polled = [cycle for cycle in range(DEAD_EVERY * 2)
+              if "quiet0" in {s.key for s in cycle_sources(
+                  connection, sources, failures, cycle)}]
+    assert polled == [0, DEAD_EVERY]
+    failures["quiet0"] = 0
+    assert any("quiet0" in {s.key for s in cycle_sources(
+        connection, sources, failures, cycle)} for cycle in range(1, COLD_EVERY + 1))
+
+
+def test_live_handler_stores_pushed_message(tmp_path):
+    """Пуш подписанного канала пишется в базу сразу, дубль с опросом не растёт."""
+    from poll import live_handler
+
+    connection = connect(tmp_path / "radar.db")
+    ensure_state(connection)
+    handler = live_handler(connection, {-1001: "source"})
+
+    asyncio.run(handler(None, message(7, "Опасность по БПЛА")))
+    stored = connection.execute(
+        "SELECT source_key, message_id FROM raw_messages").fetchone()
+    assert (stored["source_key"], stored["message_id"]) == ("source", 7)
+    # Опрос-страховка того же сообщения дубля не создаёт.
+    asyncio.run(handler(None, message(7, "Опасность по БПЛА")))
+    assert connection.execute(
+        "SELECT COUNT(*) FROM raw_messages").fetchone()[0] == 1
+    # Чужой чат и пустой текст не пишутся.
+    asyncio.run(handler(None, SimpleNamespace(
+        id=8, chat=SimpleNamespace(id=-999), date=None,
+        text="что-то", caption=None, views=0)))
+    asyncio.run(handler(None, SimpleNamespace(
+        id=9, chat=SimpleNamespace(id=-1001), date=None,
+        text="", caption=None, views=0)))
+    assert connection.execute(
+        "SELECT COUNT(*) FROM raw_messages").fetchone()[0] == 1
+
+
+def test_subscribed_channels_leave_the_hot_tier(tmp_path):
+    """Подписанный канал доставляется пушем — из горячего опроса он уходит."""
+    from poll import cycle_sources
+
+    connection = connect(tmp_path / "radar.db")
+    ensure_state(connection)
+    connection.execute(
+        "INSERT INTO raw_messages (source_key, chat_id, message_id,"
+        " posted_at, received_at, text, views) VALUES"
+        " ('busy', -1, 1, datetime('now'), datetime('now'), 'тревога', 1)")
+    connection.commit()
+
+    sources = [Source("official1", "o1", "РСЧС", "official"),
+               Source("busy", "b", "Активный", "regional")]
+    # Без подписки оба в горячем ярусе — в каждом круге.
+    for cycle in range(3):
+        batch = {s.key for s in cycle_sources(connection, sources, {}, cycle)}
+        assert batch == {"official1", "busy"}
+    # С подпиской — в редкой страховке, не в каждом круге.
+    polled = [cycle for cycle in range(4)
+              if "busy" in {s.key for s in cycle_sources(
+                  connection, sources, {}, cycle, {"busy", "official1"})}]
+    assert len(polled) == 1
+
+
 def test_backfill_respects_both_window_bounds():
     messages = [
         message(3),

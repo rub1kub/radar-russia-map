@@ -65,6 +65,13 @@ async def main() -> None:
     async with client:
         joined, folder, in_folder, folder_ids = await current_state(client, args.folder)
         todo = [s for s in sources if s.username.lower() not in joined]
+        # Горячие первыми: официальные ленты и самые активные каналы по
+        # корпусу. При вступлении порциями (--limit) именно они получают
+        # мгновенную пуш-доставку в первую очередь.
+        from poll import HOT_TIERS, active_keys
+        from pipeline.db import connect as db_connect
+        hot = active_keys(db_connect())
+        todo.sort(key=lambda s: (s.tier not in HOT_TIERS, s.key not in hot))
 
         print(f"источников {len(sources)}, уже подписан на {len(sources) - len(todo)}")
         print(f"вступить нужно в {len(todo)}"
