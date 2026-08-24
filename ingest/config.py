@@ -78,7 +78,9 @@ SOURCES: list[Source] = [
     Source("radar_kaluga", "radar_kaluga", "Радар Калуга", "regional", 37531, region="kaluga", network=None),
     Source("radar_kras", "radar_kras", "Радар Краснодар", "regional", 57143, region="krasnodar", network=None),
     Source("first_radar", "first_radar", "Первый Радар | Краснодарский край", "regional", 31087, region="krasnodar", network=None),
-    Source("krasnodar_nebo_radar", "krasnodar_nebo_radar", "Краснодарское Небо | РАДАР", "regional", 24332, region="krasnodar", network=None),
+    # krasnodar_nebo_radar («Краснодарское Небо | РАДАР», -1002484439996)
+    # убран решением владельца 25.08.2026: канал даёт ложную информацию.
+    # Аккаунт из канала вышел; исторические сообщения остаются в корпусе.
     Source("trevoga46", "TREVOGA46", "ВОЗДУШНАЯ ТРЕВОГА 46 | Курская область", "regional", 45417, region="kursk", network=None),
     Source("kursk_radar1", "kursk_radar1", "Курский Радар", "regional", 11747, region="kursk", network=None),
     Source("radar_kurskk", "radar_kurskk", "Радар Курск", "regional", 3096, region="kursk", network=None),
