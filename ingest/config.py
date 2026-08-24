@@ -78,6 +78,10 @@ SOURCES: list[Source] = [
     Source("radar_kaluga", "radar_kaluga", "Радар Калуга", "regional", 37531, region="kaluga", network=None),
     Source("radar_kras", "radar_kras", "Радар Краснодар", "regional", 57143, region="krasnodar", network=None),
     Source("first_radar", "first_radar", "Первый Радар | Краснодарский край", "regional", 31087, region="krasnodar", network=None),
+    # Сеть «Небо | РАДАР» убрана целиком решением владельца 25.08.2026 —
+    # даёт ложную информацию: краснодарский, сочинский, ростовский,
+    # таганрогский, волгоградский и тверской каналы. Аккаунт из всех
+    # вышел; исторические сообщения остаются в корпусе.
     # krasnodar_nebo_radar («Краснодарское Небо | РАДАР», -1002484439996)
     # убран решением владельца 25.08.2026: канал даёт ложную информацию.
     # Аккаунт из канала вышел; исторические сообщения остаются в корпусе.
@@ -169,7 +173,6 @@ SOURCES: list[Source] = [
     Source("radar_pskov", "radar_pskov", "Радар Псков | БПЛА", "regional", 1796, region="pskov", network=None),
     Source("radarsaratov", "radarSaratov", "Саратовский Радар", "regional", 3153, region="saratov", network=None),
     Source("radarsar64", "RadarSar64", "Радар Саратовской области", "regional", 1877, region="saratov", network=None),
-    Source("sochinskoe_nebo_radar", "sochinskoe_nebo_radar", "Сочинское Небо | РАДАР", "regional", 11028, region="sochi", network=None),
     Source("radar_peterburg", "radar_peterburg", "Радар Питер и Ленинградская область", "federal", 151500, region="spb", network=None),
     Source("radar_piter", "radar_piter", "Радар Санкт-Петербург", "regional", 38524, region="spb", network=None),
     Source("stavropol_radar", "stavropol_radar", "Радар Ставропольского края", "regional", 27963, region="stavropol", network=None),
@@ -292,14 +295,11 @@ SOURCES: list[Source] = [
     Source("orel_radar_bpla", "orel_radar_bpla", "Резонанс | Орёл БПЛА", "regional", 5055, region="orel", network=None),
     Source("orel_garnizon", "orel_garnizon", "Гарнизон: Орёл (Радар) 🇷🇺", "regional", 4881, region="orel", network=None),
     Source("radar_ru_orel", "radar_ru_orel", "Радар.ру | Орловская область ( обстрелы, БПЛА,", "regional", 8680, region="orel", network="radar_ru"),
-    Source("rostovskoe_nebo_radar", "rostovskoe_nebo_radar", "Ростовское Небо | РАДАР", "regional", 7931, region="rostov", network="nebo"),
     Source("radardon", "radardon", "Радар Ростов", "regional", 2106, region="rostov", network=None),
     Source("myrostov_radar", "myRostov_radar", "Мой Ростов | Радар", "regional", 2574, region="rostov", network="moy"),
     Source("radar_ru_rostov", "radar_ru_rostov", "Радар.ру | Ростовская область ( обстрелы, БПЛА", "regional", 4609, region="rostov", network="radar_ru"),
-    Source("nebo_taganrog", "nebo_taganrog", "Небо Таганрога | Радар, тревоги, оповещения | ", "regional", 2559, region="rostov", network="nebo"),
     Source("krd_radar", "krd_radar", "🚀 Радар Краснодар | Ростов", "regional", 4265, region="other", network=None),
     Source("reserv_ug", "reserv_ug", "📡Радар ЮГА📡: Ростов, Краснодар, Ставрополь, Во", "regional", 1259, region="other", network=None),
-    Source("volgogradskoe_nebo_radar", "volgogradskoe_nebo_radar", "Волгоградское Небо | РАДАР", "regional", 6320, region="volgograd", network="nebo"),
     Source("volgograd_radar1", "volgograd_radar1", "Мой Волгоград | 112 РАДАР", "regional", 1792, region="volgograd", network="moy"),
     Source("mytambov_radar", "myTambov_radar", "Мой Тамбов | Радар", "regional", 4379, region="tambov", network="moy"),
     Source("rodnoy_tambov", "rodnoy_tambov", "РОДНОЙ ТАМБОВ | РАДАР", "regional", 896, region="tambov", network="rodnoy"),
@@ -320,7 +320,6 @@ SOURCES: list[Source] = [
     Source("radar_belgorod131", "Radar_Belgorod131", "Радар Белгород Оповещения", "regional", 773, region="belgorod", network=None),
     Source("radar_ru_belgorod", "radar_ru_belgorod", "Радар.ру | Белгородская область ( обстрелы, БП", "regional", 600, region="belgorod", network="radar_ru"),
     Source("rodnaya_tver", "rodnaya_tver", "РОДНАЯ ТВЕРЬ | РАДАР", "regional", 773, region="tver", network="rodnoy"),
-    Source("tverskoe_nebo_radar", "tverskoe_nebo_radar", "Тверское Небо | РАДАР", "regional", 747, region="tver", network="nebo"),
     Source("rodnaya_ryazan", "rodnaya_ryazan", "РОДНАЯ РЯЗАНЬ | РАДАР", "regional", 553, region="ryazan", network="rodnoy"),
     Source("penzaradar", "PenzaRadar", "Радар ПЕНЗА‼️", "regional", 1805, region="penza", network=None),
     Source("radar_77_76_37_44_52_33_35", "radar_77_76_37_44_52_33_35", "РАДАР Москва. Ярославль. Иваново. Кострома. Ни", "regional", 2230, region="other", network=None),
