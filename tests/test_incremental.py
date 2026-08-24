@@ -325,3 +325,38 @@ def test_own_wording_across_passes_still_confirms(db, geocoder):
     events = rows(db, "SELECT source_count FROM events")
     assert len(events) == 1
     assert events[0]["source_count"] == 2
+
+
+def test_same_second_reopen_gets_a_distinct_event_id():
+    """«Закрытие — отбой — закрытие» в одну секунду — два РАЗНЫХ id.
+
+    make_id — хеш (зона|угроза|секунда начала); догонка после простоя
+    вставила сообщения не в хронологическом порядке, второе событие
+    получило тот же id, и rebuild падал на UNIQUE, оставляя таблицу
+    событий пустой.
+    """
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from pipeline.fuse import Fuser
+
+    moment = datetime(2026, 8, 24, 8, 23, tzinfo=timezone.utc)
+
+    def observation(signal, severity):
+        return SimpleNamespace(
+            signal_type=signal, threat_type="uav", severity=severity,
+            direction_deg=None, target_count=None, massive=False,
+            official=False, body="", confidence=None)
+
+    fuser = Fuser()
+    common = dict(source_key="a", tier="regional", network=None,
+                  zone_path=["z"], lat=None, lon=None, level="district")
+    fuser.add(raw_id=1, moment=moment,
+              observation=observation("danger", 5), **common)
+    fuser.add(raw_id=2, moment=moment,
+              observation=observation("allclear", 0), **common)
+    fuser.add(raw_id=3, moment=moment,
+              observation=observation("detection", 8), **common)
+
+    ids = [event.id for event in fuser.events]
+    assert len(ids) == len(set(ids)), "события получили одинаковые id"

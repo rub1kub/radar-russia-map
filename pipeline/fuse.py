@@ -168,6 +168,13 @@ class Fuser:
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._open: list[Event] = []
+        # Уже выданные идентификаторы. make_id — хеш (зона|угроза|секунда
+        # начала), и в живом потоке он не сталкивался годами. Догонка после
+        # простоя 24.08 вставила сообщения не в хронологическом порядке
+        # rowid, и «закрытие — отбой — закрытие» в одну секунду дали два
+        # РАЗНЫХ события с одинаковым id: rebuild падал на UNIQUE и
+        # оставлял таблицу событий пустой.
+        self._ids: set[str] = set()
         # Недавно закрытые события: (зона, угроза) -> событие. Нужны, чтобы
         # опоздавшие сообщения об уже отменённой тревоге не заводили новое
         # событие. Без этого получалась карусель: отбой закрывает событие,
@@ -331,8 +338,15 @@ class Fuser:
             existing.contributions.append((raw_id, source_key, role, moment))
             return existing
 
+        # Свободный id: при столкновении детерминированно дохешируем — тот
+        # же корпус даёт те же идентификаторы от запуска к запуску.
+        event_id = make_id(zone_id, observation.threat_type, moment)
+        while event_id in self._ids:
+            event_id = hashlib.sha1(
+                (event_id + "|next").encode()).hexdigest()[:16]
+        self._ids.add(event_id)
         event = Event(
-            id=make_id(zone_id, observation.threat_type, moment),
+            id=event_id,
             zone_id=zone_id,
             zone_path=zone_path,
             threat_type=observation.threat_type,
