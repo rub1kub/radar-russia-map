@@ -15,6 +15,13 @@ import pytest
 from api import telegram
 
 
+def _fresh(minutes_ago: float = 0) -> str:
+    """Свежая метка события: рассылка игнорирует всё старше 15 минут."""
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            - timedelta(minutes=minutes_ago)).isoformat()
+
+
 @pytest.fixture
 def outbox(monkeypatch):
     """Перехватываем отправку: Bot API в тестах дёргать нечем и незачем."""
@@ -120,7 +127,7 @@ def test_deliver_marks_before_send(tmp_path, monkeypatch):
     snapshot = {"events": [{
         "id": "evt-1", "status": "active", "zone_path": ["krasnodar"],
         "signal_type": "impact", "threat_type": "uav",
-        "zone_name": "Краснодар", "last_seen_at": "2026-08-06T16:22:00+00:00",
+        "zone_name": "Краснодар", "last_seen_at": _fresh(9.7),
     }]}
 
     calls = []
@@ -160,7 +167,7 @@ def test_twin_events_send_one_message(tmp_path, monkeypatch):
     twin = {"status": "active", "zone_path": ["krasnodar"],
             "signal_type": "impact", "threat_type": "uav",
             "zone_name": "городской округ Краснодар",
-            "last_seen_at": "2026-08-06T16:22:00+00:00"}
+            "last_seen_at": _fresh(9.4)}
     snapshot = {"events": [dict(twin, id="evt-a"), dict(twin, id="evt-b")]}
 
     sent = []
@@ -170,7 +177,7 @@ def test_twin_events_send_one_message(tmp_path, monkeypatch):
     assert len(sent) == 1, "близнецы ушли оба"
 
     # Настоящее новое событие позже — с другим временем в строке — уходит.
-    later = dict(twin, id="evt-c", last_seen_at="2026-08-06T17:05:00+00:00")
+    later = dict(twin, id="evt-c", last_seen_at=_fresh(9.1))
     telegram.deliver_once({"events": [later]})
     assert len(sent) == 2
 
@@ -203,25 +210,25 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
                 "zone_name": "Краснодар", "last_seen_at": at}
 
     telegram.deliver_once({"events": [
-        event("e1", "danger", "2026-08-20T21:31:00+00:00")]})
+        event("e1", "danger", _fresh(8.8))]})
     assert len(sent) == 1
 
     # Вторая опасность 24 минуты спустя, без отбоя между ними — гасится.
     telegram.deliver_once({"events": [
-        event("e2", "danger", "2026-08-20T21:55:00+00:00")]})
+        event("e2", "danger", _fresh(8.5))]})
     assert len(sent) == 1, "повторная опасность без отбоя не должна уходить"
 
     # Эскалация до тревоги — другой класс, другая новость, проходит.
     telegram.deliver_once({"events": [
-        event("e3", "alarm", "2026-08-20T22:05:00+00:00")]})
+        event("e3", "alarm", _fresh(8.2))]})
     assert len(sent) == 2
 
     # Отбой снимает тормоз — следующая опасность снова уходит.
     telegram.deliver_once({"events": [
-        event("e3", "alarm", "2026-08-20T22:05:00+00:00", status="resolved")]})
+        event("e3", "alarm", _fresh(7.9), status="resolved")]})
     assert len(sent) == 3
     telegram.deliver_once({"events": [
-        event("e4", "danger", "2026-08-20T22:40:00+00:00")]})
+        event("e4", "danger", _fresh(7.6))]})
     assert len(sent) == 4
 
 
@@ -267,28 +274,28 @@ def test_broader_repeat_of_same_forecast_is_throttled(tmp_path, monkeypatch):
 
     telegram.deliver_once({"events": [event(
         "e1", "gorodskoy_okrug_krasnodar", city,
-        "2026-08-23T07:40:00+00:00")]})
+        _fresh(7.3))]})
     assert len(sent) == 1
 
     # Та же опасность, теперь на весь край, — без отбоя между ними. Гасится.
     telegram.deliver_once({"events": [event(
-        "e2", "krasnodarskiy_kray", kray, "2026-08-23T08:22:00+00:00")]})
+        "e2", "krasnodarskiy_kray", kray, _fresh(7.0))]})
     assert len(sent) == 1, "краевой повтор той же опасности ушёл подписчику"
 
     # Отбой по городу снимает тормоз.
     telegram.deliver_once({"events": [event(
         "e1", "gorodskoy_okrug_krasnodar", city,
-        "2026-08-23T08:40:00+00:00", status="resolved")]})
+        _fresh(6.7), status="resolved")]})
     assert len(sent) == 2
 
     # После отбоя краевая опасность — снова новость.
     telegram.deliver_once({"events": [event(
-        "e3", "krasnodarskiy_kray", kray, "2026-08-23T09:00:00+00:00")]})
+        "e3", "krasnodarskiy_kray", kray, _fresh(6.4))]})
     assert len(sent) == 3
     # Сужение до конкретного города после краевой — тоже новость.
     telegram.deliver_once({"events": [event(
         "e4", "gorodskoy_okrug_krasnodar", city,
-        "2026-08-23T09:10:00+00:00")]})
+        _fresh(6.1))]})
     assert len(sent) == 4
 
 
@@ -336,28 +343,28 @@ def test_airport_closure_named_two_ways_notifies_once(tmp_path, monkeypatch):
     okrug = ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"]
 
     telegram.deliver_once({"events": [closure(
-        "e1", "pashkovskiy", place, "2026-08-23T14:10:00+00:00")]})
+        "e1", "pashkovskiy", place, _fresh(5.8))]})
     assert len(sent) == 1
 
     # Тот же аэропорт под именем округа, 13 минут спустя. Гасится.
     telegram.deliver_once({"events": [closure(
         "e2", "gorodskoy_okrug_krasnodar", okrug,
-        "2026-08-23T14:23:00+00:00")]})
+        _fresh(5.5))]})
     assert len(sent) == 1, "закрытие аэропорта ушло дважды под разными именами"
 
     # Открытие — одно сообщение, его дубль тоже гасится.
     telegram.deliver_once({"events": [closure(
-        "e1", "pashkovskiy", place, "2026-08-23T15:00:00+00:00",
+        "e1", "pashkovskiy", place, _fresh(5.2),
         status="resolved")]})
     assert len(sent) == 2
     telegram.deliver_once({"events": [closure(
         "e2", "gorodskoy_okrug_krasnodar", okrug,
-        "2026-08-23T15:05:00+00:00", status="resolved")]})
+        _fresh(4.9), status="resolved")]})
     assert len(sent) == 2, "открытие аэропорта ушло дважды под разными именами"
 
     # Новое закрытие после открытия — снова новость.
     telegram.deliver_once({"events": [closure(
-        "e3", "pashkovskiy", place, "2026-08-23T15:30:00+00:00")]})
+        "e3", "pashkovskiy", place, _fresh(4.6))]})
     assert len(sent) == 3
 
 
@@ -405,20 +412,20 @@ def test_city_watch_never_receives_region_level_events(tmp_path, monkeypatch):
                              ("detection", 8), ("impact", 9)):
         telegram.deliver_once({"events": [event(
             f"e-{signal}", "krasnodarskiy_kray", ["krasnodarskiy_kray"],
-            signal, severity, "2026-08-20T18:28:00+00:00")]})
+            signal, severity, _fresh(4.3))]})
         assert not sent, f"краевой {signal} ушёл подписчику на город"
 
     # Соседний город того же края — тоже нет.
     telegram.deliver_once({"events": [event(
         "e-anapa", "anapa", ["anapa", "krasnodarskiy_kray"],
-        "alarm", 7, "2026-08-20T19:00:00+00:00")]})
+        "alarm", 7, _fresh(4.0))]})
     assert not sent, "тревога по Анапе ушла подписчику на Краснодар"
 
     # Событие в самом городе — доходит.
     telegram.deliver_once({"events": [event(
         "e-city", "gorodskoy_okrug_krasnodar",
         ["gorodskoy_okrug_krasnodar", "krasnodarskiy_kray"],
-        "alarm", 7, "2026-08-20T20:00:00+00:00")]})
+        "alarm", 7, _fresh(3.7))]})
     assert len(sent) == 1
 
 
@@ -443,17 +450,17 @@ def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     monkeypatch.setattr(telegram, "send",
                         lambda chat_id, text, keyboard=None: sent.append(text))
 
-    def event(eid, signal, status="active", at="2026-08-06T16:00:00+00:00"):
+    def event(eid, signal, status="active", at=_fresh(3.4)):
         return {"id": eid, "status": status, "zone_path": ["z"],
                 "signal_type": signal, "threat_type": "uav",
                 "zone_name": "Тест", "last_seen_at": at}
 
     telegram.deliver_once({"events": [
-        event("e1", "detection", at="2026-08-06T16:01:00+00:00"),
-        event("e2", "alarm", at="2026-08-06T16:02:00+00:00"),
-        event("e3", "danger", at="2026-08-06T16:03:00+00:00"),
+        event("e1", "detection", at=_fresh(3.1)),
+        event("e2", "alarm", at=_fresh(2.8)),
+        event("e3", "danger", at=_fresh(2.5)),
         event("e4", "allclear", status="resolved",
-              at="2026-08-06T16:04:00+00:00"),
+              at=_fresh(2.2)),
     ]})
     heads = [text.split()[0] for text in sent]
     assert heads == ["🔴", "🟠", "🟡", "🟢"]
@@ -513,11 +520,11 @@ def test_airport_line_speaks_plainly():
     """«аэропорт закрыт» / «аэропорт открыт» вместо «инфраструктуры»."""
     closed = telegram._event_line({
         "zone_name": "Внуково", "signal_type": "infra", "threat_type": "airport",
-        "status": "active", "last_seen_at": "2026-08-08T10:00:00+00:00"})
+        "status": "active", "last_seen_at": _fresh(1.9)})
     assert "аэропорт закрыт" in closed
     opened = telegram._event_line({
         "zone_name": "Внуково", "signal_type": "infra", "threat_type": "airport",
-        "status": "resolved", "last_seen_at": "2026-08-08T11:00:00+00:00"})
+        "status": "resolved", "last_seen_at": _fresh(1.6)})
     assert "аэропорт открыт" in opened
 
 
@@ -585,7 +592,7 @@ def test_notifications_speak_sentences_not_labels():
     Уведомление обязано сказать, что происходит: слова из внутреннего
     словаря сигналов остались в легендах, а человеку идёт предложение.
     """
-    stamp = "2026-08-18T10:51:00+00:00"
+    stamp = _fresh(1.3)
     line = telegram._event_line({
         "place_name": "Краснодар", "signal_type": "infra",
         "threat_type": "infra", "last_seen_at": stamp})

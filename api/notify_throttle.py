@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 # Класс-прогноз: предупреждает о возможном, не сообщает увиденное.
 FORECAST_SIGNALS = {"alarm", "danger"}
@@ -40,6 +40,28 @@ CREATE TABLE IF NOT EXISTS notify_cooldown (
     PRIMARY KEY (subscriber, zone_key)
 );
 """
+
+
+# Свежесть уведомления. После простоя сбор дочитывает историю, конвейер
+# проигрывает её в ускоренной перемотке, и рассыльщик 24.08 доставил
+# «опасность 11:23» и её же «отбой 11:44» пачкой в 12:13 — как живые.
+# Уведомление имеет смысл только про «прямо сейчас»: событие старше этого
+# порога — догонка, а не эфир. В живом режиме события моложе минуты, и
+# порог ни одно настоящее уведомление не задевает.
+NOTIFY_FRESH_SEC = 15 * 60
+
+
+def is_stale(event: dict, now: int) -> bool:
+    """Событие из догонки истории, а не из живого эфира."""
+    stamp = (event.get("resolved_at") if event.get("status") == "resolved"
+             else event.get("last_seen_at")) or event.get("last_seen_at")
+    if not stamp:
+        return False
+    try:
+        moment = datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        return False
+    return now - moment > NOTIFY_FRESH_SEC
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:

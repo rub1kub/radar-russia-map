@@ -191,9 +191,11 @@ def deliver_once(snapshot: dict) -> int:
             if not zones:
                 continue
             for event in events:
-                # Подписка на город обязана видеть и тревогу по всему
-                # краю — см. notify_throttle.matches_watch.
                 if not notify_throttle.matches_watch(connection, zones, event):
+                    continue
+                # Догонка истории после простоя — не живой эфир: старые
+                # события не рассылаются. См. notify_throttle.is_stale.
+                if notify_throttle.is_stale(event, now):
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]
