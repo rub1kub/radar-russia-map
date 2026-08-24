@@ -176,8 +176,9 @@ def test_twin_events_send_one_message(tmp_path, monkeypatch):
     telegram.deliver_once(snapshot)
     assert len(sent) == 1, "близнецы ушли оба"
 
-    # Настоящее новое событие позже — с другим временем в строке — уходит.
-    later = dict(twin, id="evt-c", last_seen_at=_fresh(9.1))
+    # Настоящее новое событие позже — с другим временем (другой минутой)
+    # в строке — уходит.
+    later = dict(twin, id="evt-c", last_seen_at=_fresh(1))
     telegram.deliver_once({"events": [later]})
     assert len(sent) == 2
 
