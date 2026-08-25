@@ -88,7 +88,37 @@ def suspicious(connection) -> list[dict]:
     return out
 
 
-def report(items: list[dict]) -> str:
+def mass_clears(connection) -> list[dict]:
+    """Сообщения, закрывшие отбоем сразу несколько событий, — глазами.
+
+    Ложный отбой — самый болезненный класс ошибок разбора: «Ждите отмены
+    сигнала опасности» из объявления мэрии о НАЧАЛЕ тревоги закрыло три
+    события Краснодара, и подписчик получил три «Отбоя» в 03:18 ночи.
+    Настоящий массовый отбой («отбой всех ранее объявленных») выглядит
+    так же со стороны счётчика — различает только текст, поэтому он и
+    показывается владельцу.
+    """
+    rows = connection.execute(
+        """
+        SELECT r.text, MIN(r.posted_at) AS at,
+               COUNT(DISTINCT es.event_id) AS closed
+        FROM event_sources es
+        JOIN raw_messages r ON r.id = es.raw_message_id
+        WHERE es.role = 'resolve' AND r.posted_at > datetime('now', '-1 day')
+        GROUP BY es.raw_message_id
+        HAVING closed >= 3
+        ORDER BY closed DESC
+        LIMIT 5
+        """
+    ).fetchall()
+    return [{
+        "at": row["at"][11:16],
+        "closed": row["closed"],
+        "text": " ".join((row["text"] or "").split())[:160],
+    } for row in rows]
+
+
+def report(items: list[dict], clears: list[dict] | None = None) -> str:
     label = {"intercept": "Перехват"}
     lines = [f"🔍 Самоаудит: {len(items)} "
              f"{'событие' if len(items) == 1 else 'событий'} на 1–2 источниках "
@@ -97,6 +127,12 @@ def report(items: list[dict]) -> str:
         lines.append(
             f"• {item['at']} <b>{item['zone']}</b> — {label[item['signal']]}"
             f" ({item['sources']} ист.)\n  <i>{item['text']}</i>")
+    if clears:
+        lines.append("\n🟢 Массовые отбои за сутки (закрыли 3+ событий) — "
+                     "проверь, что каждый текст действительно отбой:")
+        for item in clears:
+            lines.append(f"• {item['at']} закрыл {item['closed']}: "
+                         f"<i>{item['text']}</i>")
     lines.append("\nЕсли какой-то текст не тянет на свой значок — "
                  "это новый класс для парсера.")
     return "\n".join(lines)
@@ -111,12 +147,13 @@ def main() -> int:
     connection = connect()
     connection.execute("PRAGMA busy_timeout = 5000")
     items = suspicious(connection)
+    clears = mass_clears(connection)
 
-    if not items:
+    if not items and not clears:
         print("подозрительных событий нет — отчёт не нужен")
         return 0
 
-    text = report(items)
+    text = report(items, clears)
     if not args.send:
         print(text)
         return 0
