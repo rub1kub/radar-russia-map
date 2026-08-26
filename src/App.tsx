@@ -182,8 +182,8 @@ type BasemapScheme = "dark" | "light" | "satellite";
 const BASEMAP_SCHEMES: Record<
   BasemapScheme,
   { label: string; url: string; attributions: string; maxZoom: number;
-    hillshade: boolean; opacity: number; detailMinZoom: number;
-    overviewOpacity: number }
+    hillshade: boolean; hillshadeOpacity: number; opacity: number;
+    detailMinZoom: number; overviewOpacity: number }
 > = {
   dark: {
     label: "Тёмная",
@@ -191,8 +191,9 @@ const BASEMAP_SCHEMES: Record<
     attributions: BASEMAP_ATTRIBUTION,
     maxZoom: 20,
     hillshade: true,
+    hillshadeOpacity: 0.12,
     detailMinZoom: 10.75,
-    overviewOpacity: 0.72,
+    overviewOpacity: 0.9,
     // Слегка притушена нарочно: фон не должен спорить с событиями.
     opacity: 0.9
   },
@@ -202,6 +203,7 @@ const BASEMAP_SCHEMES: Record<
     attributions: BASEMAP_ATTRIBUTION,
     maxZoom: 20,
     hillshade: true,
+    hillshadeOpacity: 0.22,
     detailMinZoom: 10.75,
     overviewOpacity: 1,
     // Полная: под ней чёрный фон приложения, и 0.9 превращали
@@ -215,6 +217,7 @@ const BASEMAP_SCHEMES: Record<
     attributions: "© Esri, Maxar, Earthstar Geographics",
     maxZoom: 19,
     hillshade: false,
+    hillshadeOpacity: 0,
     detailMinZoom: 0,
     overviewOpacity: 0,
     opacity: 1
@@ -1778,8 +1781,9 @@ export default function App() {
         crossOrigin: "anonymous",
         maxZoom: 13
       }),
+      className: "ol-layer basemap-hillshade",
       visible: layers.basemap && scheme.hillshade,
-      opacity: 0.24,
+      opacity: scheme.hillshadeOpacity,
       zIndex: 1
     });
     const landCoverLayer = new VectorLayer({
@@ -2481,6 +2485,7 @@ export default function App() {
     basemapLayerRef.current?.setOpacity(scheme.opacity);
     basemapLayerRef.current?.setMinZoom(scheme.detailMinZoom);
     overviewBasemapLayerRef.current?.setOpacity(scheme.overviewOpacity);
+    hillshadeLayerRef.current?.setOpacity(scheme.hillshadeOpacity);
     overviewBasemapLayerRef.current?.setVisible(
       layers.basemap && scheme.overviewOpacity > 0
     );
