@@ -83,6 +83,13 @@ import {
   placeLabelCellKeys
 } from "./lib/placeLabels";
 import type { DetailedPlaceLabelRow, PlaceLabelManifest } from "./lib/placeLabels";
+import {
+  ESRI_CANVAS_ATTRIBUTION,
+  ESRI_DARK_BASEMAP_URL,
+  ESRI_LIGHT_BASEMAP_URL,
+  OPENFREE_ATTRIBUTION,
+  OPENFREE_RELIEF_URL
+} from "./lib/basemaps";
 import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
@@ -160,8 +167,11 @@ const MAP_MAX_ZOOM = 15.5;
 const PLACE_LABELS_FORMAT = 2;
 const PLACE_LABEL_CELL_CACHE_LIMIT = 32;
 const BASEMAP_URL =
-  import.meta.env.VITE_BASEMAP_URL || "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
-const BASEMAP_ATTRIBUTION = import.meta.env.VITE_BASEMAP_ATTRIBUTION || "© OpenStreetMap contributors, © CARTO";
+  import.meta.env.VITE_BASEMAP_URL || ESRI_DARK_BASEMAP_URL;
+const LIGHT_BASEMAP_URL =
+  import.meta.env.VITE_BASEMAP_LIGHT_URL || ESRI_LIGHT_BASEMAP_URL;
+const BASEMAP_ATTRIBUTION =
+  import.meta.env.VITE_BASEMAP_ATTRIBUTION || ESRI_CANVAS_ATTRIBUTION;
 
 // Подложки на выбор. Тёмная — родная и остаётся по умолчанию: весь
 // интерфейс построен под неё. Светлая привычнее людям с бумажных карт,
@@ -172,7 +182,8 @@ type BasemapScheme = "dark" | "light" | "satellite";
 const BASEMAP_SCHEMES: Record<
   BasemapScheme,
   { label: string; url: string; attributions: string; maxZoom: number;
-    hillshade: boolean; opacity: number }
+    hillshade: boolean; opacity: number; detailMinZoom: number;
+    overviewOpacity: number }
 > = {
   dark: {
     label: "Тёмная",
@@ -180,15 +191,19 @@ const BASEMAP_SCHEMES: Record<
     attributions: BASEMAP_ATTRIBUTION,
     maxZoom: 20,
     hillshade: true,
+    detailMinZoom: 10.75,
+    overviewOpacity: 0.72,
     // Слегка притушена нарочно: фон не должен спорить с событиями.
     opacity: 0.9
   },
   light: {
     label: "Светлая",
-    url: "https://{a-d}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    url: LIGHT_BASEMAP_URL,
     attributions: BASEMAP_ATTRIBUTION,
     maxZoom: 20,
     hillshade: true,
+    detailMinZoom: 10.75,
+    overviewOpacity: 1,
     // Полная: под ней чёрный фон приложения, и 0.9 превращали
     // светлую подложку в серую дымку.
     opacity: 1
@@ -200,6 +215,8 @@ const BASEMAP_SCHEMES: Record<
     attributions: "© Esri, Maxar, Earthstar Geographics",
     maxZoom: 19,
     hillshade: false,
+    detailMinZoom: 0,
+    overviewOpacity: 0,
     opacity: 1
   }
 };
@@ -978,6 +995,7 @@ function setOverviewView(map: OlMap, duration: number) {
 export default function App() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
+  const overviewBasemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const basemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const cityLabelLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const hillshadeLayerRef = useRef<TileLayer<XYZ> | null>(null);
@@ -1723,6 +1741,23 @@ export default function App() {
     });
 
     const scheme = BASEMAP_SCHEMES[basemapScheme];
+    const overviewBasemapLayer = new TileLayer({
+      source: new XYZ({
+        url: OPENFREE_RELIEF_URL,
+        attributions: OPENFREE_ATTRIBUTION,
+        crossOrigin: "anonymous",
+        maxZoom: 6
+      }),
+      // На обзорном масштабе нужен только рельеф без подписей. С шестого
+      // зума 10.75 его сменяет детальная Canvas-подложка: на z10 Esri ещё
+      // печатает регион латиницей, а на z11 уже оставляет дороги без неё.
+      // Русские названия всё время рисуются собственными слоями.
+      className: "ol-layer basemap-natural-relief",
+      visible: layers.basemap && scheme.overviewOpacity > 0,
+      opacity: scheme.overviewOpacity,
+      maxZoom: 11,
+      zIndex: 0
+    });
     const basemapLayer = new TileLayer({
       source: new XYZ({
         url: scheme.url,
@@ -1730,8 +1765,10 @@ export default function App() {
         crossOrigin: "anonymous",
         maxZoom: scheme.maxZoom
       }),
+      className: "ol-layer basemap-detail",
       visible: layers.basemap,
       opacity: scheme.opacity,
+      minZoom: scheme.detailMinZoom,
       zIndex: 0
     });
     const hillshadeLayer = new TileLayer({
@@ -1853,6 +1890,7 @@ export default function App() {
     });
     cityLabelLayerRef.current = cityLabelLayer;
 
+    overviewBasemapLayerRef.current = overviewBasemapLayer;
     basemapLayerRef.current = basemapLayer;
     hillshadeLayerRef.current = hillshadeLayer;
     landCoverLayerRef.current = landCoverLayer;
@@ -1878,6 +1916,7 @@ export default function App() {
         new ScaleLine({ minWidth: 90 })
       ]),
       layers: [
+        overviewBasemapLayer,
         basemapLayer,
         hillshadeLayer,
         landCoverLayer,
@@ -2372,6 +2411,7 @@ export default function App() {
       clearDetailedPlaceLabels();
       map.setTarget(undefined);
       mapRef.current = null;
+      overviewBasemapLayerRef.current = null;
       basemapLayerRef.current = null;
       hillshadeLayerRef.current = null;
       cityLabelLayerRef.current = null;
@@ -2406,6 +2446,9 @@ export default function App() {
 
   useEffect(() => {
     layersRef.current = layers;
+    overviewBasemapLayerRef.current?.setVisible(
+      layers.basemap && BASEMAP_SCHEMES[basemapScheme].overviewOpacity > 0
+    );
     basemapLayerRef.current?.setVisible(layers.basemap);
     hillshadeLayerRef.current?.setVisible(
       layers.basemap && BASEMAP_SCHEMES[basemapScheme].hillshade
@@ -2436,6 +2479,11 @@ export default function App() {
       })
     );
     basemapLayerRef.current?.setOpacity(scheme.opacity);
+    basemapLayerRef.current?.setMinZoom(scheme.detailMinZoom);
+    overviewBasemapLayerRef.current?.setOpacity(scheme.overviewOpacity);
+    overviewBasemapLayerRef.current?.setVisible(
+      layers.basemap && scheme.overviewOpacity > 0
+    );
     basemapSchemeRef.current = basemapScheme;
     urbanAreaLayerRef.current?.changed();
     cityLabelLayerRef.current?.changed();
@@ -2990,7 +3038,11 @@ export default function App() {
           </details>
         </aside>
 
-        <section className="map-panel" aria-label="Интерактивная карта">
+        <section
+          className="map-panel"
+          data-basemap={basemapScheme}
+          aria-label="Интерактивная карта"
+        >
           <div className="map-surface" ref={mapNodeRef} />
 
           {/* Подсказка к значку. Значок стоит в центре своей зоны, а не там,

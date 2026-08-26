@@ -522,6 +522,24 @@ button {
   height: 100%;
 }
 
+/* Natural Earth приходит без подписей. На тёмной схеме инверсия оставляет
+   воду тёмной, на светлой — светлой; детали поверх даёт Canvas с z=10.75. */
+.map-panel[data-basemap="dark"] .basemap-natural-relief canvas {
+  filter: grayscale(1) invert(1) contrast(0.78);
+}
+
+.map-panel[data-basemap="light"] .basemap-natural-relief canvas {
+  filter: grayscale(1) contrast(0.82);
+}
+
+/* Canvas Base полезен улицами на близком зуме, но в старом растре есть
+   неудаляемые латинские подписи. Размывается только фон: все наши векторные
+   дороги, границы и русские названия лежат выше отдельными canvas. */
+.map-panel[data-basemap="dark"] .basemap-detail canvas,
+.map-panel[data-basemap="light"] .basemap-detail canvas {
+  filter: grayscale(1) blur(1.6px) contrast(0.86);
+}
+
 .ol-viewport {
   background: transparent;
 }

@@ -1,0 +1,7 @@
+.route-natural-relief canvas {
+  filter: grayscale(1) invert(1) contrast(0.78);
+}
+
+.route-basemap-detail canvas {
+  filter: grayscale(1) blur(1.6px) contrast(0.86);
+}

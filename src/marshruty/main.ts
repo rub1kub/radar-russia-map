@@ -10,6 +10,7 @@
  */
 
 import "ol/ol.css";
+import "./map.css";
 import OlMap from "ol/Map";
 import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
@@ -23,12 +24,16 @@ import { fromLonLat, transformExtent } from "ol/proj";
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { defaults as defaultControls } from "ol/control";
+import {
+  ESRI_CANVAS_ATTRIBUTION,
+  ESRI_DARK_BASEMAP_URL,
+  OPENFREE_ATTRIBUTION,
+  OPENFREE_RELIEF_URL
+} from "../lib/basemaps";
 
-// Подложка без подписей — свои названия рисуем сами. Вариант dark_all
-// подписывает латиницей («MOSCOW», «KYIV»), а сайт русский; города берём
-// из справочника проекта, где имена уже наши.
-const BASEMAP_URL =
-  "https://{a-d}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
+// Отдельный reference-слой Esri не подключаем: города берём из русского
+// справочника проекта и не дублируем чужими подписями.
+const BASEMAP_URL = ESRI_DARK_BASEMAP_URL;
 
 /** Города-ориентиры: имя показывается с того зума, где ему есть место. */
 type City = { name: string; lat: number; lon: number; population: number };
@@ -45,8 +50,6 @@ function cityZoom(population: number): number {
   if (population >= 12_000) return 8;
   return 8.8;
 }
-const ATTRIBUTION = "© OpenStreetMap contributors, © CARTO";
-
 type Chain = {
   pts: [number, number][];
   from: string; to: string; via: string[];
@@ -309,11 +312,24 @@ function render(target: HTMLElement, graph: Graph): void {
     layers: [
       new TileLayer({
         source: new XYZ({
+          url: OPENFREE_RELIEF_URL,
+          attributions: OPENFREE_ATTRIBUTION,
+          crossOrigin: "anonymous",
+          maxZoom: 6
+        }),
+        className: "ol-layer route-natural-relief",
+        opacity: 0.72,
+        maxZoom: 11
+      }),
+      new TileLayer({
+        source: new XYZ({
           url: BASEMAP_URL,
-          attributions: ATTRIBUTION,
+          attributions: ESRI_CANVAS_ATTRIBUTION,
           crossOrigin: "anonymous",
           maxZoom: 20
-        })
+        }),
+        className: "ol-layer route-basemap-detail",
+        minZoom: 10.75
       }),
       chainLayer,
       cityLayer,
