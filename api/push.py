@@ -199,11 +199,30 @@ def deliver_once(snapshot: dict) -> int:
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]
+                silent_key = f"{event['id']}:silent"
                 known = connection.execute(
-                    "SELECT 1 FROM push_sent WHERE endpoint = ? AND event_key = ?",
-                    (row["endpoint"], key),
+                    "SELECT 1 FROM push_sent WHERE endpoint = ?"
+                    " AND event_key IN (?, ?)",
+                    (row["endpoint"], key,
+                     key if cleared else silent_key),
                 ).fetchone()
                 if known:
+                    continue
+                # Не присылаем отбой события, предупреждение о котором было
+                # заглушено cooldown-ом. Иначе закрытая вкладка получает
+                # зелёное уведомление без предшествующей опасности.
+                if cleared and not connection.execute(
+                        "SELECT 1 FROM push_sent WHERE endpoint = ?"
+                        " AND event_key = ?",
+                        (row["endpoint"], event["id"])).fetchone():
+                    connection.execute(
+                        "INSERT OR IGNORE INTO push_sent"
+                        " (endpoint, event_key, sent_at) VALUES (?,?,?)",
+                        (row["endpoint"], key, now))
+                    if event.get("signal_type") in notify_throttle.FORECAST_SIGNALS:
+                        notify_throttle.record_sent(
+                            connection, f"push:{row['endpoint']}", event, now)
+                    connection.commit()
                     continue
                 # Опасность/тревога без отбоя между двумя волнами — та же
                 # новость дважды: см. notify_throttle.
@@ -212,7 +231,8 @@ def deliver_once(snapshot: dict) -> int:
                         connection, subscriber, event, now):
                     connection.execute(
                         "INSERT OR IGNORE INTO push_sent (endpoint, event_key, sent_at)"
-                        " VALUES (?,?,?)", (row["endpoint"], key, now))
+                        " VALUES (?,?,?)",
+                        (row["endpoint"], key if cleared else silent_key, now))
                     connection.commit()
                     continue
                 connection.execute(

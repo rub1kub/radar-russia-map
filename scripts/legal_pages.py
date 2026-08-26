@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date
 from html import escape
@@ -58,6 +59,16 @@ STYLE = """
 
 def shell(title: str, description: str, path: str, body: str) -> str:
     url = f"{SITE}{path}"
+    structured_data = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "url": url,
+        "name": title,
+        "description": description,
+        "inLanguage": "ru-RU",
+        "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
+                     "url": f"{SITE}/"},
+    }, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="ru">
   <head>
@@ -67,6 +78,7 @@ def shell(title: str, description: str, path: str, body: str) -> str:
     <meta name="description" content="{escape(description)}" />
     <link rel="canonical" href="{url}" />
     <meta name="robots" content="index, follow" />
+    <script type="application/ld+json">{structured_data}</script>
     <style>{STYLE}</style>
   </head>
   <body>

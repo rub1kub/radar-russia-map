@@ -250,9 +250,11 @@ class Fuser:
         zone_id = zone_path[0]
 
         # Отбой закрывает открытые события в этой зоне и ниже — но только по
-        # той угрозе, которая названа. «Отбой ракетной опасности» не отменяет
-        # тревогу по БПЛА: в корпусе 96% отбоев адресные, и без этой проверки
-        # каждый третий гасил чужое, неотменённое событие.
+        # той угрозе, которая названа. Коррекция ``retracted`` строже: она
+        # относится только к точно названной зоне. «Наша авиация над ЛНР» —
+        # объяснение конкретной региональной отметки, а не отбой каждого
+        # районного события внутри ЛНР; прежнее правило закрывало таким
+        # сообщением больше сотни независимых событий.
         if observation.signal_type in RESOLVING:
             cleared = observation.threat_type
             closed = None
@@ -266,7 +268,10 @@ class Fuser:
                 # подписчик получал отбой опасности, которой не видел.
                 if event.first_seen > moment:
                     continue
-                if event.zone_id != zone_id and zone_id not in event.zone_path:
+                if observation.signal_type == "retracted":
+                    if event.zone_id != zone_id:
+                        continue
+                elif event.zone_id != zone_id and zone_id not in event.zone_path:
                     continue
                 # Отбой без названной угрозы снимает всё: «отбой всех ранее
                 # объявленных», «отбой тревоги».

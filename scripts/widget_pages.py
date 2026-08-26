@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from html import escape
 from pathlib import Path
@@ -125,6 +126,16 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
         "Живая карточка обстановки региона для вашего сайта: тревоги, "
         "БПЛА и отбои, обновляется каждую минуту. Один iframe, без "
         "скриптов и регистрации.")
+    structured_data = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "url": url,
+        "name": title,
+        "description": description,
+        "inLanguage": "ru-RU",
+        "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
+                     "url": f"{SITE}/"},
+    }, ensure_ascii=False)
     steps = "".join(
         f'<div class="step"><span class="n">{i}</span>{escape(text)}</div>'
         for i, text in ((1, "Выберите регион"), (2, "Скопируйте код"),
@@ -144,6 +155,7 @@ def promo_page(named: list[tuple[str, str]], updated: str) -> str:
     <meta property="og:description" content="{escape(description)}" />
     <meta property="og:image" content="{SITE}/preview.png" />
     <meta name="theme-color" content="#0e1211" />
+    <script type="application/ld+json">{structured_data}</script>
     <style>
       body {{ margin:0; background:#0b0d0d; color:#eef2ec;
              font:16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; }}

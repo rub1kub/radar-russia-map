@@ -789,6 +789,39 @@ def test_calming_words_do_not_cancel_live_air_defence():
                  "в Вологодской области.").signal_type == "danger"
 
 
+def test_own_aviation_retracts_only_a_uav_assumption():
+    """Своя авиация — локальная коррекция, не общий отбой всех угроз."""
+    observation = parse("Краснодар наша авиация в небе")
+    assert observation.signal_type == "retracted"
+    assert observation.threat_type == "uav"
+
+
+def test_map_credibility_poll_is_not_a_retraction():
+    """Вариант «Нет, фейк» в голосовании не закрывает события региона."""
+    text = (
+        "Украинские паблики около 1.5 часов назад опубликовали такую "
+        "карту пролётов. Верим в такой масштаб или очередной вброс для "
+        "паники?\n❤️— Да, похоже на правду\n"
+        "😢 — Нет, явный фейк / нагнетают"
+    )
+    assert not parse(text).relevant
+
+
+@pytest.mark.parametrize("text,signal", [
+    ("Кстово и близлежащие. Идёт уничтожение обломков БПЛА. "
+     "Работают специальные службы. Обстановка спокойная.", "unknown"),
+    ("Кстово. Было сбитие. Сейчас еще 1 подходит, предварительно "
+     "последний.", "danger"),
+    ("Кстово и близлежащие. Будут еще сбития, работа продолжается, "
+     "еще подходят.", "alarm"),
+])
+def test_aftermath_and_future_intercepts_do_not_look_current(text, signal):
+    observation = parse(text)
+    assert observation.signal_type == signal
+    if signal == "unknown":
+        assert not observation.relevant
+
+
 def test_no_fixations_observed_is_not_a_fixation():
     """«Фиксаций не наблюдаем/нет» гасится, даже когда угроза названа.
 
@@ -1020,6 +1053,37 @@ def bare_names(resolved) -> set[str]:
 def test_geocoder_finds_place_inside_noise(geocoder):
     resolved = geocoder.resolve(["🔴Краснодар и ближайшие"])
     assert any("краснодар" in item.name.lower() for item in resolved)
+
+
+def test_mixed_allclear_does_not_close_places_where_danger_persists(geocoder):
+    from pipeline.source_region import resolve_observation_zones
+
+    local = parse(
+        "Новороссийск\nКраснодарский край\nОтбой опасности по БПЛА\n"
+        "На территории края опасность сохраняется"
+    )
+    zones, _ = resolve_observation_zones(
+        geocoder, local, "krasnodarskiy_kray")
+    assert bare_names(zones) == {"Новороссийск"}
+
+    # Реальный агрегатор склеивает локальный отбой и сохраняющийся статус
+    # региона в одну place-фразу. Регион защищается, город всё равно должен
+    # получить отбой.
+    joined = parse(
+        "📣 Отбой в Новороссийске, угроза в крае. "
+        "В Новороссийске и близлежащих отбой опасности по БЭК. "
+        "На территории Краснодарского края опасность сохраняется. "
+        "📍 Регион: Краснодарский край"
+    )
+    zones, _ = resolve_observation_zones(geocoder, joined, None)
+    assert bare_names(zones) == {"Новороссийск"}
+
+    federal = parse(
+        "Отбой по ранее объявленным областям за исключением Брянской, "
+        "Курской, Белгородской, Воронежской и Орловской областей."
+    )
+    zones, _ = resolve_observation_zones(geocoder, federal, None)
+    assert zones == []
 
 
 def test_geocoder_resolves_homonym_by_context(geocoder):
@@ -1388,6 +1452,22 @@ def test_allclear_resolves_open_event():
     add(fuser, 5, "b", signal="allclear", severity=0)
     assert fuser.events[0].resolved_at is not None
     assert fuser.events[0].status(datetime(2026, 7, 27, 10, 6, tzinfo=timezone.utc)) == "resolved"
+
+
+def test_retraction_does_not_clear_every_child_of_a_region():
+    """«Наша авиация над регионом» исправляет регион, не все его районы."""
+    fuser = Fuser()
+    add(fuser, 0, "a", threat="uav",
+        zone_path=["azovskiy_rayon", "rostov_oblast"])
+    add(fuser, 1, "b", threat="uav",
+        zone_path=["rostov_oblast"], level="region")
+
+    add(fuser, 5, "c", signal="retracted", severity=0, threat="uav",
+        zone_path=["rostov_oblast"], level="region")
+
+    events = {event.zone_id: event for event in fuser.events}
+    assert events["rostov_oblast"].resolved_at is not None
+    assert events["azovskiy_rayon"].resolved_at is None
 
 
 def test_status_fades_then_closes():

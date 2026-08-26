@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -55,3 +57,7 @@ def test_page_renders_with_navigation(body):
     assert "<title>Заголовок · Тихое небо</title>" in html
     assert 'href="/terms/"' in html and 'href="/privacy/"' in html
     assert 'rel="canonical"' in html
+    structured_data = json.loads(re.search(
+        r'<script type="application/ld\+json">(.*?)</script>', html, re.S
+    ).group(1))
+    assert structured_data["@type"] == "WebPage"

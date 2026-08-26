@@ -20,7 +20,7 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
-from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
+from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import (MAX_RESOLVED_ZONES, block_signals, parse,  # noqa: E402
@@ -28,7 +28,8 @@ from .parse import (MAX_RESOLVED_ZONES, block_signals, parse,  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
-from .source_region import build_fallback, explicit_home_region  # noqa: E402
+from .source_region import (build_fallback,  # noqa: E402
+                            resolve_observation_zones)
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
@@ -103,28 +104,16 @@ def rebuild(connection) -> dict:
         # Регион источника передаётся и в сам разбор: он разводит тёзок,
         # когда сообщение своего региона не назвало.
         home = fallback.get(row["source_key"])
-        candidates = geocoder.resolve(observation.place_phrases, home=home)
-        regional_clear = explicit_home_region(observation, candidates, home)
-        resolved = (
-            [regional_clear]
-            if regional_clear is not None
-            else geocoder.drop_covered(candidates)
-        )
+        resolved, used_source_region = resolve_observation_zones(
+            geocoder, observation, home)
         # Каталог городов, а не оповещение — см. такой же страж в incremental.
         if len(resolved) > MAX_RESOLVED_ZONES:
             stats["catalog"] = stats.get("catalog", 0) + 1
             continue
         if not resolved:
-            # Часть каналов не называет место: регион зашит в имя канала.
-            # Такое событие кладём на регион источника — грубее, чем район
-            # из текста, но лучше, чем потерять оповещение целиком.
-            zone_id = home
-            if not zone_id:
-                stats["ungeocoded"] += 1
-                continue
-            zone = geocoder.zones[zone_id]
-            resolved = [Resolved(zone_id, "region", zone["name_ru"],
-                                 zone["lat"], zone["lon"], "источник")]
+            stats["ungeocoded"] += 1
+            continue
+        if used_source_region:
             stats["by_source_region"] = stats.get("by_source_region", 0) + 1
 
         # Маршрут, описанный самим сообщением: линию утверждает источник.

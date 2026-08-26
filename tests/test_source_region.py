@@ -26,6 +26,7 @@ from pipeline.source_region import (
     REGION_NAMES,
     build_fallback,
     explicit_home_region,
+    resolve_observation_zones,
 )
 
 
@@ -84,3 +85,40 @@ def test_local_allclear_does_not_expand_to_source_region():
     assert explicit_home_region(
         observation, [region, city], "krasnodarskiy_kray"
     ) is None
+
+
+def test_persisting_region_is_not_mistaken_for_region_wide_clear():
+    """«На территории края опасность сохраняется» — не адрес отбоя."""
+    region = SimpleNamespace(zone_id="krasnodarskiy_kray", level="region")
+    city = SimpleNamespace(zone_id="novorossiysk", level="district")
+    observation = parse(
+        "Новороссийск — отбой опасности по БПЛА. "
+        "На территории края опасность сохраняется."
+    )
+    assert explicit_home_region(
+        observation, [region, city], "krasnodarskiy_kray"
+    ) is None
+
+
+def test_retraction_without_named_place_never_uses_source_region():
+    class FakeGeocoder:
+        zones = {
+            "krasnodarskiy_kray": {
+                "name_ru": "Краснодарский край", "lat": 45.0, "lon": 39.0,
+            }
+        }
+
+        @staticmethod
+        def resolve(phrases, home=None):
+            return []
+
+        @staticmethod
+        def drop_covered(items):
+            return items
+
+    resolved, used_fallback = resolve_observation_zones(
+        FakeGeocoder(), parse("Шапшугское шоссе\nНаша авиация"),
+        "krasnodarskiy_kray",
+    )
+    assert resolved == []
+    assert not used_fallback

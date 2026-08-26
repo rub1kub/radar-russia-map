@@ -664,8 +664,24 @@ GROUND_TARGET_RE = re.compile(
 # Обещание работы, а не работа. «Будет работать ПВО», «предстоит работа
 # ПВО» — предупреждение перед тем, как начнётся; перехвата ещё не было.
 FUTURE_WORK_RE = re.compile(
-    r"буд\w+\s+(?:работ|сбива|отработ)\w+|предстоит\s+работ\w*"
+    r"буд\w+\s+(?:ещ[её]\s+)?(?:работ|сбива|сбити|отработ)\w+"
+    r"|предстоит\s+работ\w*"
     r"|готов\w+\s+(?:к\s+)?работ\w+\s+пво",
+    re.IGNORECASE,
+)
+
+# Состоявшийся перехват из прошлой фразы не должен перекрывать текущий
+# прогноз. «Было сбитие. Сейчас ещё один подходит» сообщало о новом борте,
+# но значок оставался «Перехватом» из-за первого предложения. Узкое условие
+# обязательно: голое «было сбитие только что» всё ещё является сообщением о
+# реальном перехвате и не должно исчезать.
+PAST_INTERCEPT_WITH_LIVE_RE = re.compile(
+    r"был[оаи]?\s+(?:сбити|перехват)\w*"
+    r"(?=[\s\S]{0,100}(?:сейчас|ещ[её]|буд\w+|подход\w+))",
+    re.IGNORECASE,
+)
+APPROACHING_RE = re.compile(
+    r"(?:ещ[её]\s+)?(?:один|\d+)?\s*(?:подход|приближа)\w+",
     re.IGNORECASE,
 )
 
@@ -780,6 +796,21 @@ RADIO_GUIDE_RE = re.compile(
 # «Долгоруково — сообщают о пролётах БПЛА. Вы слышали? 👍/👎» содержит и
 # настоящее сообщение, и вопрос следом, и терять первое нельзя.
 QUESTION_RE = re.compile(r"[^.!?\n]*\?+")
+
+# Обсуждение чужой картинки с голосованием — не сообщение об обстановке.
+# «Украинские паблики опубликовали карту пролётов. Верим в такой масштаб?»
+# заканчивалось вариантом «Нет, явный фейк», и парсер принимал вариант
+# ответа за опровержение: региональный фолбэк закрыл 29 живых событий.
+# Требуем одновременно карту/схему, вопрос о достоверности и варианты
+# ответа — обычный вопрос после настоящей фиксации этим не задевается.
+MAP_DISCUSSION_POLL_RE = re.compile(
+    r"(?:карт|схем)\w*[\s\S]{0,180}?"
+    r"(?:верим|похож\w+\s+на\s+правд|вброс|фейк|нагнета)\w*"
+    r"[^?\n]{0,60}\?"
+    r"[\s\S]{0,220}?(?:\bда\b|\bнет\b)"
+    r"[\s\S]{0,120}?(?:\bда\b|\bнет\b|фейк|правд)",
+    re.IGNORECASE,
+)
 
 
 def drop_questions(text: str) -> str:
@@ -1072,6 +1103,20 @@ NO_HARM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Утилизация уже лежащих обломков — работа специальных служб, а не новый
+# перехват. «Идёт уничтожение обломков БПЛА. Обстановка спокойная» ловилось
+# по слову «уничтожение» и рисовало работу ПВО. Оборот снимается до первой
+# классификации; настоящий «БПЛА сбит, идёт утилизация обломков» сохраняет
+# отдельное слово «сбит» и остаётся перехватом.
+DEBRIS_DISPOSAL_RE = re.compile(
+    r"(?:ид[её]т\s+)?(?:уничтожени|утилизаци|обезвреживани|ликвидаци)\w*"
+    r"\s+(?:найденн\w+\s+|упавш\w+\s+)?(?:обломк|фрагмент)\w+"
+    r"(?:\s+(?:бпла|дрон\w*))?"
+    r"|(?:уничтожа|утилизир|обезврежива)\w+[^.!\n]{0,30}"
+    r"(?:обломк|фрагмент)\w+",
+    re.IGNORECASE,
+)
+
 # Сами слова про обломки — чтобы при проверке «а что осталось кроме
 # хроники» они не считались признаком удара.
 DEBRIS_NOUN_RE = re.compile(r"обломк\w+|фрагмент\w+", re.IGNORECASE)
@@ -1237,6 +1282,78 @@ ALLCLEAR_PATTERN = (
     r"|(?:угроз|опасност|тревог)\w*"
     r"(?:\s+(?!не\b)[а-яё-]+){0,5}\s+(?:отмен|снят)\w*")
 ALLCLEAR_RE = re.compile(ALLCLEAR_PATTERN, re.IGNORECASE)
+
+# В одном посте агрегатор часто пишет и отбой, и список мест, где опасность
+# СОХРАНЯЕТСЯ: «Отбой по ранее объявленным. Опасность сохраняется в
+# Брянской, Курской…». Общий сигнал сообщения — allclear, поэтому без
+# отдельного разбора именно перечисленные исключения закрывались первыми.
+PERSISTING_STATUS_RE = re.compile(
+    r"(?:опасност|угроз|тревог)\w*[^.!?\n]{0,70}?сохраня\w*"
+    r"|сохраня\w*[^.!?\n]{0,70}?(?:опасност|угроз|тревог)\w*",
+    re.IGNORECASE,
+)
+CLEAR_EXCEPTION_RE = re.compile(
+    r"\b(?:за\s+исключением|исключая|кроме)\b",
+    re.IGNORECASE,
+)
+
+
+def preserved_phrases(phrases: list[str]) -> tuple[list[str], bool]:
+    """Фразы с зонами, которые смешанный отбой не должен закрывать.
+
+    Маркер действует и на следующие строки перечисления до нового отбоя.
+    Второй результат говорит, что в тексте есть безымянная фраза вроде
+    «на территории края опасность сохраняется»: если в защищённом фрагменте
+    геокодер не найдёт конкретную зону, конвейер защитит домашний регион
+    канала вместо того, чтобы принять его за адресата отбоя.
+    """
+    kept: list[str] = []
+    absorbing = False
+    has_persisting_status = False
+    for phrase in phrases:
+        persisting_match = PERSISTING_STATUS_RE.search(phrase)
+        exception_match = CLEAR_EXCEPTION_RE.search(phrase)
+        marker = exception_match or persisting_match
+        if marker:
+            # Одна фраза извлечения может содержать два предложения:
+            # «В Новороссийске отбой. На территории края опасность
+            # сохраняется». Защищать целую фразу нельзя — тогда вместе с
+            # краем защищается и Новороссийск, а локальный отбой теряется.
+            before = phrase[:marker.start()]
+            clause_start = max(
+                (before.rfind(char) for char in ".!?\n;"), default=-1
+            ) + 1
+            after = phrase[marker.end():]
+            next_boundaries = [
+                index for char in ".!?\n;"
+                if (index := after.find(char)) >= 0
+            ]
+            clause_end = (marker.end() + min(next_boundaries)
+                          if next_boundaries else len(phrase))
+            clause = phrase[clause_start:clause_end]
+            marker_offset = marker.start() - clause_start
+
+            # Телеграфный текст бывает без точки: «Краснодар — отбой,
+            # на территории края опасность сохраняется». Всё до маркера
+            # отбоя относится к закрываемой зоне и не должно попасть в
+            # защищённый фрагмент.
+            clear_before = list(ALLCLEAR_RE.finditer(clause[:marker_offset]))
+            if exception_match:
+                clause = clause[marker_offset:]
+            elif clear_before:
+                clause = clause[clear_before[-1].end():]
+            kept.append(clause.strip())
+            absorbing = True
+            has_persisting_status = (
+                has_persisting_status or persisting_match is not None
+            )
+            continue
+        if absorbing and ALLCLEAR_RE.search(phrase):
+            absorbing = False
+            continue
+        if absorbing:
+            kept.append(phrase)
+    return kept, has_persisting_status
 
 # Живые команды, несовместимые с отбоем: настоящий отбой не просит
 # укрыться и не говорит «идёт отражение». Совпадение с отбойной формой
@@ -1614,10 +1731,11 @@ def parse(text: str) -> Observation:
     # слово взрыва, пересмотреть остаток») находило в остатке «сбитие» и
     # само превращало удар в перехват — мой чек ниже по цепочке, привязанный
     # к уже готовому signal == "intercept", до этого места не дотягивался.
-    clean = READY_SERVICES_RE.sub(" ", FILMED_STORY_RE.sub(
-        " ", BACKDROP_RE.sub(" ", OWN_FORCES_RE.sub(" ", HOPE_RE.sub(
-            " ", FILMING_BAN_RE.sub(
-                " ", INSTRUCTION_RE.sub(" ", body)))))))
+    clean = DEBRIS_DISPOSAL_RE.sub(" ", READY_SERVICES_RE.sub(
+        " ", FILMED_STORY_RE.sub(
+            " ", BACKDROP_RE.sub(" ", OWN_FORCES_RE.sub(" ", HOPE_RE.sub(
+                " ", FILMING_BAN_RE.sub(
+                    " ", INSTRUCTION_RE.sub(" ", body))))))))
 
     threat = classify_threat(clean)
     signal, severity = classify_signal(clean, threat)
@@ -1704,6 +1822,16 @@ def parse(text: str) -> Observation:
     if (signal == "intercept" and ANTICIPATION_RE.search(clean)
             and not INTERCEPT_RE.search(ANTICIPATION_RE.sub(" ", clean))):
         signal, severity = "alarm", 7
+    # В первой фразе — уже случившийся перехват, во второй — новый борт.
+    # Текущий статус берётся из второй фразы, иначе прошлое «было сбитие»
+    # перекрывает актуальное «сейчас ещё один подходит».
+    if signal == "intercept" and PAST_INTERCEPT_WITH_LIVE_RE.search(clean):
+        rest = PAST_INTERCEPT_WITH_LIVE_RE.sub(" ", clean)
+        if not INTERCEPT_RE.search(rest):
+            if APPROACHING_RE.search(rest):
+                signal, severity = "danger", 5
+            else:
+                signal, severity = classify_signal(rest, threat)
     # «Будет работать ПВО» — обещание, а не работа: если кроме будущего
     # времени перехвата в тексте нет, это предупреждение.
     if (signal == "intercept" and FUTURE_WORK_RE.search(clean)
@@ -1785,6 +1913,10 @@ def parse(text: str) -> Observation:
         return observation
     # Пейнтбол и пневматика — городская хроника, не обстрел.
     if CIVILIAN_WEAPON_RE.search(clean):
+        observation.relevant = False
+        return observation
+    # Голосование о достоверности чужой карты — обсуждение, не live-сводка.
+    if MAP_DISCUSSION_POLL_RE.search(clean):
         observation.relevant = False
         return observation
     # Список радиостанций — это справка, а не обстановка.
@@ -1922,10 +2054,16 @@ def parse(text: str) -> Observation:
     # держат детекцию на одном «в небе», а объяснение уже дано — свои.
     # Настоящую фиксацию борта («Фиксация БПЛА, рядом наши ВКС») спасает
     # названная угроза.
-    calmed = PANIC_CALM_RE.search(clean) or OWN_FORCES_RE.search(body)
+    own_forces = OWN_FORCES_RE.search(body)
+    calmed = PANIC_CALM_RE.search(clean) or own_forces
     if calmed and (signal == "unknown"
                    or (signal == "detection" and threat == "unknown")):
         signal, severity = "retracted", 0
+        # «Наша авиация» опровергает предположение о вражеском БПЛА, а не
+        # ракетную, FPV- и морскую угрозу в той же зоне. Раньше unknown
+        # разрешал такой коррекции закрыть вообще все типы событий.
+        if own_forces and threat == "unknown":
+            threat = "uav"
     if signal == "unknown":
         observation.relevant = False
         return observation

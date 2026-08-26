@@ -1,4 +1,4 @@
-# Radar Russia Map
+# Тихое небо
 
 [Тихое небо](https://tihoenebo.com) — карта воздушной обстановки по
 отобранным публичным Telegram-лентам: сбор сообщений, разрешение топонимов
@@ -115,10 +115,12 @@ npm run prepare:data
 
 | Что | Где |
 |---|---|
-| Сбор сообщений | systemd `tihoenebo-poll` (246 источников, цикл 45 с) |
+| Сбор сообщений | systemd `tihoenebo-poll` (252 источника; push + ярусный polling) |
 | Разбор в события | systemd `tihoenebo-pipeline` (цикл 20 с) |
 | API | systemd `tihoenebo-api`, порт **8010** — 8000 занят чужим контейнером |
 | Чистка корпуса | таймер `tihoenebo-retention.timer`, ежедневно в 05:10 |
+| SEO и сводки | таймер `tihoenebo-seo.timer`, ежечасно |
+| Самоаудит парсера | таймер `tihoenebo-audit.timer`, ежедневно после пересчёта сетей |
 | Веб | Apache, `sites-available/tihoenebo.com*.conf`, SSL от Let's Encrypt |
 | Код и статика | `/opt/tihoenebo`, статика собирается локально (на сервере node 18, Vite нужен 20+) |
 

@@ -1154,6 +1154,31 @@ def coarsen_intercept(geocoder, item: Resolved) -> Resolved:
     )
 
 
+def preserved_zone_ids(geocoder: Geocoder, phrases: list[str],
+                       home: str | None) -> set[str]:
+    """Зоны из части смешанного сообщения, где опасность сохраняется.
+
+    «Отбой по ранее объявленным, кроме Брянской и Курской областей» и
+    «Новороссийск — отбой; на территории края опасность сохраняется» не
+    должны закрывать именно названные исключения. Если сохраняющийся статус
+    назван без собственного имени («на территории края»), защищается
+    домашний регион канала, но только когда в этом фрагменте геокодер не
+    нашёл более конкретных зон.
+    """
+    from .parse import preserved_phrases
+
+    protected_phrases, unnamed_home = preserved_phrases(phrases)
+    if not protected_phrases:
+        return set()
+    protected = {
+        item.zone_id
+        for item in geocoder.resolve(protected_phrases, home=home)
+    }
+    if not protected and unnamed_home and home:
+        protected.add(home)
+    return protected
+
+
 def forecast_zone_ids(geocoder: Geocoder, phrases: list[str],
                       home: str | None) -> set[str]:
     """Зоны, названные только внутри оговорки о возможном.

@@ -1004,6 +1004,7 @@ def faq_block(name: str, stats: dict | None,
 def page(name: str, slug: str, districts: list, stats: dict | None,
          *, path_prefix: str = "region",
          parent: tuple[str, str] | None = None,
+         title_context: str | None = None,
          admin_name: str | None = None,
          child_links: list[tuple[str, str]] | None = None,
          map_region_slug: str | None = None,
@@ -1020,9 +1021,14 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
     # У нас «карта» стояла в самом хвосте, а «онлайн» и «воздушной тревоги»
     # не было вовсе — и это при том, что по содержанию страница вдвое
     # богаче: 5061 знак против 2061 у первого места.
-    title = (f"Карта БПЛА и воздушной тревоги — {name} онлайн"
+    title_place = (f"{name} ({title_context})" if title_context else name)
+    title = (f"Карта БПЛА и воздушной тревоги — {title_place} онлайн"
              if path_prefix == "region"
-             else f"Карта БПЛА и тревог — {name} онлайн")
+             else f"Карта БПЛА и тревог — {title_place} онлайн")
+    if len(title) > 70:
+        title = f"БПЛА и тревоги — {title_place}"
+    if len(title) > 70:
+        title = f"БПЛА — {title_place}"
     # Заголовок на самой странице — без «онлайн»: в выдаче это слово
     # работает, на странице читается рекламой.
     heading = (f"Карта БПЛА и воздушной тревоги {where}"
@@ -1045,6 +1051,16 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
             f"Воздушная обстановка {where}{alias_note} в реальном времени: "
             f"БПЛА и дроны, работа ПВО, тревоги и отбои по районам. "
             f"За 30 дней сообщений об опасности не было.")
+    if len(description) > 180:
+        activity = (
+            f"{count} {plural(count, 'событие', 'события', 'событий')} "
+            f"за 30 дней; последнее — {moment(stats['last'])}."
+            if count else "За 30 дней сообщений об опасности не было."
+        )
+        description = (
+            f"Карта БПЛА {where} в реальном времени: работа ПВО, "
+            f"тревоги и отбои. {activity}"
+        )
     url = f"{SITE}/{path_prefix}/{slug}/"
 
     district_list = ""
@@ -1171,7 +1187,7 @@ def page(name: str, slug: str, districts: list, stats: dict | None,
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{escape(title)} · Тихое небо</title>
+    <title>{escape(title)}</title>
     <meta name="description" content="{escape(description)}" />
     <link rel="canonical" href="{url}" />
     <meta property="og:type" content="website" />
@@ -1542,12 +1558,23 @@ def digest_index(days: list[str], daily_stats: dict[str, dict],
             f"{count} {plural(count, 'событие', 'события', 'событий')}</li>")
     description = ("Ежедневные сводки карты воздушной обстановки: тревоги, "
                    "сообщения о БПЛА, перехваты и отбои по регионам России.")
+    structured_data = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "url": f"{SITE}/svodka/",
+        "name": "Ежедневные сводки тревог и БПЛА",
+        "description": description,
+        "inLanguage": "ru-RU",
+        "isPartOf": {"@type": "WebSite", "name": "Тихое небо",
+                     "url": f"{SITE}/"},
+    }, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ежедневные сводки тревог и БПЛА · Тихое небо</title>
   <meta name="description" content="{description}" />
   <link rel="canonical" href="{SITE}/svodka/" />
+  <script type="application/ld+json">{structured_data}</script>
   <style>
     body {{ margin:0; background:#0b0f0e; color:#e6ebe6;
            font:16px/1.6 Inter, system-ui, sans-serif; }}
@@ -1697,6 +1724,15 @@ def main() -> int:
     for item in rayons:
         rayons_by_region.setdefault(item["region_id"], []).append(item)
 
+    duplicate_city_names = {
+        name for name, amount in Counter(city["name"] for city in cities).items()
+        if amount > 1
+    }
+    duplicate_rayon_names = {
+        name for name, amount in Counter(item["name"] for item in rayons).items()
+        if amount > 1
+    }
+
     # Своя OG-карточка на каждую посадочную: репост сводки по месту в
     # мессенджере показывает имя места и живую цифру, а не главную сайта.
     # Без Pillow (свежий чекаут) страницы просто остаются с общей картинкой.
@@ -1784,6 +1820,8 @@ def main() -> int:
                 path_prefix="city",
                 parent=(city["region_name"],
                         f'{SITE}/region/{city["region_slug"]}/'),
+                title_context=(city["region_name"]
+                               if city["name"] in duplicate_city_names else None),
                 admin_name=city["admin_name"],
                 map_region_slug=city["region_slug"],
                 zone_id=city["zone_id"],
@@ -1813,6 +1851,8 @@ def main() -> int:
                 path_prefix="rayon",
                 parent=(item["region_name"],
                         f'{SITE}/region/{item["region_slug"]}/'),
+                title_context=(item["region_name"]
+                               if item["name"] in duplicate_rayon_names else None),
                 admin_name=item["admin_name"],
                 map_region_slug=item["region_slug"],
                 zone_id=item["zone_id"],

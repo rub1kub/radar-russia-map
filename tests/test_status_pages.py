@@ -161,6 +161,10 @@ def test_bridge_page_reports_current_state(tmp_path):
                            "временно перекрыто."),
     ])
     html = status_pages.bridge_page(connection, "тест")
+    assert (
+        "<title>Крымский мост сейчас — открыт или закрыт, "
+        "обстановка онлайн</title>" in html
+    )
     assert "Движение перекрыто" in html
 
 

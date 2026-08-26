@@ -219,6 +219,11 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
         event("e2", "danger", _fresh(8.5))]})
     assert len(sent) == 1, "повторная опасность без отбоя не должна уходить"
 
+    # И её отбой тоже молчит: человек не получал начало именно e2.
+    telegram.deliver_once({"events": [
+        event("e2", "danger", _fresh(8.4), status="resolved")]})
+    assert len(sent) == 1, "отбой заглушённого события ушёл без начала"
+
     # Эскалация до тревоги — другой класс, другая новость, проходит.
     telegram.deliver_once({"events": [
         event("e3", "alarm", _fresh(8.2))]})
@@ -444,27 +449,34 @@ def test_notification_colour_follows_map_legend(tmp_path, monkeypatch):
     with telegram.closing(telegram._connect()) as connection:
         connection.execute(
             "INSERT INTO tg_chats (chat_id, zones, created_at) VALUES (?,?,?)",
-            (1, json.dumps(["z"]), 0))
+            (1, json.dumps(["z", "z4"]), 0))
         connection.commit()
 
     sent = []
     monkeypatch.setattr(telegram, "send",
                         lambda chat_id, text, keyboard=None: sent.append(text))
 
-    def event(eid, signal, status="active", at=_fresh(3.4)):
-        return {"id": eid, "status": status, "zone_path": ["z"],
+    def event(eid, signal, status="active", at=_fresh(3.4), zone="z"):
+        return {"id": eid, "status": status, "zone_id": zone,
+                "zone_path": [zone],
                 "signal_type": signal, "threat_type": "uav",
-                "zone_name": "Тест", "last_seen_at": at}
+                "zone_name": "Тест 4" if zone == "z4" else "Тест",
+                "last_seen_at": at}
 
     telegram.deliver_once({"events": [
         event("e1", "detection", at=_fresh(3.1)),
         event("e2", "alarm", at=_fresh(2.8)),
         event("e3", "danger", at=_fresh(2.5)),
-        event("e4", "allclear", status="resolved",
-              at=_fresh(2.2)),
+        # Сначала настоящее начало в другой зоне, затем его отбой.
+        event("e4", "danger", at=_fresh(2.2), zone="z4"),
+    ]})
+    telegram.deliver_once({"events": [
+        event("e4", "danger", status="resolved",
+              at=_fresh(1.9), zone="z4"),
     ]})
     heads = [text.split()[0] for text in sent]
-    assert heads == ["🔴", "🟠", "🟡", "🟢"]
+    assert heads[:3] == ["🔴", "🟠", "🟡"]
+    assert heads[-1] == "🟢"
 
 
 def test_init_data_signature_is_checked(monkeypatch):

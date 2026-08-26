@@ -349,12 +349,15 @@ def head(title: str, description: str, url: str, extra_ld: list[str]) -> str:
     ld = "\n    ".join(
         f'<script type="application/ld+json">{block}</script>'
         for block in extra_ld)
+    document_title = f"{title} · Тихое небо"
+    if len(document_title) > 70:
+        document_title = title
     return f"""<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{escape(title)} · Тихое небо</title>
+    <title>{escape(document_title)}</title>
     <meta name="description" content="{escape(description)}" />
     <link rel="canonical" href="{url}" />
     <meta property="og:type" content="website" />

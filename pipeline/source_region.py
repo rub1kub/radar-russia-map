@@ -17,7 +17,10 @@ import re
 import sqlite3
 
 
-REGION_WIDE_RE = re.compile(
+REGION_WIDE_CLEAR_RE = re.compile(
+    r"\b(?:на|по\s+всей)\s+территори\w*\b[^.!?\n]{0,100}?"
+    r"(?:отбой|отмен\w+|снят\w+|минова\w*)"
+    r"|(?:отбой|отмен\w+|снят\w+|минова\w*)[^.!?\n]{0,100}?"
     r"\b(?:на|по\s+всей)\s+территори\w*\b",
     re.IGNORECASE,
 )
@@ -99,8 +102,8 @@ def explicit_home_region(observation, resolved, home: str | None):
     """
     if (
         not home
-        or observation.signal_type not in {"allclear", "retracted"}
-        or not REGION_WIDE_RE.search(observation.body)
+        or observation.signal_type != "allclear"
+        or not REGION_WIDE_CLEAR_RE.search(observation.body)
     ):
         return None
     return next(
@@ -111,6 +114,49 @@ def explicit_home_region(observation, resolved, home: str | None):
         ),
         None,
     )
+
+
+def resolve_observation_zones(geocoder, observation, home: str | None):
+    """Разрешить зоны с безопасной семантикой отбоя.
+
+    Возвращает ``(zones, used_source_region)``. Коррекция ``retracted`` без
+    явно названного места никогда не наследует весь регион канала: «наша
+    авиация» без топонима раньше закрывала сотни дочерних событий. То же
+    относится к смешанному отбою, где все найденные зоны перечислены после
+    «опасность сохраняется» или «кроме» — отсутствие адресата лучше
+    ложного массового отбоя.
+    """
+    from .geocode import Resolved, preserved_zone_ids
+
+    candidates = geocoder.resolve(observation.place_phrases, home=home)
+    protected = (
+        preserved_zone_ids(
+            geocoder, observation.place_phrases, home
+        )
+        if observation.signal_type in {"allclear", "retracted"}
+        else set()
+    )
+    if protected:
+        candidates = [
+            item for item in candidates if item.zone_id not in protected
+        ]
+
+    regional_clear = explicit_home_region(observation, candidates, home)
+    resolved = (
+        [regional_clear]
+        if regional_clear is not None
+        else geocoder.drop_covered(candidates)
+    )
+    if resolved:
+        return resolved, False
+
+    if (not home or protected
+            or observation.signal_type == "retracted"):
+        return [], False
+
+    zone = geocoder.zones[home]
+    return [Resolved(home, "region", zone["name_ru"],
+                     zone["lat"], zone["lon"], "источник")], True
 
 
 def build_fallback(connection: sqlite3.Connection, sources) -> dict[str, str]:

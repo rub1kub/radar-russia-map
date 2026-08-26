@@ -364,6 +364,44 @@ def test_city_page_has_canonical_parent_and_valid_structured_data():
     assert documents[2]["@type"] == "FAQPage"
 
 
+def test_homonymous_place_title_contains_region_without_brand_suffix():
+    html = seo.page(
+        "Железногорск", "zheleznogorsk-kurskaya-oblast", [], None,
+        path_prefix="city",
+        parent=("Курская область",
+                "https://tihoenebo.com/region/kurskaya-oblast/"),
+        title_context="Курская область",
+        neighbours=[], updated="9 августа, 15:00 МСК",
+    )
+
+    assert (
+        "<title>Карта БПЛА и тревог — Железногорск "
+        "(Курская область) онлайн</title>" in html
+    )
+    assert "</title> · Тихое небо" not in html
+
+
+def test_long_meta_description_is_compacted():
+    stats = {
+        "events": 1234, "last": "2026-08-09T10:00:00+00:00",
+        "days": set(), "today": 0, "fresh": 0, "districts": Counter(),
+        "signals": Counter(), "threats": Counter(), "hours": Counter(),
+        "recent": [],
+    }
+    html = seo.page(
+        "Анабарский национальный (долгано-эвенкийский) район",
+        "anabarskiy", [], stats, path_prefix="rayon", neighbours=[],
+        updated="9 августа, 15:00 МСК",
+    )
+
+    description = re.search(
+        r'<meta name="description" content="([^"]+)"', html
+    ).group(1)
+    title = re.search(r"<title>(.*?)</title>", html).group(1)
+    assert len(description) <= 180
+    assert len(title) <= 70
+
+
 def test_city_index_groups_regions_and_lists_every_city():
     cities = [
         {
@@ -451,3 +489,14 @@ def test_daily_digest_is_an_article_with_live_region_links():
     article = next(item for item in documents if item["@type"] == "Article")
     assert article["datePublished"] == "2026-08-09T00:00:00+03:00"
     assert article["dateModified"] == "2026-08-09T15:00:00+03:00"
+
+
+def test_digest_index_has_collection_structured_data():
+    html = seo.digest_index(
+        ["2026-08-09"], {"2026-08-09": {"events": 3}},
+        "9 августа, 15:00 МСК",
+    )
+
+    document = _json_ld(html)[0]
+    assert document["@type"] == "CollectionPage"
+    assert document["url"] == "https://tihoenebo.com/svodka/"

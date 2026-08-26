@@ -48,9 +48,20 @@ def test_repeat_danger_without_clear_is_throttled(tmp_path, monkeypatch):
         event("e2", "danger", _fresh(9.4))]})
     assert len(sent) == 1, "повторная опасность без отбоя не должна уходить"
 
+    # Отбой заглушённого события не появляется из ниоткуда.
+    push.deliver_once({"events": [
+        event("e2", "danger", _fresh(9.3), status="resolved")]})
+    assert len(sent) == 1
+
+    # А отбой события, начало которого было доставлено, приходит.
+    push.deliver_once({"events": [
+        event("e1", "danger", _fresh(9.2), status="resolved")]})
+    assert len(sent) == 2
+    assert "отбой" in sent[-1]["title"]
+
     push.deliver_once({"events": [
         event("e3", "alarm", _fresh(9.1))]})
-    assert len(sent) == 2
+    assert len(sent) == 3
 
 
 def test_stale_backlog_event_is_not_delivered(tmp_path, monkeypatch):

@@ -37,14 +37,15 @@ from config import sources_from_env  # noqa: E402
 
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
-from .geocode import (Geocoder, Resolved, coarsen_intercept,  # noqa: E402
+from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
 from .parse import (MAX_RESOLVED_ZONES, block_signals, parse,  # noqa: E402
                     phrase_signals, signal_for_place, strip_footer)
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
-from .source_region import build_fallback, explicit_home_region  # noqa: E402
+from .source_region import (build_fallback,  # noqa: E402
+                            resolve_observation_zones)
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
@@ -468,27 +469,18 @@ def run_once(
             continue
 
         home = fallback.get(row["source_key"])
-        candidates = geocoder.resolve(observation.place_phrases, home=home)
-        regional_clear = explicit_home_region(observation, candidates, home)
-        resolved = (
-            [regional_clear]
-            if regional_clear is not None
-            else geocoder.drop_covered(candidates)
-        )
+        resolved, used_source_region = resolve_observation_zones(
+            geocoder, observation, home)
         # Каталог городов, а не оповещение: реклама сети «Город 24/7»
         # разошлась на 168 ложных тревог одним сообщением.
         if len(resolved) > MAX_RESOLVED_ZONES:
             stats["catalog"] = stats.get("catalog", 0) + 1
             continue
         if not resolved:
-            if home:
-                zone = geocoder.zones[home]
-                resolved = [Resolved(home, "region", zone["name_ru"],
-                                     zone["lat"], zone["lon"], "источник")]
-                stats["by_source_region"] = stats.get("by_source_region", 0) + 1
-            else:
-                stats["ungeocoded"] += 1
-                continue
+            stats["ungeocoded"] += 1
+            continue
+        if used_source_region:
+            stats["by_source_region"] = stats.get("by_source_region", 0) + 1
 
         # Маршрут, описанный самим сообщением, — отдельная строка рядом с
         # событиями: линию утверждает источник, и она живёт своей жизнью.

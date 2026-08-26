@@ -751,16 +751,42 @@ def deliver_once(snapshot: dict) -> int:
                     continue
                 cleared = event.get("status") == "resolved"
                 key = f"{event['id']}:clear" if cleared else event["id"]
-                inserted = connection.execute(
-                    "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
-                    " VALUES (?,?,?)", (row["chat_id"], key, now)).rowcount
-                if not inserted:
+                silent_key = f"{event['id']}:silent"
+                handled = connection.execute(
+                    "SELECT 1 FROM tg_sent WHERE chat_id = ?"
+                    " AND event_key IN (?, ?)",
+                    (row["chat_id"], key,
+                     key if cleared else silent_key)).fetchone()
+                if handled:
+                    continue
+                # Отбой имеет смысл только после уведомления о начале ЭТОГО
+                # события. Повторная опасность могла быть заглушена общим
+                # тормозом, но её отбой раньше всё равно уходил — именно так
+                # владелец получил ночью «Краснодар — отбой», не получив
+                # соответствующей опасности. Тихий отбой всё же помечается
+                # обработанным; для прогнозов он снимает cooldown.
+                if cleared and not connection.execute(
+                        "SELECT 1 FROM tg_sent WHERE chat_id = ?"
+                        " AND event_key = ?",
+                        (row["chat_id"], event["id"])).fetchone():
+                    connection.execute(
+                        "INSERT OR IGNORE INTO tg_sent"
+                        " (chat_id, event_key, sent_at) VALUES (?,?,?)",
+                        (row["chat_id"], key, now))
+                    if event.get("signal_type") in notify_throttle.FORECAST_SIGNALS:
+                        notify_throttle.record_sent(
+                            connection, f"tg:{row['chat_id']}", event, now)
+                    connection.commit()
                     continue
                 # Опасность/тревога без отбоя между двумя волнами — та же
                 # новость дважды: см. notify_throttle.
                 subscriber = f"tg:{row['chat_id']}"
                 if notify_throttle.should_suppress(
                         connection, subscriber, event, now):
+                    connection.execute(
+                        "INSERT OR IGNORE INTO tg_sent"
+                        " (chat_id, event_key, sent_at) VALUES (?,?,?)",
+                        (row["chat_id"], key if cleared else silent_key, now))
                     connection.commit()
                     continue
                 # Второй рубеж — сам текст: время события входит в строку,
@@ -774,8 +800,15 @@ def deliver_once(snapshot: dict) -> int:
                         " AND sent_at > ?",
                         (row["chat_id"], line_key,
                          now - SAME_LINE_TTL_SEC)).fetchone():
+                    connection.execute(
+                        "INSERT OR IGNORE INTO tg_sent"
+                        " (chat_id, event_key, sent_at) VALUES (?,?,?)",
+                        (row["chat_id"], key if cleared else silent_key, now))
                     connection.commit()
                     continue
+                connection.execute(
+                    "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
+                    " VALUES (?,?,?)", (row["chat_id"], key, now))
                 connection.execute(
                     "INSERT OR IGNORE INTO tg_sent (chat_id, event_key, sent_at)"
                     " VALUES (?,?,?)", (row["chat_id"], line_key, now))
