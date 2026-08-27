@@ -13,10 +13,9 @@ import "ol/ol.css";
 import "./map.css";
 import OlMap from "ol/Map";
 import View from "ol/View";
-import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
+import VectorTileLayer from "ol/layer/VectorTile";
 import VectorSource from "ol/source/Vector";
-import XYZ from "ol/source/XYZ";
 import Feature from "ol/Feature";
 import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
@@ -25,15 +24,12 @@ import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { defaults as defaultControls } from "ol/control";
 import {
-  ESRI_CANVAS_ATTRIBUTION,
-  ESRI_DARK_BASEMAP_URL,
-  OPENFREE_ATTRIBUTION,
-  OPENFREE_RELIEF_URL
+  OPENFREE_DARK_STYLE_URL
 } from "../lib/basemaps";
+import { applyLabelFreeVectorBasemap } from "../lib/vectorBasemap";
 
-// Отдельный reference-слой Esri не подключаем: города берём из русского
-// справочника проекта и не дублируем чужими подписями.
-const BASEMAP_URL = ESRI_DARK_BASEMAP_URL;
+const BASEMAP_STYLE_URL =
+  import.meta.env.VITE_BASEMAP_DARK_STYLE_URL || OPENFREE_DARK_STYLE_URL;
 
 /** Города-ориентиры: имя показывается с того зума, где ему есть место. */
 type City = { name: string; lat: number; lon: number; population: number };
@@ -306,31 +302,17 @@ function render(target: HTMLElement, graph: Graph): void {
     .catch(() => undefined);
 
   // --- Карта -----------------------------------------------------------
+  const basemapLayer = new VectorTileLayer({
+    className: "ol-layer route-basemap-vector"
+  });
+  void applyLabelFreeVectorBasemap(basemapLayer, BASEMAP_STYLE_URL)
+    .catch((error: unknown) => console.error("Подложка маршрутов не загрузилась", error));
+
   const map = new OlMap({
     target,
     controls: defaultControls({ attribution: true, rotate: false }),
     layers: [
-      new TileLayer({
-        source: new XYZ({
-          url: OPENFREE_RELIEF_URL,
-          attributions: OPENFREE_ATTRIBUTION,
-          crossOrigin: "anonymous",
-          maxZoom: 6
-        }),
-        className: "ol-layer route-natural-relief",
-        opacity: 0.72,
-        maxZoom: 11
-      }),
-      new TileLayer({
-        source: new XYZ({
-          url: BASEMAP_URL,
-          attributions: ESRI_CANVAS_ATTRIBUTION,
-          crossOrigin: "anonymous",
-          maxZoom: 20
-        }),
-        className: "ol-layer route-basemap-detail",
-        minZoom: 10.75
-      }),
+      basemapLayer,
       chainLayer,
       cityLayer,
       labelLayer

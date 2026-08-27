@@ -1,31 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
-  ESRI_CANVAS_ATTRIBUTION,
-  ESRI_DARK_BASEMAP_URL,
-  ESRI_LIGHT_BASEMAP_URL,
+  ESRI_IMAGERY_ATTRIBUTION,
+  ESRI_IMAGERY_URL,
   OPENFREE_ATTRIBUTION,
-  OPENFREE_RELIEF_URL
+  OPENFREE_DARK_STYLE_URL,
+  OPENFREE_LIGHT_STYLE_URL
 } from "./basemaps";
 
-describe("raster basemaps", () => {
-  it("use public ArcGIS Canvas tiles without the retired CARTO endpoint", () => {
-    for (const url of [ESRI_DARK_BASEMAP_URL, ESRI_LIGHT_BASEMAP_URL]) {
-      expect(url).toContain("server.arcgisonline.com");
-      expect(url).toContain("/MapServer/tile/{z}/{y}/{x}");
-      expect(url).not.toContain("carto");
+describe("basemaps", () => {
+  it("uses keyless vector styles for both map themes", () => {
+    for (const url of [OPENFREE_DARK_STYLE_URL, OPENFREE_LIGHT_STYLE_URL]) {
+      expect(url).toContain("tiles.openfreemap.org/styles/");
+      expect(url).not.toContain("api_key");
     }
   });
 
   it("keeps the data-provider attribution", () => {
-    expect(ESRI_CANVAS_ATTRIBUTION).toContain("OpenStreetMap contributors");
-    expect(ESRI_CANVAS_ATTRIBUTION).toContain("Esri");
     expect(OPENFREE_ATTRIBUTION).toContain("OpenFreeMap");
     expect(OPENFREE_ATTRIBUTION).toContain("OpenStreetMap contributors");
+    expect(ESRI_IMAGERY_ATTRIBUTION).toContain("Esri");
   });
 
-  it("uses the no-label OpenFreeMap relief for the overview", () => {
-    expect(OPENFREE_RELIEF_URL).toContain("tiles.openfreemap.org/natural_earth");
-    expect(OPENFREE_RELIEF_URL).toContain("/{z}/{x}/{y}.png");
-    expect(OPENFREE_RELIEF_URL).not.toContain("api_key");
+  it("keeps satellite tiles as the separate raster mode", () => {
+    expect(ESRI_IMAGERY_URL).toContain("World_Imagery/MapServer/tile/{z}/{y}/{x}");
   });
 });

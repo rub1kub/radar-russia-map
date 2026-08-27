@@ -9,6 +9,7 @@ import CircleGeom from "ol/geom/Circle";
 import Point from "ol/geom/Point";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
+import VectorTileLayer from "ol/layer/VectorTile";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import { Attribution, defaults as defaultControls, ScaleLine } from "ol/control";
@@ -84,12 +85,12 @@ import {
 } from "./lib/placeLabels";
 import type { DetailedPlaceLabelRow, PlaceLabelManifest } from "./lib/placeLabels";
 import {
-  ESRI_CANVAS_ATTRIBUTION,
-  ESRI_DARK_BASEMAP_URL,
-  ESRI_LIGHT_BASEMAP_URL,
-  OPENFREE_ATTRIBUTION,
-  OPENFREE_RELIEF_URL
+  ESRI_IMAGERY_ATTRIBUTION,
+  ESRI_IMAGERY_URL,
+  OPENFREE_DARK_STYLE_URL,
+  OPENFREE_LIGHT_STYLE_URL
 } from "./lib/basemaps";
+import { applyLabelFreeVectorBasemap } from "./lib/vectorBasemap";
 import { FeedPanel } from "./panels/FeedPanel";
 import { HistoryPanel } from "./panels/HistoryPanel";
 import { AnalyticsPanel } from "./panels/AnalyticsPanel";
@@ -166,12 +167,10 @@ const FEATURED_PLACE_LABEL_ZOOM = 7.75;
 const MAP_MAX_ZOOM = 15.5;
 const PLACE_LABELS_FORMAT = 2;
 const PLACE_LABEL_CELL_CACHE_LIMIT = 32;
-const BASEMAP_URL =
-  import.meta.env.VITE_BASEMAP_URL || ESRI_DARK_BASEMAP_URL;
-const LIGHT_BASEMAP_URL =
-  import.meta.env.VITE_BASEMAP_LIGHT_URL || ESRI_LIGHT_BASEMAP_URL;
-const BASEMAP_ATTRIBUTION =
-  import.meta.env.VITE_BASEMAP_ATTRIBUTION || ESRI_CANVAS_ATTRIBUTION;
+const DARK_BASEMAP_STYLE_URL =
+  import.meta.env.VITE_BASEMAP_DARK_STYLE_URL || OPENFREE_DARK_STYLE_URL;
+const LIGHT_BASEMAP_STYLE_URL =
+  import.meta.env.VITE_BASEMAP_LIGHT_STYLE_URL || OPENFREE_LIGHT_STYLE_URL;
 
 // Подложки на выбор. Тёмная — родная и остаётся по умолчанию: весь
 // интерфейс построен под неё. Светлая привычнее людям с бумажных карт,
@@ -181,46 +180,23 @@ const BASEMAP_ATTRIBUTION =
 type BasemapScheme = "dark" | "light" | "satellite";
 const BASEMAP_SCHEMES: Record<
   BasemapScheme,
-  { label: string; url: string; attributions: string; maxZoom: number;
-    hillshade: boolean; hillshadeOpacity: number; opacity: number;
-    detailMinZoom: number; overviewOpacity: number }
+  { label: string; hillshade: boolean; hillshadeOpacity: number }
 > = {
   dark: {
     label: "Тёмная",
-    url: BASEMAP_URL,
-    attributions: BASEMAP_ATTRIBUTION,
-    maxZoom: 20,
     hillshade: true,
-    hillshadeOpacity: 0.12,
-    detailMinZoom: 10.75,
-    overviewOpacity: 0.9,
-    // Слегка притушена нарочно: фон не должен спорить с событиями.
-    opacity: 0.9
+    hillshadeOpacity: 0.12
   },
   light: {
     label: "Светлая",
-    url: LIGHT_BASEMAP_URL,
-    attributions: BASEMAP_ATTRIBUTION,
-    maxZoom: 20,
     hillshade: true,
-    hillshadeOpacity: 0.22,
-    detailMinZoom: 10.75,
-    overviewOpacity: 1,
-    // Полная: под ней чёрный фон приложения, и 0.9 превращали
-    // светлую подложку в серую дымку.
-    opacity: 1
+    hillshadeOpacity: 0.22
   },
   satellite: {
     label: "Спутник",
     // Снимки уже несут рельеф — подмешивать hillshade поверх незачем.
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attributions: "© Esri, Maxar, Earthstar Geographics",
-    maxZoom: 19,
     hillshade: false,
-    hillshadeOpacity: 0,
-    detailMinZoom: 0,
-    overviewOpacity: 0,
-    opacity: 1
+    hillshadeOpacity: 0
   }
 };
 const BASEMAP_STORE_KEY = "radar.basemap";
@@ -998,8 +974,9 @@ function setOverviewView(map: OlMap, duration: number) {
 export default function App() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
-  const overviewBasemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
-  const basemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
+  const darkBasemapLayerRef = useRef<VectorTileLayer | null>(null);
+  const lightBasemapLayerRef = useRef<VectorTileLayer | null>(null);
+  const satelliteBasemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const cityLabelLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const hillshadeLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const landCoverLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
@@ -1744,34 +1721,30 @@ export default function App() {
     });
 
     const scheme = BASEMAP_SCHEMES[basemapScheme];
-    const overviewBasemapLayer = new TileLayer({
-      source: new XYZ({
-        url: OPENFREE_RELIEF_URL,
-        attributions: OPENFREE_ATTRIBUTION,
-        crossOrigin: "anonymous",
-        maxZoom: 6
-      }),
-      // На обзорном масштабе нужен только рельеф без подписей. С шестого
-      // зума 10.75 его сменяет детальная Canvas-подложка: на z10 Esri ещё
-      // печатает регион латиницей, а на z11 уже оставляет дороги без неё.
-      // Русские названия всё время рисуются собственными слоями.
-      className: "ol-layer basemap-natural-relief",
-      visible: layers.basemap && scheme.overviewOpacity > 0,
-      opacity: scheme.overviewOpacity,
-      maxZoom: 11,
+    const darkBasemapLayer = new VectorTileLayer({
+      className: "ol-layer basemap-vector basemap-vector-dark",
+      visible: layers.basemap && basemapScheme === "dark",
       zIndex: 0
     });
-    const basemapLayer = new TileLayer({
+    const lightBasemapLayer = new VectorTileLayer({
+      className: "ol-layer basemap-vector basemap-vector-light",
+      visible: layers.basemap && basemapScheme === "light",
+      zIndex: 0
+    });
+    void applyLabelFreeVectorBasemap(darkBasemapLayer, DARK_BASEMAP_STYLE_URL)
+      .catch((error: unknown) => console.error("Тёмная подложка не загрузилась", error));
+    void applyLabelFreeVectorBasemap(lightBasemapLayer, LIGHT_BASEMAP_STYLE_URL)
+      .catch((error: unknown) => console.error("Светлая подложка не загрузилась", error));
+
+    const satelliteBasemapLayer = new TileLayer({
       source: new XYZ({
-        url: scheme.url,
-        attributions: scheme.attributions,
+        url: ESRI_IMAGERY_URL,
+        attributions: ESRI_IMAGERY_ATTRIBUTION,
         crossOrigin: "anonymous",
-        maxZoom: scheme.maxZoom
+        maxZoom: 19
       }),
-      className: "ol-layer basemap-detail",
-      visible: layers.basemap,
-      opacity: scheme.opacity,
-      minZoom: scheme.detailMinZoom,
+      className: "ol-layer basemap-satellite",
+      visible: layers.basemap && basemapScheme === "satellite",
       zIndex: 0
     });
     const hillshadeLayer = new TileLayer({
@@ -1894,8 +1867,9 @@ export default function App() {
     });
     cityLabelLayerRef.current = cityLabelLayer;
 
-    overviewBasemapLayerRef.current = overviewBasemapLayer;
-    basemapLayerRef.current = basemapLayer;
+    darkBasemapLayerRef.current = darkBasemapLayer;
+    lightBasemapLayerRef.current = lightBasemapLayer;
+    satelliteBasemapLayerRef.current = satelliteBasemapLayer;
     hillshadeLayerRef.current = hillshadeLayer;
     landCoverLayerRef.current = landCoverLayer;
     waterBodyLayerRef.current = waterBodyLayer;
@@ -1920,8 +1894,9 @@ export default function App() {
         new ScaleLine({ minWidth: 90 })
       ]),
       layers: [
-        overviewBasemapLayer,
-        basemapLayer,
+        darkBasemapLayer,
+        lightBasemapLayer,
+        satelliteBasemapLayer,
         hillshadeLayer,
         landCoverLayer,
         waterBodyLayer,
@@ -2415,8 +2390,9 @@ export default function App() {
       clearDetailedPlaceLabels();
       map.setTarget(undefined);
       mapRef.current = null;
-      overviewBasemapLayerRef.current = null;
-      basemapLayerRef.current = null;
+      darkBasemapLayerRef.current = null;
+      lightBasemapLayerRef.current = null;
+      satelliteBasemapLayerRef.current = null;
       hillshadeLayerRef.current = null;
       cityLabelLayerRef.current = null;
       landCoverLayerRef.current = null;
@@ -2450,10 +2426,11 @@ export default function App() {
 
   useEffect(() => {
     layersRef.current = layers;
-    overviewBasemapLayerRef.current?.setVisible(
-      layers.basemap && BASEMAP_SCHEMES[basemapScheme].overviewOpacity > 0
+    darkBasemapLayerRef.current?.setVisible(layers.basemap && basemapScheme === "dark");
+    lightBasemapLayerRef.current?.setVisible(layers.basemap && basemapScheme === "light");
+    satelliteBasemapLayerRef.current?.setVisible(
+      layers.basemap && basemapScheme === "satellite"
     );
-    basemapLayerRef.current?.setVisible(layers.basemap);
     hillshadeLayerRef.current?.setVisible(
       layers.basemap && BASEMAP_SCHEMES[basemapScheme].hillshade
     );
@@ -2471,23 +2448,21 @@ export default function App() {
     loadLazyLayersRef.current?.();
   }, [layers, basemapScheme]);
 
-  // Смена подложки: новый источник в тот же слой, карта не пересоздаётся.
+  // Все подложки создаются один раз: переключение не сбрасывает кэш тайлов.
   useEffect(() => {
     const scheme = BASEMAP_SCHEMES[basemapScheme];
-    basemapLayerRef.current?.setSource(
-      new XYZ({
-        url: scheme.url,
-        attributions: scheme.attributions,
-        crossOrigin: "anonymous",
-        maxZoom: scheme.maxZoom
-      })
+    darkBasemapLayerRef.current?.setVisible(
+      layers.basemap && basemapScheme === "dark"
     );
-    basemapLayerRef.current?.setOpacity(scheme.opacity);
-    basemapLayerRef.current?.setMinZoom(scheme.detailMinZoom);
-    overviewBasemapLayerRef.current?.setOpacity(scheme.overviewOpacity);
+    lightBasemapLayerRef.current?.setVisible(
+      layers.basemap && basemapScheme === "light"
+    );
+    satelliteBasemapLayerRef.current?.setVisible(
+      layers.basemap && basemapScheme === "satellite"
+    );
     hillshadeLayerRef.current?.setOpacity(scheme.hillshadeOpacity);
-    overviewBasemapLayerRef.current?.setVisible(
-      layers.basemap && scheme.overviewOpacity > 0
+    hillshadeLayerRef.current?.setVisible(
+      layers.basemap && scheme.hillshade
     );
     basemapSchemeRef.current = basemapScheme;
     urbanAreaLayerRef.current?.changed();
@@ -2497,7 +2472,7 @@ export default function App() {
     } catch {
       // Приватный режим — выбор живёт до перезагрузки.
     }
-  }, [basemapScheme]);
+  }, [basemapScheme, layers.basemap]);
 
   // Лента показывает то, что человек видит на экране: карта и список
   // перестают жить отдельными жизнями. Отключается тумблером «в кадре».

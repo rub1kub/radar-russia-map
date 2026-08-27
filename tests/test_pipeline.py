@@ -754,12 +754,22 @@ def test_prepare_for_fixations_stays_slang_not_alarm():
     for text in ("Краснодар приготовиться к атаке",
                  "Приготовиться к сбитиям БПЛА",
                  "Приготовиться к работе ПВО",
+                 "Пенза — приготовиться к звучанию сигнала «Внимание всем»",
                  "Приготовиться к массированному налёту БПЛА от "
                  "Харьковской области"):
         assert parse(text).signal_type == "alarm", text
     # Настоящая фиксация рядом с тем же оборотом не гасится.
     assert parse("Фиксация БПЛА над Ейском, приготовиться к фиксациям "
                  "соседям").signal_type == "detection"
+
+
+def test_weather_preparation_is_not_an_air_alarm():
+    """«Приготовиться к» само по себе не означает воздушную тревогу."""
+    text = ("Краснодарский край и Адыгея\n"
+            "Приготовиться к массовому выпадению жидких атмосферных "
+            "осадков на край и республику.\n"
+            "Улица Московская в Краснодаре особое внимание")
+    assert parse(text).relevant is False
 
 
 def test_calming_words_do_not_cancel_live_air_defence():
@@ -2674,6 +2684,41 @@ def test_running_total_of_the_raid_is_not_an_intercept():
             "Мэр Москвы Сергей Собянин сообщил об уничтожении ещё 13 БПЛА. "
             "Всего с начала атаки силы ПВО сбили уже 89 беспилотников.")
     assert parse(text).relevant is False
+
+
+@pytest.mark.parametrize("text", [
+    ("Напоминаем, что резкие звуки, хлопки и взрывы после ночных атак "
+     "могут быть связаны с уничтожением частей БПЛА! Некоторые элементы "
+     "БПЛА нельзя утилизировать стандартными методами."),
+    ("Звук, похожий на взрыв, над Воронежем оказался связан с работой "
+     "авиации. По предварительным данным, громкий звук в небе не связан "
+     "с работой ПВО. Над городом работает авиация."),
+    ("С начало СВО, ПВО сбила 256 тысяч БПЛА различных видов... "
+     "Посмотрите цифры, а потом говорите..."),
+    ("С начала специальной военной операции силы ПВО уничтожили "
+     "тысячи беспилотников."),
+    ("Сегодня в Оренбургской области были уничтожены БПЛА. Целью был "
+     "склад Озон в г. Оренбург. Ракетная опасность была связана с "
+     "реактивными БПЛА. РО была объявлена вплоть до ХМАО."),
+])
+def test_historical_or_explained_intercepts_are_not_live(text):
+    assert parse(text).relevant is False
+
+
+def test_pvo_denial_does_not_hide_a_separate_live_intercept():
+    text = ("Первый звук не связан с работой ПВО, его дала авиация. "
+            "Сейчас над Лисками работает ПВО по БПЛА.")
+    observation = parse(text)
+    assert observation.relevant is True
+    assert observation.signal_type == "intercept"
+
+
+def test_completed_today_recap_keeps_a_new_live_status():
+    text = ("Сегодня в Оренбургской области были уничтожены БПЛА. "
+            "Сейчас над Оренбургом снова работает ПВО по БПЛА.")
+    observation = parse(text)
+    assert observation.relevant is True
+    assert observation.signal_type == "intercept"
 
 
 @pytest.mark.parametrize("text", [

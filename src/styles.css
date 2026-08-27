@@ -522,28 +522,6 @@ button {
   height: 100%;
 }
 
-/* Natural Earth приходит без подписей. Тёмная схема не должна
-   схлопываться в средний серый со светлой: contrast выше единицы
-   сохраняет рельеф, brightness задаёт реально тёмный тон. */
-.map-panel[data-basemap="dark"] .basemap-natural-relief canvas {
-  filter: grayscale(1) invert(1) brightness(0.5) contrast(1.08);
-}
-
-.map-panel[data-basemap="light"] .basemap-natural-relief canvas {
-  filter: grayscale(1) brightness(1.04) contrast(0.9);
-}
-
-/* Canvas Base полезен улицами на близком зуме, но в старом растре есть
-   неудаляемые латинские подписи. Размывается только фон: все наши векторные
-   дороги, границы и русские названия лежат выше отдельными canvas. */
-.map-panel[data-basemap="dark"] .basemap-detail canvas {
-  filter: grayscale(1) blur(1.4px) brightness(0.52) contrast(1.08);
-}
-
-.map-panel[data-basemap="light"] .basemap-detail canvas {
-  filter: grayscale(1) blur(1.4px) brightness(1.04) contrast(0.92);
-}
-
 .map-panel[data-basemap="dark"] .basemap-hillshade canvas {
   filter: grayscale(1) brightness(0.5) contrast(1.05);
 }
