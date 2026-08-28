@@ -453,6 +453,24 @@ def test_three_letter_villages_stay_below_threshold(geocoder):
     )
 
 
+def test_nizhny_district_shorthand_does_not_jump_to_yaroslavl(geocoder):
+    """«Д.Константиновский» — район, не посёлок в Тутаевском районе."""
+    home = next(
+        zone_id for zone_id, zone in geocoder.zones.items()
+        if zone["name_ru"] == "Нижегородская область"
+    )
+    resolved = geocoder.resolve(
+        ["Богородский Д.Константиновский Павловский"], home=home
+    )
+    found = {item.name for item in resolved}
+    assert {
+        "Богородский район",
+        "Дальнеконстантиновский район",
+        "Павловский район",
+    } <= found
+    assert "Тутаевский район" not in found
+
+
 # --- Работа ПВО публикуется районом, не точкой ------------------------------
 #
 # Решение владельца от 13 августа: карта показывает, что ПВО работает в

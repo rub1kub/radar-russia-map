@@ -56,6 +56,14 @@ ABBREV_RE = re.compile(
 # Без точки раскрываем только многобуквенные: «пгт Черноморское», «Мангушский р-н».
 ABBREV_BARE_RE = re.compile(r"\b(пгт|мкр|рп|ст-ца|р-н|р-он)\b\.?", re.IGNORECASE)
 
+# Устойчивое сокращение нижегородских мониторинговых лент. Общее правило
+# читает «Д.» как «деревня» и отправляет Д.Константиновский в одноимённый
+# посёлок Тутаевского района Ярославской области. В списке районов это
+# всегда Дальнеконстантиновский район.
+DALNEKONSTANTINOVSKY_RE = re.compile(
+    r"(?<![\w-])д\.\s*константиновск\w*", re.IGNORECASE
+)
+
 
 def expand_units(text: str) -> str:
     """Раскрыть сокращения типа НП: «ст. Динская» -> «станица Динская».
@@ -64,6 +72,7 @@ def expand_units(text: str) -> str:
     съедает. Полное слово потом работает маркером — за ним стоит название
     населённого пункта, а не одноимённой области.
     """
+    text = DALNEKONSTANTINOVSKY_RE.sub("Дальнеконстантиновский район", text)
     text = ABBREV_RE.sub(lambda m: ABBREV_UNITS[m.group(1).lower()] + " ", text)
     return ABBREV_BARE_RE.sub(
         lambda m: ABBREV_UNITS.get(m.group(1).lower(), m.group(1)) + " ", text)

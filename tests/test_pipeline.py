@@ -106,6 +106,8 @@ def test_expand_units_needs_a_dot_for_single_letters():
     assert expand_units("Мангушский р-н") == "Мангушский район "
     assert expand_units("с Азовского моря") == "с Азовского моря"
     assert expand_units("и т.д. дальше") == "и т.д. дальше"
+    assert (expand_units("Богородский Д.Константиновский Павловский")
+            == "Богородский Дальнеконстантиновский район Павловский")
 
 
 @pytest.mark.parametrize("word,gender", [
