@@ -2853,6 +2853,56 @@ def test_night_audit_aftermath_and_backdrop_are_not_events():
                  ).signal_type == "danger"
 
 
+@pytest.mark.parametrize("text", [
+    (
+        "На записи — первые минуты после удара ВСУ по детскому центру "
+        "Краснодара. В тот вечер всё шло как обычно. Именно поэтому, по "
+        "словам родителей, сирены перед ударом никто не услышал. Когда "
+        "прогремел взрыв, жители помогали раненым. Погибли четверо детей."
+    ),
+    (
+        "В Краснодаре УК могут оштрафовать за закрытые укрытия. После "
+        "атаки БПЛА 24 августа жители столкнулись с проблемой: подвалы, "
+        "которые должны использоваться как укрытия, оказались закрыты."
+    ),
+])
+def test_dated_or_recorded_past_attack_is_not_live(text):
+    """Архивный репортаж не открывает тревогу в момент публикации."""
+    assert not parse(text).relevant
+
+
+def test_past_attack_story_keeps_a_separate_live_status():
+    text = (
+        "После атаки БПЛА 24 августа власти проверили укрытия. "
+        "Сейчас над Краснодаром работает ПВО по БПЛА."
+    )
+    observation = parse(text)
+    assert observation.relevant
+    assert observation.signal_type == "intercept"
+
+
+def test_misinformation_story_does_not_change_map_state():
+    """Пересказ вброса — не фиксация и не отбой настоящего события."""
+    text = (
+        "Внимание! В городских чатах распространяется недостоверная "
+        "информация. Якобы с 1 сентября увеличат скорость на трассах "
+        "Краснодар — Темрюк ввиду пролётов БПЛА. Друзья, это FAKE. "
+        "Не верьте таким вбросам."
+    )
+    assert not parse(text).relevant
+
+
+def test_fire_service_vehicles_are_not_drone_targets():
+    text = (
+        "Частный дом загорелся в Новознаменском под Краснодаром. Площадь "
+        "распространения огня составила 220 квадратных метров. На месте "
+        "задействованы 14 специалистов и 5 единиц специальной техники."
+    )
+    observation = parse(text)
+    assert observation.target_count is None
+    assert not observation.relevant
+
+
 def test_broad_audit_service_phrases_do_not_shift_classes():
     """Широкий аудит 25.08: служебные обороты не меняют класс события.
 
@@ -2876,6 +2926,8 @@ def test_broad_audit_service_phrases_do_not_shift_classes():
                      "очередь небольшая;").relevant
     # Настоящее «это фейк» — по-прежнему опровержение.
     assert parse("Информация о взрыве в Туле — это фейк, не верьте"
+                 ).signal_type == "retracted"
+    assert parse("Информация о взрыве в Туле — это FAKE, не верьте"
                  ).signal_type == "retracted"
 
 
