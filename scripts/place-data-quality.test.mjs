@@ -20,6 +20,10 @@ const supplementalSource = JSON.parse(readFileSync(
   "utf8"
 ));
 const namesById = new Map(payload.rows.map((row) => [String(row[0]), row[1]]));
+const districtById = new Map(districts.features.map((feature) => [
+  feature.properties.id,
+  feature
+]));
 const hasNonCyrillicLetter = (value) => [...value].some((character) =>
   /\p{Letter}/u.test(character) && !/\p{Script=Cyrillic}/u.test(character)
 );
@@ -34,6 +38,7 @@ describe("prepared place names", () => {
 
   it.each([
     ["556951", "Ильский"],
+    ["500886", "Ртищево"],
     ["483029", "Тихорецк"],
     ["558418", "Грозный"],
     ["13580034", "Правый Берег"],
@@ -81,6 +86,8 @@ describe("prepared district names", () => {
       const expected = supplementalDistrictNames.get(feature.properties.shapeName);
       if (!expected) continue;
       expect(byId.get(feature.properties.shapeID)).toBe(expected);
+      expect(districtById.get(feature.properties.shapeID)?.properties.nameLocked)
+        .toBe(true);
     }
   });
 });

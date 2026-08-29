@@ -210,6 +210,14 @@ FEATURE_ALIASES = {
     "снк": "славянск-на-кубани",
 }
 
+# Псевдонимы к конкретной исходной зоне. Обычный FEATURE_ALIASES ищет цель
+# по имени, но «Балаклавский район» есть и у ошибочного supplemental-полигона
+# в Крыму. Фиолент должен всегда вести в логический район Севастополя,
+# независимо от региона канала.
+PINNED_SOURCE_ALIASES = {
+    "фиолент": "synthetic-sevastopol-balaklavskiy",
+}
+
 # Города новых регионов, которых в справочнике нет под своим именем: набор
 # UKR ADM2 даёт только округа («Артемовский округ», «Ясиноватский округ»),
 # а ленты называют сам город. Без псевдонима «ДНР: Часов Яр, Артёмовск,
@@ -223,9 +231,9 @@ FEATURE_ALIASES = {
 # области), у последней в справочнике нет цели вовсе. Их разводит общий
 # механизм контекста.
 CITY_ALIASES = {
-    "артемовск": "артемовский округ",
-    "ясиноватая": "ясиноватский округ",
-    "молодогвардейск": "краснодонский округ",
+    "артемовск": "артемовский район",
+    "ясиноватая": "ясиноватский район",
+    "молодогвардейск": "краснодонский район",
 }
 
 # Регионы, внутри которых псевдоним города обязан лежать: сетка округов
@@ -272,7 +280,7 @@ GROUP_ALIASES: dict[tuple[str, str], tuple[str, ...]] = {
         "таганрог",
     ),
     ("запорожская область", "приазовье"): (
-        "приазовский округ", "бердянский округ", "приморский округ",
+        "приазовский район", "бердянский район", "приморский район",
     ),
 }
 
@@ -473,6 +481,18 @@ class Geocoder:
                     continue
                 name_sets.setdefault(key, set()).update(hits)
                 stem_sets.setdefault(stem_key(key), set()).update(hits)
+
+        by_source = {
+            str(zone.get("source_id") or ""): zone_id
+            for zone_id, zone in self.zones.items()
+        }
+        for alias, source_id in PINNED_SOURCE_ALIASES.items():
+            zone_id = by_source.get(source_id)
+            if not zone_id:
+                continue
+            key = norm_key(alias)
+            name_sets[key] = {zone_id}
+            stem_sets[stem_key(key)] = {zone_id}
 
     @lru_cache(maxsize=100_000)
     def chain(self, zone_id: str) -> tuple[str, ...]:
@@ -1017,6 +1037,12 @@ class Geocoder:
             self._is_prominent(candidates) or self._is_noun_form(key))
         admin_ids = {zone_id for zone_id in candidates
                      if self.zones[zone_id]["level"] != "place"}
+        place_roots = {
+            self.chain(zone_id)[-1]
+            for zone_id in candidates
+            if self.zones[zone_id]["level"] == "place"
+        }
+        cross_region_place_homonym = len(place_roots) > 1
 
         scored: list[tuple[float, str]] = []
         for zone_id in candidates:
@@ -1065,6 +1091,14 @@ class Geocoder:
             # значило бы сажать каждое обиходное слово на местную деревню.
             if in_home:
                 score += 100_000
+            # Когда сообщение само называет несколько соседних регионов,
+            # узнаваемый город должен выигрывать у одноимённой деревни из
+            # домашнего региона канала. Контекст обязателен: без него точная
+            # местная деревня по-прежнему имеет приоритет домашней ленты.
+            if (cross_region_place_homonym and in_context and match.exact
+                    and zone["level"] == "place"
+                    and (zone["population"] or 0) >= PROMINENT_POPULATION):
+                score += 150_000
             # Административные единицы надежнее одноименных деревень. Но
             # крупный город — не деревня: если одноимённая админ-единица его
             # не содержит, она из другого региона и проигрывает. Так «Донецк»

@@ -495,7 +495,14 @@ PAST_EVENT_REPORT_RE = re.compile(
     r"(?:атак|удар|нал[её]т|обстрел)\w*"
     r"|после\s+(?:\w+\s+){0,2}?(?:атак|удар|нал[её]т|обстрел)\w*"
     r"[^.!?\n]{0,100}?\b\d{1,2}\s+(?:январ|феврал|март|апрел|ма[яй]"
-    r"|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*\b",
+    r"|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*\b"
+    # Утренняя новость о завершённой ночной атаке: жертвы и итоговый счёт
+    # ПВО описаны в прошедшем времени. Без этого «ПВО во время отражения
+    # атаки сбила 26 дронов» открывало новый live-перехват в момент публикации.
+    r"|(?:погиб|пострадал|ранен)\w*[^.!?\n]{0,100}?"
+    r"\bпри\s+ночн\w+\s+(?:атак|удар|обстрел|нал[её]т)\w*"
+    r"|пво\s+во\s+время\s+отражени\w+\s+(?:атак|удар|нал[её]т)\w*"
+    r"[^.!?\n]{0,80}?\b(?:сбил|уничтожил|перехватил)\w*",
     re.IGNORECASE,
 )
 
@@ -1375,7 +1382,17 @@ ALLCLEAR_RE = re.compile(ALLCLEAR_PATTERN, re.IGNORECASE)
 # отдельного разбора именно перечисленные исключения закрывались первыми.
 PERSISTING_STATUS_RE = re.compile(
     r"(?:опасност|угроз|тревог)\w*[^.!?\n]{0,70}?сохраня\w*"
-    r"|сохраня\w*[^.!?\n]{0,70}?(?:опасност|угроз|тревог)\w*",
+    r"|сохраня\w*[^.!?\n]{0,70}?(?:опасност|угроз|тревог)\w*"
+    # «Режим повышенного внимания сохраняется» — тот же сохраняющийся
+    # статус, хотя слов «опасность/угроза» в самой фразе нет.
+    r"|режим\w*(?:\s+повышенн\w+)?\s+внимани\w*"
+    r"[^.!?\n]{0,40}?сохраня\w*"
+    r"|сохраня\w*[^.!?\n]{0,40}?режим\w*"
+    r"(?:\s+повышенн\w+)?\s+внимани\w*",
+    re.IGNORECASE,
+)
+POST_CLEAR_ATTENTION_RE = re.compile(
+    r"\bрежим\w*(?:\s+повышенн\w+)?\s+внимани\w*\b",
     re.IGNORECASE,
 )
 CLEAR_EXCEPTION_RE = re.compile(
@@ -1440,6 +1457,48 @@ def preserved_phrases(phrases: list[str]) -> tuple[list[str], bool]:
         if absorbing:
             kept.append(phrase)
     return kept, has_persisting_status
+
+
+def allclear_target_phrases(phrases: list[str], threat: str) -> list[str]:
+    """Оставить только географию, к которой относится отбой.
+
+    Каналы склеивают в один пост локальный отбой и следующий оперативный
+    статус: «Пенза — отбой. Масса сбита над Воронежской областью» либо
+    «Ейск — отбой. Режим внимания сохраняется, Тамань приготовиться».
+    Общий сигнал сообщения остаётся отбоем, но зоны после смены статуса не
+    являются его адресатами. Без границы один пензенский пост закрыл двадцать
+    воронежских событий, а локальный кубанский отбой — 75 событий Крыма.
+    """
+    first_clear = next(
+        (index for index, phrase in enumerate(phrases)
+         if ALLCLEAR_RE.search(phrase)),
+        None,
+    )
+    if first_clear is None:
+        return phrases
+
+    for index in range(first_clear, len(phrases)):
+        phrase = phrases[index]
+        clear = ALLCLEAR_RE.search(phrase) if index == first_clear else None
+        tail_start = clear.end() if clear else 0
+        tail = phrase[tail_start:]
+
+        persisting = PERSISTING_STATUS_RE.search(tail)
+        attention = POST_CLEAR_ATTENTION_RE.search(tail)
+        boundary_match = persisting or attention
+        if boundary_match:
+            boundary = tail_start + boundary_match.start()
+            trimmed = phrase[:boundary].strip(" ,—-")
+            return [*phrases[:index], *([trimmed] if trimmed else [])]
+
+        if index == first_clear:
+            continue
+        signal, _severity = classify_signal(phrase, threat)
+        if (POST_CLEAR_ATTENTION_RE.search(phrase)
+                or signal not in {"unknown", "allclear"}):
+            return phrases[:index]
+
+    return phrases
 
 # Живые команды, несовместимые с отбоем: настоящий отбой не просит
 # укрыться и не говорит «идёт отражение». Совпадение с отбойной формой

@@ -33,4 +33,4 @@ def test_finalizer_preserves_published_zone_ids(tmp_path, monkeypatch):
     district = json.loads(districts.read_text(encoding="utf-8"))["features"][0]["properties"]
     assert region["zone"] == "stable-region"
     assert district["zone"] == "stable-district"
-    assert "nameLocked" not in district
+    assert district["nameLocked"] is True

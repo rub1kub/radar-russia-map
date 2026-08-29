@@ -44,7 +44,6 @@ def restore_stable_zone_ids(zone_ids: dict[str, str]) -> None:
             stable_id = zone_ids.get(str(properties.get("id") or ""))
             if stable_id:
                 properties["zone"] = stable_id
-            properties.pop("nameLocked", None)
         path.write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",

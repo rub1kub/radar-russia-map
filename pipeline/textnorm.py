@@ -64,6 +64,16 @@ DALNEKONSTANTINOVSKY_RE = re.compile(
     r"(?<![\w-])д\.\s*константиновск\w*", re.IGNORECASE
 )
 
+# В коротких сводках два региона часто делят одно родовое слово:
+# «Саратовской/Пензенской областей». Без раскрытия геокодер видит полное
+# название только у второго региона и выбирает одноимённый населённый пункт
+# внутри него. Оба контекста должны стать самостоятельными фразами.
+SHARED_REGION_UNIT_RE = re.compile(
+    r"\b([а-яё][а-яё-]{2,})\s*/\s*([а-яё][а-яё-]{2,})\s+"
+    r"(областей|кра[её]в)\b",
+    re.IGNORECASE,
+)
+
 
 def expand_units(text: str) -> str:
     """Раскрыть сокращения типа НП: «ст. Динская» -> «станица Динская».
@@ -72,6 +82,11 @@ def expand_units(text: str) -> str:
     съедает. Полное слово потом работает маркером — за ним стоит название
     населённого пункта, а не одноимённой области.
     """
+    def expand_shared_region(match: re.Match[str]) -> str:
+        unit = "области" if match.group(3).lower() == "областей" else "края"
+        return f"{match.group(1)} {unit} / {match.group(2)} {unit}"
+
+    text = SHARED_REGION_UNIT_RE.sub(expand_shared_region, text)
     text = DALNEKONSTANTINOVSKY_RE.sub("Дальнеконстантиновский район", text)
     text = ABBREV_RE.sub(lambda m: ABBREV_UNITS[m.group(1).lower()] + " ", text)
     return ABBREV_BARE_RE.sub(

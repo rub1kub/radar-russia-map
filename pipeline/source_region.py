@@ -25,6 +25,17 @@ REGION_WIDE_CLEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Регион в конструкции «Ртищево, примерно стык Саратовской/Пензенской
+# областей» уточняет положение точки, но не является самостоятельным
+# адресатом события. Если конкретного места нет, регионы сохраняются:
+# сообщение «работа ПВО на стыке двух областей» всё ещё должно попасть на
+# карту хотя бы с региональной точностью.
+BORDER_CONTEXT_RE = re.compile(
+    r"\b(?:стык\w*|границ\w*)\b[^.!?\n]{0,120}"
+    r"\b(?:област\w*|кра(?:й|я|е|ёв|ев)\w*|республик\w*)\b",
+    re.IGNORECASE,
+)
+
 # Ключ региона из ingest/config.py -> название в справочнике зон.
 REGION_NAMES: dict[str, str] = {
     "adygea": "Адыгея",
@@ -127,8 +138,21 @@ def resolve_observation_zones(geocoder, observation, home: str | None):
     ложного массового отбоя.
     """
     from .geocode import Resolved, preserved_zone_ids
+    from .parse import allclear_target_phrases
 
-    candidates = geocoder.resolve(observation.place_phrases, home=home)
+    target_phrases = (
+        allclear_target_phrases(
+            observation.place_phrases, observation.threat_type
+        )
+        if observation.signal_type == "allclear"
+        else observation.place_phrases
+    )
+    candidates = geocoder.resolve(target_phrases, home=home)
+    if (
+        any(BORDER_CONTEXT_RE.search(phrase) for phrase in target_phrases)
+        and any(item.level != "region" for item in candidates)
+    ):
+        candidates = [item for item in candidates if item.level != "region"]
     protected = (
         preserved_zone_ids(
             geocoder, observation.place_phrases, home

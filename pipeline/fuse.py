@@ -168,6 +168,11 @@ class Fuser:
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._open: list[Event] = []
+        # Два разных топонима одного сообщения могут после безопасного
+        # укрупнения попасть в один район: «Фиолент, Балаклава» ->
+        # Балаклавский район. Повторный add от того же raw не является новым
+        # наблюдением и не должен заводить событие-близнец.
+        self._seen_observations: set[tuple[int, str, str, str]] = set()
         # Уже выданные идентификаторы. make_id — хеш (зона|угроза|секунда
         # начала), и в живом потоке он не сталкивался годами. Догонка после
         # простоя 24.08 вставила сообщения не в хронологическом порядке
@@ -248,6 +253,12 @@ class Fuser:
         """Добавить наблюдение. Возвращает затронутое событие."""
         self._prune(moment)
         zone_id = zone_path[0]
+        observation_key = (
+            raw_id, zone_id, observation.signal_type, observation.threat_type
+        )
+        if observation_key in self._seen_observations:
+            return None
+        self._seen_observations.add(observation_key)
 
         # Отбой закрывает открытые события в этой зоне и ниже — но только по
         # той угрозе, которая названа. Коррекция ``retracted`` строже: она

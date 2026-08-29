@@ -38,6 +38,9 @@ def load_polygons(path: Path) -> list[dict]:
             "source_id": str(feature["properties"].get("id") or ""),
             "name": str(feature["properties"].get("name") or "").strip(),
             "name_locked": bool(feature["properties"].get("nameLocked")),
+            "published_zone_id": str(
+                feature["properties"].get("zone") or ""
+            ),
             # Акваторию отличаем по метке из исходных данных: она зона, но
             # не родитель — см. build().
             "kind": feature["properties"].get("kind"),
@@ -120,6 +123,19 @@ def assign_unique(slug: str, taken: set[str]) -> str:
     return unique
 
 
+def published_or_unique(row: dict, fallback: str, taken: set[str]) -> str:
+    """Сохранить уже опубликованный zone ID при повторной сборке.
+
+    Имена районов уточняются по ОКТМО и закреплённому русскому словарю, но
+    изменение подписи не должно менять идентификатор подписок, SEO и API.
+    """
+    published = row.get("published_zone_id")
+    if published and published not in taken:
+        taken.add(published)
+        return published
+    return assign_unique(fallback, taken)
+
+
 def build(connection: sqlite3.Connection) -> dict[str, int]:
     connection.execute("DELETE FROM zone_names")
     connection.execute("DELETE FROM zones")
@@ -137,7 +153,7 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
     regions = load_polygons(DATA / "regions.json")
     region_ids: list[str] = []
     for region in regions:
-        zone_id = assign_unique(slugify(region["name"]), taken)
+        zone_id = published_or_unique(region, slugify(region["name"]), taken)
         region["zone_id"] = zone_id
         region_ids.append(zone_id)
         centroid = region["geom"].representative_point()
@@ -170,16 +186,20 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
     district_tree = STRtree([district["geom"] for district in districts])
 
     # НП раскладываются по полигонам раньше, чем районы получают имена:
-    # именно состав НП и опознаёт район в реестре ОКТМО. Имя должно быть
-    # известно до того, как из него построен идентификатор зоны.
+    # именно состав НП и опознаёт район в реестре ОКТМО. Два повреждённых
+    # supplemental-пересечения исключены явно: иначе Севастополь и Евпатория
+    # становятся дочерними Нахимовского района.
+    direct_region_places = {"694423", "688105"}
     places = json.loads((DATA / "places.json").read_text(encoding="utf-8"))["rows"]
     place_parent: list[int | None] = []
-    inside: dict[int, list[str]] = {}
+    inside: dict[int, list[tuple[str, int]]] = {}
     for row in places:
         point = Point(row[4], row[3])
         hits = [index for index in district_tree.query(point)
                 if districts[index]["geom"].contains(point)]
         index = min(hits, key=lambda i: districts[i]["geom"].area) if hits else None
+        if str(row[0]) in direct_region_places:
+            index = None
         place_parent.append(index)
         if index is not None:
             inside.setdefault(index, []).append((norm_key(row[1]), row[5] or 0))
@@ -272,7 +292,7 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
         base = slugify(district["name"])
         if parent:
             base = f"{base}_{parent}"
-        zone_id = assign_unique(base, taken)
+        zone_id = published_or_unique(district, base, taken)
         district["zone_id"] = zone_id
         district_ids.append(zone_id)
         centroid = district["geom"].representative_point()
@@ -284,10 +304,37 @@ def build(connection: sqlite3.Connection) -> dict[str, int]:
     print(f"районов:  {len(districts)}, имя исправлено по ОКТМО у {renamed}, "
           f"полей в файле полигонов {touched}")
 
+    # В supplemental ADM2 нет надёжных отдельных полигонов Гагаринского и
+    # Балаклавского районов Севастополя: первый отсутствует, второй ошибочно
+    # накрывает южный берег Крыма. Для событий важнее корректная иерархия,
+    # поэтому добавляем логические зоны без выдуманной геометрии. На карте
+    # они используют опорную точку, а не ложный полигон другого региона.
+    synthetic_districts: dict[str, str] = {}
+    sevastopol = next(
+        (region["zone_id"] for region in regions
+         if region["name"] == "Севастополь"),
+        None,
+    )
+    if sevastopol:
+        for key, name, lat, lon in (
+            ("balaklavskiy", "Балаклавский район", 44.505, 33.600),
+            ("gagarinskiy", "Гагаринский район", 44.585, 33.455),
+            ("leninskiy", "Ленинский район", 44.605, 33.520),
+        ):
+            zone_id = assign_unique(f"{key}_rayon_{sevastopol}", taken)
+            synthetic_districts[key] = zone_id
+            add_zone(zone_id, sevastopol, "district", name,
+                     lat, lon, None, None, f"synthetic-sevastopol-{key}")
+
     # --- Населенные пункты ---------------------------------------------
     for row, index in zip(places, place_parent):
         place_id, name, _ascii, lat, lon, population, code, _label = row
-        parent = district_ids[index] if index is not None else find_region(Point(lon, lat))
+        parent = (
+            synthetic_districts.get("balaklavskiy")
+            if str(place_id) == "712930"
+            else district_ids[index] if index is not None
+            else find_region(Point(lon, lat))
+        )
         zone_id = assign_unique(f"{slugify(name)}_{parent or 'ru'}", taken)
         add_zone(zone_id, parent, "place", name, lat, lon, population, code, str(place_id))
 

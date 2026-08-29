@@ -295,6 +295,75 @@ def test_named_region_beats_source_region(geocoder):
     assert region_of(geocoder, hits[0].zone_id) == "Амурская область"
 
 
+def test_rtishchevo_city_beats_border_village(geocoder):
+    """Ртищево у стыка областей — город, не пензенская деревня-тёзка."""
+    from pipeline.geocode import coarsen_intercept
+    from pipeline.parse import parse
+    from pipeline.source_region import resolve_observation_zones
+
+    penza = region_zone(geocoder, "Пензенская область")
+    hits = geocoder.resolve(
+        ["Ртищево", "примерно стык Саратовской/Пензенской областей"],
+        home=penza,
+    )
+    city = next(item for item in hits if item.name == "Ртищево")
+    assert region_of(geocoder, city.zone_id) == "Саратовская область"
+    assert coarsen_intercept(geocoder, city).name == "Ртищевский район"
+
+    observation = parse(
+        "Ртищево, примерно стык Саратовской/Пензенской областей. "
+        "Предварительно отработало ПВО по ракете"
+    )
+    zones, used_home = resolve_observation_zones(geocoder, observation, penza)
+    assert [item.name for item in zones] == ["Ртищево"]
+    assert not used_home
+
+
+def test_sevastopol_districts_do_not_escape_to_crimea_or_smolensk(geocoder):
+    """Балаклава/Фиолент и Гагаринский остаются внутри Севастополя."""
+    from pipeline.geocode import coarsen_intercept
+
+    home = region_zone(geocoder, "Севастополь")
+    resolved = geocoder.drop_covered(geocoder.resolve(
+        ["Фиолент", "Балаклава", "Гагаринский"], home=home
+    ))
+    coarse = {coarsen_intercept(geocoder, item).name for item in resolved}
+    assert coarse == {"Балаклавский район", "Гагаринский район"}
+    assert all(
+        region_of(geocoder, item.zone_id) == "Севастополь"
+        for item in resolved
+    )
+
+    # Федеральный источник не имеет home-региона. Фиолент всё равно не
+    # должен попадать в одноимённый повреждённый полигон Республики Крым.
+    federal = geocoder.drop_covered(geocoder.resolve(
+        ["Фиолент", "Балаклава", "Гагаринский"]
+    ))
+    federal_coarse = [coarsen_intercept(geocoder, item) for item in federal]
+    assert {item.zone_id for item in federal_coarse} == {
+        "balaklavskiy_rayon_sevastopol",
+        "gagarinskiy_rayon_sevastopol",
+    }
+    assert all(
+        region_of(geocoder, item.zone_id) == "Севастополь"
+        for item in federal_coarse
+    )
+
+    generic = geocoder.drop_covered(
+        geocoder.resolve(["Севастополь"], home=home)
+    )
+    assert {coarsen_intercept(geocoder, item).zone_id for item in generic} == {
+        home
+    }
+
+    evpatoria = geocoder.resolve(["Евпатория"])
+    assert evpatoria
+    assert all(
+        region_of(geocoder, item.zone_id) == "Республика Крым"
+        for item in evpatoria
+    )
+
+
 def test_source_region_does_not_rescue_weak_matches(geocoder):
     """Дом — только для ранжирования выживших кандидатов. Обиходное слово
     без контекста по-прежнему отбрасывается, а не садится на местную

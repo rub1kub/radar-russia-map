@@ -108,6 +108,10 @@ def test_expand_units_needs_a_dot_for_single_letters():
     assert expand_units("и т.д. дальше") == "и т.д. дальше"
     assert (expand_units("Богородский Д.Константиновский Павловский")
             == "Богородский Дальнеконстантиновский район Павловский")
+    assert (
+        expand_units("стык Саратовской/Пензенской областей")
+        == "стык Саратовской области / Пензенской области"
+    )
 
 
 @pytest.mark.parametrize("word,gender", [
@@ -1097,6 +1101,31 @@ def test_mixed_allclear_does_not_close_places_where_danger_persists(geocoder):
     zones, _ = resolve_observation_zones(geocoder, federal, None)
     assert zones == []
 
+    # Локальный отбой заканчивается перед новым статусом. Приазовье,
+    # Тамань, Крым и Азовское море не являются адресатами отбоя.
+    azov = parse(
+        "Приморско-Ахтарск, Ейск и близлежащие отбой опасности по БПЛА. "
+        "Режим повышенного внимания сохраняется. Приазовье "
+        "Краснодарского края, Таманский полуостров приготовиться к "
+        "возможной массовой атаке БПЛА с направления Крыма через "
+        "Азовское море"
+    )
+    zones, _ = resolve_observation_zones(
+        geocoder, azov, "krasnodarskiy_kray"
+    )
+    assert bare_names(zones) == {"Приморско-Ахтарск", "Ейск"}
+
+    # Сводка после отбоя относится к другому региону и не должна его
+    # закрывать общим сигналом сообщения.
+    penza = parse(
+        "Пензенская область, отбой опасности по БПЛА. Режим внимания. "
+        "Масса сбита над Воронежской областью."
+    )
+    zones, _ = resolve_observation_zones(
+        geocoder, penza, "penzenskaya_oblast"
+    )
+    assert bare_names(zones) == {"Пензенская область"}
+
 
 def test_geocoder_resolves_homonym_by_context(geocoder):
     resolved = geocoder.resolve(["Успенское", "Краснодарский край"])
@@ -1456,6 +1485,15 @@ def test_repeat_from_same_source_does_not_inflate_confidence():
     first = fuser.events[0].confidence
     add(fuser, 1, "a")
     assert fuser.events[0].confidence == first
+
+
+def test_same_raw_cannot_create_duplicate_event_in_one_zone():
+    """Фиолент и Балаклава укрупняются в один Балаклавский район."""
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="intercept", severity=8)
+    add(fuser, 0, "a", signal="intercept", severity=8)
+    assert len(fuser.events) == 1
+    assert len(fuser.events[0].contributions) == 1
 
 
 def test_allclear_resolves_open_event():
@@ -2866,6 +2904,11 @@ def test_night_audit_aftermath_and_backdrop_are_not_events():
         "В Краснодаре УК могут оштрафовать за закрытые укрытия. После "
         "атаки БПЛА 24 августа жители столкнулись с проблемой: подвалы, "
         "которые должны использоваться как укрытия, оказались закрыты."
+    ),
+    (
+        "Один человек погиб и трое пострадали при ночном ударе ВСУ по "
+        "Севастополю, сообщил губернатор. ПВО во время отражения атаки "
+        "сбила 26 дронов."
     ),
 ])
 def test_dated_or_recorded_past_attack_is_not_live(text):
