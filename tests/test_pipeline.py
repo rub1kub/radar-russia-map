@@ -891,12 +891,13 @@ def test_possible_intercept_is_not_a_confirmed_one():
     ловило.
     """
     for text in ("Мысхако\nВозможно пошли сбития\nНе попадите под осколки!",
-                 "Возможно сбит 🟡",
                  "Сохраняется внимание по БПЛА в районах: Кромской, "
                  "Ливенский. Возможна работа ПВО в ваших районах!"):
         o = parse(text)
         assert o.relevant
         assert o.signal_type == "danger", text
+    # Ни место, ни воздушная цель не названы: публиковать нечего.
+    assert not parse("Возможно сбит 🟡").relevant
     # Настоящий, уже случившийся перехват остаётся перехватом.
     assert parse("Орловский район работа ПВО! Меры предосторожности!"
                  ).signal_type == "intercept"
@@ -2573,6 +2574,18 @@ def test_air_defence_on_standby_is_not_air_defence_at_work():
 ])
 def test_air_defence_actually_working_is_an_intercept(text):
     assert parse(text).signal_type == "intercept"
+
+
+def test_short_participle_downing_is_an_intercept_only_with_air_target():
+    """Официальное «сбито 30 БПЛА» не должно становиться фиксацией."""
+    for text in (
+        "Над территорией Ленинградской области сбито 30 БПЛА.",
+        "В небе над регионом ракеты сбиты силами ПВО.",
+        "Над городом сбита воздушная цель.",
+    ):
+        assert parse(text).signal_type == "intercept", text
+
+    assert not parse("На переходе пешеход сбит автомобилем.").relevant
 
 
 def test_readiness_for_shelling_is_not_a_strike():
