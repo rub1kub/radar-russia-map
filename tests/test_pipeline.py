@@ -198,9 +198,9 @@ def test_telegraph_format_without_verb_is_detection(text, threat):
     "Приготовиться к пускам Уаб самолётами противника",
     "Враг планирует ближе к ночи массовый запуск БПЛА в тыловые регионы",
 ])
-def test_alarm_without_the_word_alarm(text):
-    """Новые каналы объявляют тревогу, ни разу не сказав «тревога»."""
-    assert parse(text).signal_type == "alarm"
+def test_urgent_warning_without_an_explicit_alarm_is_danger(text):
+    """Срочная команда не доказывает, что официально объявлена тревога."""
+    assert parse(text).signal_type == "danger"
 
 
 @pytest.mark.parametrize("text,signal", [
@@ -211,8 +211,8 @@ def test_alarm_without_the_word_alarm(text):
     ("В Кировской области отмена ракетной опасности", "allclear"),
     ("Беспилотная опасность в Ленинградской области снята", "allclear"),
     # Ожидание отбоя — всё ещё активная тревога.
-    ("Объявлена РАКЕТНАЯ ОПАСНОСТЬ. Оставайтесь в укрытии до сигнала «Отбой»", "alarm"),
-    ("Укрытия не покидаем до отбоя!", "alarm"),
+    ("Объявлена РАКЕТНАЯ ОПАСНОСТЬ. Оставайтесь в укрытии до сигнала «Отбой»", "danger"),
+    ("Укрытия не покидаем до отбоя!", "danger"),
     ("Никакого отбоя нет, угроза сохраняется", "danger"),
     ("Беспилотная опасность не снята", "danger"),
 ])
@@ -407,7 +407,7 @@ def test_long_launch_warning_naming_foreign_origin_survives():
         "Общее количество планируемых к запуску БПЛА составляет от 200 единиц"
     )
     assert observation.relevant
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == "danger"
 
 
 def test_denial_of_attack_is_not_an_impact():
@@ -572,7 +572,7 @@ def test_armament_news_is_not_an_observation(text):
 
 @pytest.mark.parametrize("text,signal", [
     ("Новороссийск готовность к комбинированной атаке БПЛА+БЭК. "
-     "Хотят сорвать праздник ВМФ", "alarm"),
+     "Хотят сорвать праздник ВМФ", "danger"),
     ("Ракета уничтожена силами ВКС, летящая на Екатеринбург. "
      "Отбой ракетной опасности", "allclear"),
 ])
@@ -756,14 +756,14 @@ def test_prepare_for_fixations_stays_slang_not_alarm():
     o = parse("Краснодар и близлежащие, тревога по БпЛА \n"
               "Приготовиться к фиксациям")
     assert o.signal_type == "danger"
-    # Настоящее ожидание удара/атаки/сбития остаётся тревогой.
+    # Ожидание удара/атаки/сбития остаётся предупреждением, не тревогой.
     for text in ("Краснодар приготовиться к атаке",
                  "Приготовиться к сбитиям БПЛА",
                  "Приготовиться к работе ПВО",
                  "Пенза — приготовиться к звучанию сигнала «Внимание всем»",
                  "Приготовиться к массированному налёту БПЛА от "
                  "Харьковской области"):
-        assert parse(text).signal_type == "alarm", text
+        assert parse(text).signal_type == "danger", text
     # Настоящая фиксация рядом с тем же оборотом не гасится.
     assert parse("Фиксация БПЛА над Ейском, приготовиться к фиксациям "
                  "соседям").signal_type == "detection"
@@ -829,7 +829,7 @@ def test_map_credibility_poll_is_not_a_retraction():
     ("Кстово. Было сбитие. Сейчас еще 1 подходит, предварительно "
      "последний.", "danger"),
     ("Кстово и близлежащие. Будут еще сбития, работа продолжается, "
-     "еще подходят.", "alarm"),
+     "еще подходят.", "danger"),
 ])
 def test_aftermath_and_future_intercepts_do_not_look_current(text, signal):
     observation = parse(text)
@@ -891,11 +891,12 @@ def test_possible_intercept_is_not_a_confirmed_one():
     ловило.
     """
     for text in ("Мысхако\nВозможно пошли сбития\nНе попадите под осколки!",
+                 "Возможно сбит 🟡",
                  "Сохраняется внимание по БПЛА в районах: Кромской, "
                  "Ливенский. Возможна работа ПВО в ваших районах!"):
         o = parse(text)
         assert o.relevant
-        assert o.signal_type != "intercept", text
+        assert o.signal_type == "danger", text
     # Настоящий, уже случившийся перехват остаётся перехватом.
     assert parse("Орловский район работа ПВО! Меры предосторожности!"
                  ).signal_type == "intercept"
@@ -1045,9 +1046,12 @@ def test_group_raid_is_not_invented_as_ten_targets():
     assert counted.target_count == 2
     assert counted.massive is False
 
-    # Вес групповому налёту по-прежнему добавляется.
+    # Групповой налёт остаётся признаком без выдуманного числа. Сам по себе
+    # он не превращает предупреждение в объявленную тревогу.
     plain = parse("Опасность по БПЛА в Ростовской области")
-    assert parse("Массированный пуск БПЛА по Ростовской области").severity > plain.severity
+    launch = parse("Массированный пуск БПЛА по Ростовской области")
+    assert launch.signal_type == plain.signal_type == "danger"
+    assert launch.massive is True
 
 
 # --- Геокодер (на реальном справочнике) -------------------------------------
@@ -1993,10 +1997,10 @@ def test_subscription_footer_does_not_kill_a_real_alert():
 
 
 @pytest.mark.parametrize("text,signal,severity", [
-    ("Новороссийск\nуточняем характер взрыва", "alarm", 7),
-    ("Проверяем информацию о работе ПВО в Таганроге", "alarm", 7),
+    ("Новороссийск\nуточняем характер взрыва", "danger", 5),
+    ("Проверяем информацию о работе ПВО в Таганроге", "danger", 5),
 ])
-def test_unconfirmed_report_is_an_alarm_not_a_fact(text, signal, severity):
+def test_unconfirmed_report_is_a_warning_not_a_fact(text, signal, severity):
     """«Уточняем характер взрыва» — вопрос к самому себе, а не взрыв.
 
     Слово «взрыв» давало impact девятого уровня, высший на шкале; часом
@@ -2417,7 +2421,7 @@ def test_possible_downings_are_a_warning_not_a_downing():
     """«Возможны фиксации и сбития» — прогноз, борта ещё никто не видел."""
     observation = parse("От Тамани до Туапсе\nТревога по БПЛА\n"
                         "Тамань\nАнапа\nНовороссийск\nВозможны фиксации и сбития")
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == "danger"
 
 
 def test_extinguished_fire_is_not_an_intercept():
@@ -2449,6 +2453,18 @@ def test_bare_direction_splits_observation_from_target(text, observed, target):
     head, tail = split_directions([text])
     assert head and observed in head[0]
     assert tail and target in tail[0]
+
+
+def test_direction_towards_city_does_not_put_intercept_in_city():
+    """Сбития по направлению Петербурга происходят не в Петербурге."""
+    text = (
+        "Массовые сбития БПЛА в разных районах Ленинградской области "
+        "по направлению Санкт-Петербурга."
+    )
+    observed, targets = split_directions(parse(text).place_phrases)
+
+    assert any("Ленинградской области" in phrase for phrase in observed)
+    assert targets == ["Санкт-Петербурга"]
 
 
 @pytest.mark.parametrize("text", [
@@ -2563,7 +2579,7 @@ def test_readiness_for_shelling_is_not_a_strike():
     """«Готовность к возможному обстрелу» — обстрела ещё не было."""
     observation = parse(
         "Погар и близлежащие готовность к возможному обстрелу. БПЛА разведка")
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == "danger"
 
 
 @pytest.mark.parametrize("text", [
@@ -2635,15 +2651,31 @@ def test_planned_siren_test_is_not_an_alarm():
         assert parse(text).relevant is False, text
 
 
-def test_live_alarm_after_planned_siren_notice_is_preserved():
-    """Явная текущая тревога в смешанном посте важнее служебного анонса."""
+def test_live_danger_after_planned_siren_notice_is_preserved():
+    """Явная текущая опасность в смешанном посте важнее служебного анонса."""
     observation = parse(
         "Плановая проверка системы оповещения завершена, сирены выключены. "
         "Сейчас в Анапе объявлена опасность БПЛА.")
 
     assert observation.relevant is True
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == "danger"
     assert observation.threat_type == "uav"
+
+
+def test_siren_is_not_an_air_alarm_without_explicit_status():
+    """Сирена — наблюдаемый звук, а не доказательство объявления тревоги."""
+    assert not parse("Краснодар сирена 🚨").relevant
+
+    danger = parse("Динская объявили авиационную опасность, сирена")
+    assert (danger.signal_type, danger.threat_type) == ("danger", "aviation")
+
+    alarm = parse("В Краснодаре объявлена воздушная тревога, звучат сирены")
+    assert alarm.signal_type == "alarm"
+
+    false_krasnodar = parse(
+        "Динская сирена 🚨\n\n"
+        "Краснодар приготовиться занимать укрытия ‼️")
+    assert not false_krasnodar.relevant
 
 
 def test_paintball_is_not_shelling():
@@ -2781,7 +2813,7 @@ def test_future_work_of_air_defence_is_a_warning():
     """«Будет работать ПВО» — обещание, а не работа: перехвата ещё нет."""
     text = ("Краснодарский край Первые долеты БПЛА после пусков, "
             "меры безопасности. Будет работать пво.")
-    assert parse(text).signal_type == "alarm"
+    assert parse(text).signal_type == "danger"
 
 
 def test_expected_attack_with_probable_targets_is_a_forecast():
@@ -2882,8 +2914,9 @@ def test_night_audit_aftermath_and_backdrop_are_not_events():
         "игнорируйте сирены",
     ):
         assert not parse(text).relevant, text
-    # Сирены и живой перехват — не задеты.
-    assert parse("Краснодар сирена 🚨").signal_type == "alarm"
+    # Одиночная сирена не становится воздушной тревогой; живой перехват
+    # рядом с ней по-прежнему распознаётся.
+    assert not parse("Краснодар сирена 🚨").relevant
     assert parse("Краснодар сирена 🚨 \n\nСбитие БПЛА‼️"
                  ).signal_type == "intercept"
     assert parse("БПЛА попал в дом, работает ПВО по остальным"
