@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pyrogram import raw, utils
 from pyrogram.errors import FloodWait, RPCError
 from pyrogram.handlers import MessageHandler
 
@@ -250,19 +251,68 @@ def live_handler(connection, key_by_chat: dict[int, str]):
 async def subscribed_sources(client, sources) -> tuple[set[str], dict[int, str]]:
     """Каналы, где аккаунт состоит: их Telegram доставляет пушем.
 
-    Один проход по диалогам при старте; сопоставление по username и по
-    известному chat_id.
+    Читаем только метаданные диалогов. get_dialogs() заодно разбирает
+    последние сообщения всех чатов: ошибка RichText в постороннем чате
+    раньше останавливала весь сбор ещё до первого опроса.
     """
     by_username = {source.username.lower(): source for source in sources}
     keys: set[str] = set()
     chat_map: dict[int, str] = {}
-    async for dialog in client.get_dialogs():
-        username = (getattr(dialog.chat, "username", None) or "").lower()
-        source = by_username.get(username)
-        if source:
-            keys.add(source.key)
-            chat_map[dialog.chat.id] = source.key
+    offset_id = offset_date = 0
+    offset_peer = raw.types.InputPeerEmpty()
+    seen: set[int] = set()
+    while True:
+        page = await client.invoke(raw.functions.messages.GetDialogs(
+            offset_date=offset_date,
+            offset_id=offset_id,
+            offset_peer=offset_peer,
+            limit=100,
+            hash=0,
+            exclude_pinned=bool(seen),
+        ), sleep_threshold=60)
+        chats = {chat.id: chat for chat in page.chats}
+        dialogs = []
+        for dialog in page.dialogs:
+            if not isinstance(dialog, raw.types.Dialog):
+                continue
+            chat_id = utils.get_peer_id(dialog.peer)
+            if chat_id in seen:
+                continue
+            seen.add(chat_id)
+            dialogs.append(dialog)
+            if not isinstance(dialog.peer, raw.types.PeerChannel):
+                continue
+            chat = chats.get(dialog.peer.channel_id)
+            username = (getattr(chat, "username", None) or "").lower()
+            source = by_username.get(username)
+            if source:
+                keys.add(source.key)
+                chat_map[chat_id] = source.key
+        if not dialogs or not isinstance(page, raw.types.messages.DialogsSlice):
+            break
+
+        last = dialogs[-1]
+        last_chat_id = utils.get_peer_id(last.peer)
+        offset_id = last.top_message
+        # Для курсора нужны только id и дата, содержимое сообщения не читаем.
+        offset_date = next((
+            message.date for message in page.messages
+            if getattr(message, "id", None) == offset_id
+            and getattr(message, "peer_id", None) is not None
+            and utils.get_peer_id(message.peer_id) == last_chat_id
+        ), 0)
+        offset_peer = await client.resolve_peer(last_chat_id)
     return keys, chat_map
+
+
+async def discover_subscriptions(client, sources) -> tuple[set[str], dict[int, str]]:
+    try:
+        return await subscribed_sources(client, sources)
+    except Exception as error:  # noqa: BLE001 — опциональный шаг не блокирует сбор
+        print(f"[{now_utc().isoformat(timespec='seconds')}] "
+              f"подписки недоступны ({type(error).__name__}); "
+              "продолжаю обычный опрос всех источников", flush=True)
+        return set(), {}
 
 
 async def sweep(client, connection, sources, failures: dict | None = None) -> dict:
@@ -306,7 +356,7 @@ async def main() -> None:
             return
 
         # Подписанные каналы приходят пушем сразу — в обход круга опроса.
-        subscribed, key_by_chat = await subscribed_sources(client, sources)
+        subscribed, key_by_chat = await discover_subscriptions(client, sources)
         client.add_handler(MessageHandler(live_handler(connection, key_by_chat)))
         print(f"опрос {len(sources)} источников ярусами "
               f"(подписаны и слушаются пушем {len(subscribed)}), пауза "

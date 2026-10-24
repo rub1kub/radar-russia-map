@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pyrogram import raw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -170,6 +171,93 @@ def test_subscribed_channels_leave_the_hot_tier(tmp_path):
               if "busy" in {s.key for s in cycle_sources(
                   connection, sources, {}, cycle, {"busy", "official1"})}]
     assert len(polled) == 1
+
+
+def dialog(channel_id: int, top_message: int):
+    return raw.types.Dialog(
+        peer=raw.types.PeerChannel(channel_id=channel_id),
+        top_message=top_message, read_inbox_max_id=0, read_outbox_max_id=0,
+        unread_count=0, unread_mentions_count=0, unread_reactions_count=0,
+        unread_poll_votes_count=0,
+        notify_settings=raw.types.PeerNotifySettings(),
+    )
+
+
+def test_subscriptions_do_not_parse_message_content_and_paginate():
+    from poll import subscribed_sources
+
+    class RichMessage:
+        id = 7
+        peer_id = raw.types.PeerChannel(channel_id=101)
+        date = 12345
+
+        @property
+        def rich_message(self):
+            raise AttributeError("'RichTextBold' object has no attribute 'lstrip'")
+
+    class DialogClient:
+        def __init__(self):
+            self.requests = []
+            self.resolved = []
+
+        async def get_dialogs(self):
+            raise AssertionError("high-level message parsing must not run")
+            yield
+
+        async def invoke(self, request, **kwargs):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return raw.types.messages.DialogsSlice(
+                    count=2, dialogs=[dialog(101, 7)],
+                    messages=[RichMessage()], users=[],
+                    chats=[SimpleNamespace(id=101, username="SOURCE_ONE")],
+                )
+            return raw.types.messages.Dialogs(
+                dialogs=[dialog(101, 7), dialog(102, 9)], messages=[], users=[],
+                chats=[SimpleNamespace(id=101, username="source_one"),
+                       SimpleNamespace(id=102, username="source_two"),
+                       SimpleNamespace(id=103, username="not_a_dialog")],
+            )
+
+        async def resolve_peer(self, peer):
+            self.resolved.append(peer)
+            return raw.types.InputPeerChannel(channel_id=101, access_hash=1)
+
+    client = DialogClient()
+    sources = [Source("one", "source_one", "Первый"),
+               Source("two", "source_two", "Второй"),
+               Source("other", "not_a_dialog", "Посторонний")]
+    keys, mapping = asyncio.run(subscribed_sources(client, sources))
+
+    assert keys == {"one", "two"}
+    assert mapping == {-1000000000101: "one", -1000000000102: "two"}
+    assert len(client.requests) == 2
+    assert client.requests[1].offset_id == 7
+    assert client.requests[1].offset_date == 12345
+    assert client.requests[1].exclude_pinned is True
+    assert client.resolved == [-1000000000101]
+
+
+def test_empty_subscription_page_finishes_without_cursor():
+    from poll import subscribed_sources
+
+    class EmptyClient:
+        async def invoke(self, request, **kwargs):
+            return raw.types.messages.DialogsSlice(
+                count=0, dialogs=[], messages=[], chats=[], users=[])
+
+    assert asyncio.run(subscribed_sources(EmptyClient(), [])) == (set(), {})
+
+
+def test_subscription_failure_keeps_polling_enabled(capsys):
+    from poll import discover_subscriptions
+
+    class BrokenClient:
+        async def invoke(self, request, **kwargs):
+            raise AttributeError("'RichTextBold' object has no attribute 'lstrip'")
+
+    assert asyncio.run(discover_subscriptions(BrokenClient(), [])) == (set(), {})
+    assert "продолжаю обычный опрос" in capsys.readouterr().out
 
 
 def test_backfill_respects_both_window_bounds():
