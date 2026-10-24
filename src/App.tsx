@@ -34,6 +34,7 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { api, API_BASE } from "./lib/api";
+import { watchState } from "./lib/statePolling";
 import type { RadarEvent, RadarState, RouteLine, SearchItem, ZoneCount, ZoneMeta } from "./lib/api";
 import { inferTrails, trailVisibleAt } from "./lib/trails";
 import {
@@ -231,7 +232,6 @@ const MAX_SUGGESTIONS = 10;
 // иначе разметка и вёрстка разойдутся, как уже случилось с таб-баром.
 const MOBILE_QUERY =
   "(max-width: 760px), (max-height: 500px) and (orientation: landscape)";
-const STATE_POLL_MS = 25_000;
 // Как часто позволено перезапрашивать полигоны активных районов. Сервер
 // держит их в кэше десять секунд, чаще спрашивать нечего.
 const ACTIVE_DISTRICTS_MIN_GAP_MS = 20_000;
@@ -1359,70 +1359,11 @@ export default function App() {
 
   // Обстановка из API конвейера. Карта работает и без него — просто без событий.
   useEffect(() => {
-    let active = true;
-
-    const pull = async () => {
-      try {
-        const payload = await api.state();
-        if (!active) return;
-        setRadarState(payload);
-        setApiOnline(true);
-      } catch {
-        if (active) setApiOnline(false);
-      }
-    };
-
-    void pull();
-
-    // Push с сервера. Опрос остаётся подстраховкой: если сокет не поднялся
-    // или оборвался, карта продолжает обновляться, просто реже.
-    //
-    // Сокет переподключается сам: раньше первый же обрыв (сон ноутбука,
-    // рестарт сервера) навсегда переводил карту на 25-секундный опрос.
-    // Пауза растёт вдвое на каждой неудаче и сбрасывается после успешного
-    // кадра — упавший сервер не обстреливается, живой ловится за секунды.
-    let socket: WebSocket | null = null;
-    let retryTimer: number | null = null;
-    let retryDelay = 3_000;
-
-    const connect = () => {
-      if (!active) return;
-      try {
-        socket = new WebSocket(`${API_BASE.replace(/^http/, "ws")}/api/v1/stream`);
-      } catch {
-        // Адрес не годится для сокета вовсе — остаёмся на опросе.
-        socket = null;
-        return;
-      }
-      socket.onmessage = (event) => {
-        if (!active) return;
-        retryDelay = 3_000;
-        try {
-          const payload = JSON.parse(event.data) as RadarState & { type?: string };
-          if (payload.type === "state") {
-            setRadarState(payload);
-            setApiOnline(true);
-          }
-        } catch {
-          // Битый кадр пропускаем: следующий придёт через несколько секунд.
-        }
-      };
-      socket.onclose = () => {
-        if (!active) return;
-        retryTimer = window.setTimeout(connect, retryDelay + Math.random() * 1_000);
-        retryDelay = Math.min(retryDelay * 2, 60_000);
-      };
-      socket.onerror = () => socket?.close();
-    };
-    connect();
-
-    const timer = window.setInterval(pull, STATE_POLL_MS);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
-      socket?.close();
-    };
+    return watchState(
+      (payload) => setRadarState((previous) =>
+        previous?.generated_at === payload.generated_at ? previous : payload),
+      setApiOnline
+    );
   }, []);
 
   const inHistory =

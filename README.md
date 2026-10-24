@@ -47,7 +47,7 @@ npx vite --host 127.0.0.1
 | [`pipeline/geocode.py`](pipeline/geocode.py) | Топонимы -> зоны, снятие омонимии контекстом |
 | [`pipeline/fuse.py`](pipeline/fuse.py) | Слияние источников, достоверность |
 | [`pipeline/rebuild.py`](pipeline/rebuild.py) | Полный переразбор |
-| [`api/server.py`](api/server.py) | `/state`, `/history`, `/analytics/*`, WebSocket |
+| [`api/server.py`](api/server.py) | `/state`, `/history`, `/analytics/*`; карта обновляется HTTP-опросом |
 
 ## Быстрый запуск
 

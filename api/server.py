@@ -100,7 +100,7 @@ def source_networks() -> dict[str, str | None]:
 app = FastAPI(title="Radar API", version="1.0")
 
 # Сжатие ответов. Снимок обстановки весит 208 КБ, границы регионов — мегабайт,
-# и фронт забирает снимок каждые 25 секунд. Apache к application/json фильтр
+# и фронт забирает снимок каждые 10 секунд. Apache к application/json фильтр
 # сжатия не применяет (в его списке типов есть html, css, js и xml, но не
 # json), поэтому всё это ехало на клиента как есть — на небыстром канале
 # карта из-за одного этого «долго грузит и лагает».
@@ -228,8 +228,8 @@ def zone_fade(last_seen: str, now: datetime,
     return max(ZONE_FADE_FLOOR, 1.0 - share ** 0.5)
 
 # Ответ /state пересобирается не чаще раза в 3 секунды: клиент опрашивает его
-# каждые 10 секунд, websocket-цикл — каждые 5, и каждый вызов это несколько
-# запросов к SQLite плюс сборка счётчиков по зонам.
+# каждые 10 секунд, рассыльщики тоже читают снимок, и каждый вызов это
+# несколько запросов к SQLite плюс сборка счётчиков по зонам.
 STATE_TTL_SEC = 3.0
 STATE_CACHE_CONTROL = "public, max-age=5, stale-while-revalidate=30"
 
@@ -240,8 +240,8 @@ _proxy_depth = env_int("RADAR_PROXY_DEPTH", DEFAULT_PROXY_DEPTH)
 
 
 # BaseHTTPMiddleware (за ним стоит @app.middleware) видит только http-scope,
-# поэтому websocket /api/v1/stream под лимит не попадает — он и не должен:
-# одно соединение живёт часами и запросов не генерирует.
+# поэтому совместимый со старыми вкладками websocket /api/v1/stream
+# под этот HTTP-лимит не попадает. Он отдаёт кешированный снимок и закрывается.
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     if request.url.path.startswith("/api/v1/"):
@@ -496,7 +496,7 @@ def build_state() -> dict:
 def state_snapshot() -> dict:
     """Тот же ответ, но не чаще раза в STATE_TTL_SEC.
 
-    Кеш общий для http-запросов (они идут в пуле потоков) и для websocket-цикла,
+    Кеш общий для http-запросов (они идут в пуле потоков) и старых websocket-клиентов,
     поэтому TTLCache берёт лок, а не полагается на GIL.
     """
     return _state_cache.get(build_state)
@@ -824,25 +824,27 @@ def summary():
 
 @app.websocket("/api/v1/stream")
 async def stream(socket: WebSocket):
-    """Push-обновления. Без пейволла — в отличие от RadarMap."""
+    """Совместимость со старыми вкладками: снимок без бессрочного туннеля.
+
+    Долгие соединения занимали потоки Apache и удерживали старые поколения
+    процессов после reload, пока не заполнялся scoreboard. Новые вкладки
+    используют короткий HTTP-опрос; старые получают снимок и переподключаются.
+    """
     await socket.accept()
-    last_sent: str | None = None
     try:
-        while True:
-            # Снимок собирается в отдельном потоке: SQL синхронный, а на event
-            # loop висят все остальные соединения.
-            snapshot = await asyncio.to_thread(state_snapshot)
-            marker = f"{snapshot['last_message_at']}|{snapshot['active_events']}"
-            if marker != last_sent:
-                await socket.send_json({"type": "state", **snapshot})
-                last_sent = marker
-            await asyncio.sleep(5)
+        snapshot = await asyncio.to_thread(state_snapshot)
+        await socket.send_json({"type": "state", **snapshot})
     except WebSocketDisconnect:
         return
     except Exception:
         # Обрыв на середине отправки — транспорт уже закрыт. Клиент
         # переподключится или доберёт состояние опросом; падать незачем.
         return
+    finally:
+        try:
+            await socket.close(code=1001)
+        except (RuntimeError, WebSocketDisconnect, OSError):
+            pass
 
 
 # --- Статика ------------------------------------------------------------------
