@@ -225,14 +225,20 @@ export function FeedPanel({
         />
       </div>
 
-      {apiOnline === false ? (
-        <p className="feed-empty">Нет связи с сервером. Обновите страницу.</p>
-      ) : !state ? (
-        <p className="feed-empty">Загрузка…</p>
+      {!state ? (
+        <p className="feed-empty" role="status">
+          {apiOnline === false
+            ? "Не удалось загрузить события. Повторяем подключение…"
+            : "Загрузка…"}
+        </p>
       ) : (
         <>
           {historyLabel ? (
             <p className="history-banner">Показана обстановка на {historyLabel}</p>
+          ) : apiOnline === false ? (
+            <p className="stale-banner" role="status">
+              Обновление задерживается. Показаны последние данные на {formatDayTime(state.generated_at)}.
+            </p>
           ) : state.stale ? (
             <p className="stale-banner">
               Сбор сообщений остановлен {formatAge(state.data_age_sec)} назад. Показанное не
