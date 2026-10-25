@@ -37,7 +37,7 @@ from config import sources_from_env  # noqa: E402
 
 from .airport_time import AirportNoticeTimes  # noqa: E402
 from .db import connect  # noqa: E402
-from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
+from .fuse import CLEAR_ECHO, SAME_ZONE_WINDOW, Event, Fuser  # noqa: E402
 from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
@@ -471,6 +471,15 @@ def run_once(
             stats["irrelevant"] += 1
             continue
 
+        moment = airport_times.moment(row, observation)
+        if (observation.threat_type == "airport"
+                and moment < parse_utc(row["posted_at"])
+                and now - moment > SAME_ZONE_WINDOW):
+            # Старый репост остаётся в корпусе, но не переписывает
+            # завершённый эпизод при UPSERT по его прежнему id.
+            stats["airport_reprints"] = stats.get("airport_reprints", 0) + 1
+            continue
+
         home = fallback.get(row["source_key"])
         resolved, used_source_region = resolve_observation_zones(
             geocoder, observation, home)
@@ -492,8 +501,6 @@ def run_once(
         if route:
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)
-
-        moment = airport_times.moment(row, observation)
 
         # Зона-адресат («далее в направлении X») борт ещё не видит:
         # ей достаётся «опасность», а не сигнал сообщения.

@@ -135,6 +135,21 @@ def test_airport_reprint_uses_original_time_in_live_pipeline(db, geocoder):
     assert events[1]["last_seen_at"] == (BASE + timedelta(minutes=120)).isoformat()
 
 
+def test_old_airport_closure_copy_does_not_overwrite_completed_history(db, geocoder):
+    closed = "Аэропорт Азовский район. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов."
+    opened = closed.replace("ВВЕДЕНЫ", "СНЯТЫ")
+    post(db, 1, "favt_info", 0, text=closed)
+    post(db, 2, "favt_info", 2, text=opened)
+    sweep(db, geocoder, 3)
+    before = dict(db.execute("SELECT * FROM events").fetchone())
+    assert before["resolved_at"] is not None
+
+    post(db, 3, "beta", 180, text=closed)
+    sweep(db, geocoder, 181)
+
+    assert dict(db.execute("SELECT * FROM events").fetchone()) == before
+
+
 def test_new_message_joins_event_from_previous_pass(db, geocoder):
     """Второй источник в окне слияния подтверждает событие, а не создает свое."""
     post(db, 1, "alpha", 0)
