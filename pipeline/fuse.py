@@ -11,6 +11,8 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .airport_time import AIRPORT_STATUS_TTL
+
 # Вес источника в расчете достоверности (см. tier в ingest/config.py).
 # official — МЧС, РСЧС и оперштабы: официальное оповещение весит больше
 # народной ленты, потому что за ним стоит проверка, а не пересказ.
@@ -119,6 +121,8 @@ class Event:
     def status(self, now: datetime) -> str:
         if self.resolved_at:
             return "resolved"
+        if self.threat_type == "airport":
+            return "active" if now - self.last_seen <= AIRPORT_STATUS_TTL else "resolved"
         if now - self.last_seen > CLOSE_AFTER:
             return "resolved"
         if now - self.last_seen > FADE_AFTER:
@@ -228,6 +232,10 @@ class Fuser:
             # получал две «опасности» подряд. Опоздавшее присоединяется, если
             # попадает в окно жизни события; время события оно не двигает —
             # присоединение берёт max(last_seen, moment).
+            if threat == "airport" and event.zone_id == zone_id:
+                if moment >= event.first_seen:
+                    return event
+                continue
             if moment - event.last_seen > SAME_ZONE_WINDOW:
                 continue
             if moment < event.first_seen - SAME_ZONE_WINDOW:
@@ -240,7 +248,8 @@ class Fuser:
     def _prune(self, now: datetime) -> None:
         self._open = [
             event for event in self._open
-            if not event.resolved_at and now - event.last_seen <= CLOSE_AFTER
+            if not event.resolved_at and now - event.last_seen <= (
+                AIRPORT_STATUS_TTL if event.threat_type == "airport" else CLOSE_AFTER)
         ]
         self._cleared = {
             key: event for key, event in self._cleared.items()
@@ -249,7 +258,9 @@ class Fuser:
 
     def add(self, *, raw_id: int, source_key: str, tier: str, moment: datetime,
             observation, zone_path: list[str], lat, lon, level: str,
-            network: str | None = None) -> Event | None:
+            network: str | None = None, civil_scope_explicit: bool = True,
+            civil_excluded: frozenset[str] = frozenset(),
+            civil_excluded_ancestors: frozenset[str] = frozenset()) -> Event | None:
         """Добавить наблюдение. Возвращает затронутое событие."""
         self._prune(moment)
         zone_id = zone_path[0]
@@ -271,6 +282,12 @@ class Fuser:
             closed = None
             for event in self._open:
                 if event.resolved_at:
+                    continue
+                if event.signal_type in {"alarm", "danger", "infra"} and (
+                    not civil_scope_explicit
+                    or not civil_excluded.isdisjoint(event.zone_path)
+                    or event.zone_id in civil_excluded_ancestors
+                ):
                     continue
                 # Отбой закрывает только то, что началось до него. Каналы
                 # доставляются не в порядке публикации, и опоздавший отбой
@@ -312,6 +329,7 @@ class Fuser:
         echo = self._cleared.get((zone_id, observation.threat_type))
         if (
             echo is not None
+            and observation.threat_type != "airport"
             and echo.resolved_at is not None
             and moment - echo.resolved_at <= CLEAR_ECHO
             and observation.severity <= echo.severity
@@ -327,7 +345,7 @@ class Fuser:
             # событие «свежим» и оставляло зону гореть на карте.
             said = self._voice(existing, network or source_key, tier,
                                getattr(observation, "body", ""))
-            if said:
+            if said or observation.threat_type == "airport":
                 existing.last_seen = max(existing.last_seen, moment)
             # Подпись должна соответствовать цвету. Слияние брало максимум
             # severity, но оставляло тип сигнала от первого сообщения: событие

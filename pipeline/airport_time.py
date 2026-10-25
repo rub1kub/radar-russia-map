@@ -7,11 +7,12 @@ import sqlite3
 from bisect import bisect_right
 from datetime import datetime, timedelta
 
-from .parse import strip_footer
+from .parse import parse, strip_footer
 from .timeutil import parse_utc
 
 FAVT_SOURCES = ("favt_info", "ch1938794947")
 COPY_WINDOW = timedelta(hours=24)
+AIRPORT_STATUS_TTL = timedelta(hours=24)
 
 
 def notice_key(text: str) -> str:
@@ -64,3 +65,14 @@ class AirportNoticeTimes:
         if index >= 0 and published - moments[index] <= COPY_WINDOW:
             return moments[index]
         return published
+
+
+def order_airport_reposts(rows, clock: AirportNoticeTimes) -> None:
+    """При полном проигрывании пересылка регулятора стоит во времени оригинала."""
+    def order(row):
+        if row["source_key"] in FAVT_SOURCES and row["forwarded_at"]:
+            observation = parse(row["text"])
+            if observation.threat_type == "airport":
+                return clock.moment(row, observation).isoformat()
+        return row["posted_at"]
+    rows.sort(key=order)

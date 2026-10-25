@@ -60,4 +60,15 @@ describe("feed availability", () => {
     expect(html).toContain("Тестовый район");
     expect(html).not.toContain("Обновление задерживается");
   });
+
+  it("does not replace an empty selected place with unrelated events", () => {
+    const html = render({ selectedName: "Тихий район", selectedZoneId: "quiet", zoneEvents: [] });
+    expect(html).toContain("Тихий район");
+    expect(html).not.toContain("Тестовый район");
+  });
+
+  it("returns the general feed only after clearing the selection", () => {
+    const html = render({ selectedName: null, selectedZoneId: null, zoneEvents: [] });
+    expect(html).toContain("Тестовый район");
+  });
 });

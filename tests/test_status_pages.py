@@ -64,9 +64,9 @@ def _favt_db(tmp_path, messages):
     connection.row_factory = sqlite3.Row
     connection.execute(
         "CREATE TABLE raw_messages (source_key TEXT, posted_at TEXT, "
-        "text TEXT)")
+        "text TEXT, forwarded_at TEXT)")
     connection.executemany(
-        "INSERT INTO raw_messages VALUES (?, ?, ?)", messages)
+        "INSERT INTO raw_messages (source_key,posted_at,text) VALUES (?, ?, ?)", messages)
     connection.commit()
     return connection
 
@@ -110,6 +110,16 @@ def test_airport_rows_current_closure(tmp_path):
     assert status_pages.airport_rows(connection)[0]["key"] == "КАЗАНЬ"
 
 
+def test_airport_rows_share_parser_for_lowercase_regulator_opening(tmp_path):
+    from pipeline.timeutil import now_utc
+    at = (now_utc() - timedelta(hours=1)).isoformat()
+    connection = _favt_db(tmp_path, [("favt_info", at,
+        "Росавиация сняла ограничения на прием и выпуск воздушных судов в аэропорту Краснодара.")])
+    rows = {row["key"]: row for row in status_pages.airport_rows(connection)}
+    assert rows["КРАСНОДАР"]["state"] == "open"
+    assert rows["КРАСНОДАР"]["reopened"] == at
+
+
 def test_airport_stale_closure_is_not_shown_closed(tmp_path):
     """Закрытие без снятия старше суток — пропущенное сообщение, не сутки
     без полётов."""
@@ -122,6 +132,17 @@ def test_airport_stale_closure_is_not_shown_closed(tmp_path):
     ])
     rows = {row["key"]: row for row in status_pages.airport_rows(connection)}
     assert rows["ПЕНЗА"]["closed"] is False
+    assert rows["ПЕНЗА"]["state"] == "unknown"
+    assert "Нет свежего подтверждения статуса" in status_pages.airport_card(rows["ПЕНЗА"])
+
+
+def test_no_airport_messages_do_not_mean_all_airports_work(tmp_path):
+    rows = status_pages.airport_rows(_favt_db(tmp_path, []))
+    assert all(row["state"] == "unknown" for row in rows)
+    html = status_pages.airports_page(rows, "25 октября, 15:00 МСК")
+    assert "Все аэропорты работают" not in html
+    assert 'id="airports-unknown"' in html
+    assert "Нет свежего подтверждения статуса" in html
 
 
 def _bridge_db(tmp_path, messages):

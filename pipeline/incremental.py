@@ -46,7 +46,7 @@ from .parse import (MAX_RESOLVED_ZONES, block_signals, parse,  # noqa: E402
 from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .source_region import (build_fallback,  # noqa: E402
-                            resolve_observation_zones)
+                            civil_clear_guards, resolve_observation_zones)
 from .timeutil import now_utc, parse_utc  # noqa: E402
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
@@ -466,7 +466,8 @@ def run_once(
     for row in rows:
         observation = parse(row["text"])
         if not accepts_observation(
-            observation, strict=row["source_key"] in STRICT_ALERTS
+            observation, strict=row["source_key"] in STRICT_ALERTS,
+            source_key=row["source_key"],
         ):
             stats["irrelevant"] += 1
             continue
@@ -483,6 +484,9 @@ def run_once(
         home = fallback.get(row["source_key"])
         resolved, used_source_region = resolve_observation_zones(
             geocoder, observation, home)
+        clear_guards = civil_clear_guards(
+            geocoder, observation, home, used_source_region,
+            tiers.get(row["source_key"], DEFAULT_TIER))
         # Каталог городов, а не оповещение: реклама сети «Город 24/7»
         # разошлась на 168 ложных тревог одним сообщением.
         if len(resolved) > MAX_RESOLVED_ZONES:
@@ -550,6 +554,7 @@ def run_once(
                 lat=item.lat,
                 lon=item.lon,
                 level=item.level,
+                **clear_guards,
             )
             stats["observations"] += 1
 

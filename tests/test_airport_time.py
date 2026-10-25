@@ -27,6 +27,11 @@ OPENED = (
     OPENED.replace("СНЯТЫ дополнительные временные", "СНЯТЫ дополнительные* временные"),
     OPENED.replace("СНЯТЫ дополнительные временные", "СНЯТЫ ранее введенные временные"),
     "Внимание! " + OPENED,
+    OPENED.replace(" | MAX", ""),
+    "Росавиация сняла ограничения на прием и выпуск воздушных судов в аэропорту Краснодара.",
+    "Аэропорт Краснодар. Снят режим «Ковёр».",
+    "Аэропорт Краснодар. Режим Ковёр снят.",
+    "Аэропорт Краснодар возобновил прием и выпуск воздушных судов.",
 ])
 def test_additional_restrictions_lifted_means_open(text):
     observation = parse(text)
@@ -48,6 +53,12 @@ def test_future_opening_is_not_a_current_status(text):
 ])
 def test_negation_and_future_opening_do_not_open_a_closed_airport(text):
     observation = parse(text)
+    assert observation.relevant
+    assert (observation.signal_type, observation.threat_type) == ("infra", "airport")
+
+
+def test_promised_resumption_is_not_a_completed_airport_opening():
+    observation = parse("Аэропорт Краснодар. Действуют ограничения на прием и выпуск воздушных судов. Аэропорт возобновит работу завтра.")
     assert observation.relevant
     assert (observation.signal_type, observation.threat_type) == ("infra", "airport")
 
@@ -133,3 +144,31 @@ def test_forward_time_migration_keeps_existing_raw_messages(tmp_path):
     assert row["text"] == OPENED
     assert row["forwarded_at"] is None
     connection.close()
+
+
+def test_overnight_airport_opening_closes_original_restriction():
+    from pipeline.fuse import Fuser
+    fuser = Fuser()
+    closed = parse("Аэропорт Краснодар. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов.")
+    for raw_id, observation, moment in (
+        (1, closed, BASE),
+        (2, parse(OPENED), BASE + timedelta(hours=6)),
+    ):
+        fuser.add(raw_id=raw_id, source_key="favt_info", tier="official", moment=moment,
+                  observation=observation, zone_path=["airport"], lat=None, lon=None, level="place")
+    assert len(fuser.events) == 1
+    assert fuser.events[0].resolved_at == BASE + timedelta(hours=6)
+
+
+def test_repeated_regulator_notice_does_not_create_second_restriction():
+    from pipeline.fuse import Fuser
+    fuser = Fuser()
+    closed = parse("Аэропорт Краснодар. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов.")
+    for raw_id, moment in ((1, BASE), (2, BASE + timedelta(hours=4))):
+        fuser.add(raw_id=raw_id, source_key="favt_info", tier="official", moment=moment,
+                  observation=closed, zone_path=["airport"], lat=None, lon=None, level="place")
+    assert len(fuser.events) == 1
+    assert fuser.events[0].last_seen == BASE + timedelta(hours=4)
+    assert fuser.events[0].status(BASE + timedelta(hours=12)) == "active"
+    assert fuser.events[0].status(BASE + timedelta(hours=29)) == "resolved"
+    assert fuser.events[0].resolved_at is None

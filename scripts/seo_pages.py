@@ -429,11 +429,11 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
     rows = connection.execute(
         """
         SELECT e.zone_path, e.zone_id, e.signal_type, e.threat_type,
-               e.first_seen_at, z.level, z.name_ru
+               e.first_seen_at, e.resolved_at, z.level, z.name_ru
         FROM events e LEFT JOIN zones z ON z.id = e.zone_id
-        WHERE e.first_seen_at >= ?
+        WHERE e.first_seen_at >= ? AND e.first_seen_at <= ?
         """,
-        (since,),
+        (since, current.isoformat()),
     ).fetchall()
 
     # Уровни зон — чтобы отличить район/округ в середине пути от региона.
@@ -449,7 +449,26 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
             "districts": Counter(), "signals": Counter(),
             "threats": Counter(), "hours": Counter(), "recent": [],
             "regions": Counter(), "alarms": [],
+            "alarms_today": 0, "last_alarm_today": None,
+            "recent_open_alarms": 0, "last_recent_open_alarm": None,
         }
+
+    def count_alerts(entry: dict, row, stamp: datetime) -> None:
+        age = (current - datetime.fromisoformat(row["first_seen_at"])).total_seconds()
+        if age < 0:
+            return
+        if stamp.date() == current_date:
+            entry["today"] = entry.get("today", 0) + 1
+            if row["signal_type"] == "alarm":
+                entry["alarms_today"] += 1
+                entry["last_alarm_today"] = max(
+                    entry["last_alarm_today"] or row["first_seen_at"], row["first_seen_at"])
+        if age < 7200:
+            entry["fresh"] = entry.get("fresh", 0) + 1
+            if row["signal_type"] == "alarm" and not row["resolved_at"]:
+                entry["recent_open_alarms"] += 1
+                entry["last_recent_open_alarm"] = max(
+                    entry["last_recent_open_alarm"] or row["first_seen_at"], row["first_seen_at"])
 
     stats: dict[str, dict] = {}
     city_stats: dict[str, dict] = {}
@@ -464,10 +483,7 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
         entry = stats.setdefault(region_id, blank())
         entry["events"] += 1
         stamp = datetime.fromisoformat(row["first_seen_at"]).astimezone(MSK)
-        if stamp.date() == current_date:
-            entry["today"] = entry.get("today", 0) + 1
-        if (current - datetime.fromisoformat(row["first_seen_at"])).total_seconds() < 7200:
-            entry["fresh"] = entry.get("fresh", 0) + 1
+        count_alerts(entry, row, stamp)
         entry["days"].add(stamp.date())
         entry["hours"][stamp.hour] += 1
         if entry["last"] is None or row["first_seen_at"] > entry["last"]:
@@ -493,10 +509,7 @@ def collect_stats(connection: sqlite3.Connection) -> tuple[
                 continue
             centry = city_stats.setdefault(zone_id, blank())
             centry["events"] += 1
-            if stamp.date() == current_date:
-                centry["today"] = centry.get("today", 0) + 1
-            if (current - datetime.fromisoformat(row["first_seen_at"])).total_seconds() < 7200:
-                centry["fresh"] = centry.get("fresh", 0) + 1
+            count_alerts(centry, row, stamp)
             centry["days"].add(stamp.date())
             centry["hours"][stamp.hour] += 1
             if centry["last"] is None or row["first_seen_at"] > centry["last"]:
@@ -924,25 +937,30 @@ def faq_block(name: str, stats: dict | None,
     else:
         activity = (f"За последние 30 дней сообщений об опасности {where} "
                     f"в отслеживаемых каналах не было.")
-    today = stats.get("today", 0) if stats else 0
-    fresh = stats.get("fresh", 0) if stats else 0
+    today = stats.get("alarms_today", 0) if stats else 0
+    fresh = stats.get("recent_open_alarms", 0) if stats else 0
     if fresh:
-        now_answer = (f"За последние два часа карта отметила {where} {fresh} "
-                      f"{plural(fresh, 'событие', 'события', 'событий')}. "
-                      f"Текущую минуту показывает живая карта — кнопка выше; "
-                      f"эта сводка обновляется ежечасно.")
+        now_answer = (f"За последние два часа {where} зарегистрировано {fresh} "
+                      f"{plural(fresh, 'объявление', 'объявления', 'объявлений')} "
+                      f"воздушной тревоги без зафиксированного отбоя. "
+                      f"Последнее — {moment(stats['last_recent_open_alarm'])} по Москве. "
+                      f"Это данные ежечасной сводки, а не подтверждение текущего "
+                      f"официального статуса экстренных служб.")
     else:
-        now_answer = (f"На момент обновления сводки свежих событий {where} "
-                      f"не было. Текущую минуту показывает живая карта — "
-                      f"кнопка выше; эта сводка обновляется ежечасно.")
+        now_answer = (f"На момент обновления сводки за последние два часа {where} "
+                      f"не зарегистрировано объявлений воздушной тревоги без "
+                      f"последующего отбоя. Это не подтверждает отсутствие "
+                      f"других опасностей; приоритет имеют сообщения экстренных служб.")
     if today:
-        today_answer = (f"Да: сегодня карта отметила {where} {today} "
-                        f"{plural(today, 'событие', 'события', 'событий')}, "
-                        f"последнее — {moment(stats['last'])} по Москве. "
-                        f"Подробности по районам — на карте и в ленте.")
+        today_answer = (f"Сегодня {where} зарегистрировано {today} "
+                        f"{plural(today, 'сообщение', 'сообщения', 'сообщений')} "
+                        f"об объявлении воздушной тревоги. "
+                        f"Последнее — {moment(stats['last_alarm_today'])} по Москве.")
     else:
-        today_answer = (f"Сегодня сообщений об опасности {where} в "
-                        f"отслеживаемых каналах не было. " + activity)
+        today_answer = (f"Сегодня {where} в отслеживаемых каналах не зарегистрировано "
+                        f"сообщений об объявлении воздушной тревоги. "
+                        f"Опасность, звук сирены и ограничения аэропорта "
+                        f"не считаются объявленной воздушной тревогой.")
     qa = [
         (f"Есть ли сейчас тревога {where}?", now_answer),
         # Люди ищут «карту дронов», а слова «дрон» нет ни у одного

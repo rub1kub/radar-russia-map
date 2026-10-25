@@ -29,3 +29,16 @@ def test_strict_source_rejects_reposted_airport_notice():
 def test_regular_source_keeps_existing_parser_contract():
     observation = parse("Фиксация БПЛА над Ейском")
     assert accepts_observation(observation)
+
+
+def test_airport_status_requires_regulator_source_not_its_name_in_text():
+    for text in (
+        "Аэропорт Краснодара и Геленджика закрыты",
+        "Аэропорт Краснодар. СНЯТЫ дополнительные временные ограничения на прием и выпуск воздушных судов.",
+    ):
+        observation = parse(text)
+        assert accepts_observation(observation, source_key="favt_info")
+        assert accepts_observation(observation, source_key="ch1938794947")
+        assert not accepts_observation(observation, source_key="radar23region")
+        assert not accepts_observation(observation, source_key="unknown")
+        assert not accepts_observation(observation)

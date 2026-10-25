@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS event_sources (
 );
 CREATE INDEX IF NOT EXISTS idx_evsrc_source ON event_sources (source_key);
 
+-- Охват архивного дня не зависит от срока хранения исходных текстов.
+CREATE TABLE IF NOT EXISTS history_day_sources (
+    day        TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    PRIMARY KEY (day, source_key)
+);
+
 -- Маршрут, названный самим сообщением: «от Анапы через Раевскую на
 -- Новороссийск». Точки в порядке текста; линию утверждает источник, а не
 -- наша догадка — склейка маршрутов из разных сообщений сюда не пишется.

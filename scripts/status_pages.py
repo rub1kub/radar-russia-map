@@ -38,7 +38,9 @@ from statistics import median
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.db import DB_PATH, ROOT
-from pipeline.airport_time import FAVT_SOURCES
+from pipeline.airport_time import AIRPORT_STATUS_TTL, AirportNoticeTimes, FAVT_SOURCES
+from pipeline.parse import parse
+from pipeline.textnorm import norm_key, stem_key
 from pipeline.timeutil import MSK, now_utc
 
 SITE = "https://tihoenebo.com"
@@ -47,7 +49,7 @@ WINDOW_DAYS = 30
 BOT = "Tihoeneborobot"
 # Закрытие без снятия старше суток — скорее пропущенное сообщение, чем
 # сутки без полётов: такой аэропорт не показывается закрытым.
-STALE_CLOSE_HOURS = 24
+STALE_CLOSE_HOURS = int(AIRPORT_STATUS_TTL.total_seconds() / 3600)
 
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря")
@@ -438,13 +440,15 @@ def favt_airport_names(header: str) -> list[str]:
     for line in header.split("\n"):
         line = line.split("(")[0]
         line = re.sub(r"[^А-ЯЁа-яё\- ]", " ", line)
-        line = re.sub(r"^\s*(Аэропорты|Аэропорт)\b", " ", line).strip(" -")
-        line = re.sub(r"\s+", " ", line).strip()
+        line = re.sub(r"^\s*(Аэропорты|Аэропорт)\b", " ", line, flags=re.IGNORECASE).strip(" -")
+        line = re.sub(r"\s+", " ", line).strip().upper()
         if not line or not AIRPORT_NAME_RE.fullmatch(line):
             continue
         if line not in KNOWN_KEYS:
             near = difflib.get_close_matches(line, KNOWN_KEYS, n=1, cutoff=0.8)
-            line = near[0] if near else line
+            if not near:
+                continue
+            line = near[0]
         names.append(line)
     return names
 
@@ -453,29 +457,44 @@ def official_transitions(connection: sqlite3.Connection,
                          since: str) -> list[tuple[str, str, str]]:
     """(время, аэропорт, close|open) из сообщений Росавиации, по порядку."""
     rows = connection.execute(
-        f"""SELECT posted_at, text FROM raw_messages
+        f"""SELECT source_key, posted_at, forwarded_at, text FROM raw_messages
             WHERE source_key IN ({','.join('?' for _ in FAVT_SOURCES)})
               AND posted_at >= ?
-              AND (text LIKE '%ВВЕДЕНЫ%' OR text LIKE '%СНЯТЫ%')
             ORDER BY posted_at""", (*FAVT_SOURCES, since)).fetchall()
     transitions: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    times = AirportNoticeTimes(connection)
     for row in rows:
         text = row["text"] or ""
-        closes, opens = "ВВЕДЕНЫ" in text, "СНЯТЫ" in text
-        if closes == opens:
+        observation = parse(text)
+        if (not observation.relevant or observation.threat_type != "airport"
+                or observation.signal_type not in ("infra", "allclear")):
             continue
-        action = "close" if closes else "open"
-        header = re.split(r"ВВЕДЕНЫ|СНЯТЫ", text)[0]
-        for key in favt_airport_names(header):
-            item = (row["posted_at"], key, action)
+        action = "close" if observation.signal_type == "infra" else "open"
+        at = times.moment(row, observation).isoformat()
+        if at < since:
+            continue
+        header = re.split(r"ВВЕДЕНЫ|СНЯТЫ|СНЯЛ[АИ]?|ОТКРЫТ\w*", text, maxsplit=1, flags=re.IGNORECASE)[0]
+        names = favt_airport_names(header)
+        if not names:
+            # В прозе учитываем только имена после «аэропорт» в статусной
+            # фразе, не запасные аэродромы и не города из расписания.
+            for clause in re.split(r"[.!?\n]", text):
+                if (not re.search(r"сня[тл]|введ[её]н|закрыт|открыт", clause, re.IGNORECASE)
+                        or re.search(r"запасн|перенаправл", clause, re.IGNORECASE)):
+                    continue
+                for match in re.finditer(r"аэропорт\w*\s+([А-ЯЁа-яё][\w-]*(?:\s+(?:и\s+)?[А-ЯЁа-яё][\w-]*){0,2})", clause, re.IGNORECASE):
+                    subject = " " + stem_key(norm_key(match.group(1))) + " "
+                    names.extend(key for key in KNOWN_KEYS if " " + stem_key(norm_key(key)) + " " in subject)
+        for key in names:
+            item = (at, key, action)
             # Канал ведётся под двумя ключами источника — каждое сообщение
             # приходит дважды.
             if item in seen:
                 continue
             seen.add(item)
             transitions.append(item)
-    return transitions
+    return sorted(transitions)
 
 
 def airport_rows(connection: sqlite3.Connection) -> list[dict]:
@@ -485,9 +504,11 @@ def airport_rows(connection: sqlite3.Connection) -> list[dict]:
                 for key, name, city, slug, zones in AIRPORTS}
     closed_since: dict[str, str | None] = {}
     reopened_at: dict[str, str] = {}
+    last_status: dict[str, tuple[str, str]] = {}
     pairs: dict[str, list[float]] = {}
     closures: dict[str, int] = {}
     for at, key, action in official_transitions(connection, since):
+        last_status[key] = (at, "closed" if action == "close" else "open")
         if action == "close":
             if not closed_since.get(key):
                 closed_since[key] = at
@@ -509,15 +530,19 @@ def airport_rows(connection: sqlite3.Connection) -> list[dict]:
         name, city, slug, zones = registry.get(
             key, (key.title(), key.title(), None, ()))
         since_at = closed_since.get(key)
-        closed = bool(since_at) and (
-            now - datetime.fromisoformat(since_at)
-        ) <= timedelta(hours=STALE_CLOSE_HOURS)
+        status_at, state = last_status.get(key, (None, "unknown"))
+        if (not status_at or not timedelta(0) <= now - datetime.fromisoformat(status_at)
+                <= AIRPORT_STATUS_TTL):
+            state = "unknown"
+            status_at = None
+        closed = state == "closed"
         durations = pairs.get(key, [])
         rows.append({
             "key": key, "name": name, "city": city, "region_slug": slug,
             "zone_ids": zones, "closed": closed,
+            "state": state, "status_at": status_at,
             "since": since_at if closed else None,
-            "reopened": reopened_at.get(key) if not closed else None,
+            "reopened": reopened_at.get(key) if state == "open" else None,
             "closures": closures.get(key, 0),
             "median_minutes": (int(median(durations)) if durations else None),
         })
@@ -528,8 +553,8 @@ def airport_rows(connection: sqlite3.Connection) -> list[dict]:
 # --- Страница аэропортов -----------------------------------------------------
 
 def airport_card(row: dict) -> str:
-    classes = ("closed" if row["closed"]
-               else "open" if row["closures"] else "quiet")
+    status = row.get("state") or ("closed" if row["closed"] else "open" if row["reopened"] else "unknown")
+    classes = status if status != "unknown" else "quiet"
     # Оба варианта текста уезжают в data-атрибуты: живой скрипт двигает
     # карточку между «закрыты» и «работают» и обязан переписать и статус,
     # и строку истории — полкарточки от одного состояния, полкарточки от
@@ -538,12 +563,9 @@ def airport_card(row: dict) -> str:
         f"Закрыт {since_clock(row['since'])} — самолёты не взлетают "
         f"и не садятся" if row["closed"]
         else "Закрыт — действуют ограничения")
-    if row["reopened"]:
-        state_open = f"Работает — открыли {clock(row['reopened'])}"
-    elif row["closures"]:
-        state_open = "Работает"
-    else:
-        state_open = "Работает — за месяц не закрывался"
+    state_open = (f"Временные ограничения сняты — {clock(row['reopened'])}"
+                  if row["reopened"] else "Временные ограничения сняты")
+    state_unknown = "Нет свежего подтверждения статуса"
     hist_closed = (f"Обычно открывают примерно через "
                    f"{minutes_word(row['median_minutes'])}"
                    if row["median_minutes"] else "")
@@ -554,15 +576,16 @@ def airport_card(row: dict) -> str:
                      f"{plural(row['closures'], 'закрытие', 'закрытия', 'закрытий')}"
                      f" за месяц{typical}")
     else:
-        hist_open = "За месяц не закрывался"
-    state = state_closed if row["closed"] else state_open
+        hist_open = "В отслеживаемых сообщениях нет закрытий за месяц"
+    state = state_closed if status == "closed" else state_open if status == "open" else state_unknown
     hist = hist_closed if row["closed"] else hist_open
     link = (f'<a href="/region/{row["region_slug"]}/">Обстановка — '
             f"{escape(row['city'])}</a>" if row["region_slug"] else "")
     zones = escape(json.dumps(row["zone_ids"]), quote=True)
     query = escape(f"{row['name']} {row['city']}".lower(), quote=True)
     return (f'<li class="{classes}" data-zones=\'{zones}\' data-q="{query}" '
-            f'data-static="{"closed" if row["closed"] else "open"}" '
+            f'data-current="{status}" data-at="{escape(row.get("status_at") or row.get("since") or row.get("reopened") or "", quote=True)}" '
+            f'data-state-unknown="{state_unknown}" '
             f'data-state-closed="{escape(state_closed, quote=True)}" '
             f'data-state-open="{escape(state_open, quote=True)}" '
             f'data-hist-closed="{escape(hist_closed, quote=True)}" '
@@ -584,6 +607,7 @@ PAGE_JS = """
     document.querySelectorAll(".band"));
   var closedList = document.getElementById("airports-closed");
   var openList = document.getElementById("airports-open");
+  var unknownList = document.getElementById("airports-unknown");
   var closedBand = document.getElementById("band-closed");
   var hero = document.getElementById("hero");
   var heroTitle = document.getElementById("hero-title");
@@ -604,18 +628,21 @@ PAGE_JS = """
     return many;
   }
 
-  function setCard(card, closed) {
-    if (closed === card.classList.contains("closed")) return;
-    card.classList.toggle("closed", closed);
-    card.classList.toggle("open", !closed);
-    card.classList.remove("quiet");
+  function setCard(card, next, at) {
+    if (at && card.dataset.at && Date.parse(at) < Date.parse(card.dataset.at)) return;
+    card.dataset.current = next;
+    if (at) card.dataset.at = at;
+    card.classList.toggle("closed", next === "closed");
+    card.classList.toggle("open", next === "open");
+    card.classList.toggle("quiet", next === "unknown");
     var state = card.querySelector(".apt-state");
-    if (state) state.textContent = closed
-      ? card.dataset.stateClosed : card.dataset.stateOpen;
+    if (state) state.textContent = next === "closed" ? card.dataset.stateClosed
+      : next === "open" ? card.dataset.stateOpen : card.dataset.stateUnknown;
     var hist = card.querySelector(".apt-hist");
-    if (hist) hist.textContent = closed
+    if (hist) hist.textContent = next === "closed"
       ? card.dataset.histClosed : card.dataset.histOpen;
-    (closed ? closedList : openList).appendChild(card);
+    var list = next === "closed" ? closedList : next === "open" ? openList : unknownList;
+    if (list && card.parentNode !== list) list.appendChild(card);
   }
 
   function redraw() {
@@ -624,38 +651,56 @@ PAGE_JS = """
     }).length;
     if (closedBand) closedBand.style.display = closed ? "" : "none";
     if (!hero || !heroTitle) return;
-    hero.className = "hero " + (closed ? "bad" : "good");
+    var unknown = cards.some(function (card) { return card.dataset.current === "unknown"; });
+    hero.className = "hero " + (closed ? "bad" : unknown ? "quiet" : "good");
     heroTitle.textContent = closed
       ? "Сейчас " + plural(closed, "закрыт", "закрыты", "закрыты") + " " +
         closed + " " + plural(closed, "аэропорт", "аэропорта", "аэропортов") +
         " из " + cards.length
-      : "Все аэропорты работают";
+      : "Свежих подтверждений действующих ограничений нет";
   }
 
   function refresh() {
+    cards.forEach(function (card) {
+      if (card.dataset.current !== "unknown" && (!Number.isFinite(Date.parse(card.dataset.at)) ||
+          Date.now() - Date.parse(card.dataset.at) > 24 * 3600000)) setCard(card, "unknown");
+    });
+    redraw();
     fetch("/api/v1/state").then(function (r) { return r.json(); })
       .then(function (state) {
         // Живые события умеют только два утверждения: свежее закрытие
         // (активное событие) и свежее открытие (недавний отбой). Тишина в
-        // эфире НЕ значит «работает»: событие на карте гаснет по времени
-        // раньше, чем Росавиация присылает «СНЯТЫ», — карточка без
-        // живого сигнала возвращается к официальной статике.
-        var nowClosed = {}, nowOpened = {};
+        // эфире НЕ значит «работает»: последнее подтверждение сохраняется
+        // до следующего официального сообщения или устаревания данных.
+        var latest = {};
         (state.events || []).forEach(function (event) {
           if (event.threat_type !== "airport") return;
+          if (event.status === "resolved" && !event.resolved_at) return;
+          var at = event.status === "resolved" ? event.resolved_at : event.last_seen_at;
+          var stamp = Date.parse(at);
+          if (!Number.isFinite(stamp) || stamp > Date.now() || Date.now() - stamp > 24 * 3600000) return;
           var zones = (event.zone_path || []).concat([event.zone_id]);
-          var bucket = event.status === "resolved" ? nowOpened : nowClosed;
-          zones.forEach(function (zone) { bucket[zone] = true; });
+          zones.forEach(function (zone) {
+            if (!latest[zone] || stamp > latest[zone].stamp ||
+                (stamp === latest[zone].stamp && event.status !== "resolved")) {
+              latest[zone] = {stamp: stamp, at: at, state: event.status === "resolved" ? "open" : "closed"};
+            }
+          });
         });
         cards.forEach(function (card) {
           if (!card.dataset.zones) return;
           var zones = JSON.parse(card.dataset.zones);
-          if (zones.some(function (z) { return nowClosed[z]; })) {
-            setCard(card, true);
-          } else if (zones.some(function (z) { return nowOpened[z]; })) {
-            setCard(card, false);
-          } else {
-            setCard(card, card.dataset.static === "closed");
+          var best = null;
+          zones.forEach(function (z) {
+            if (latest[z] && (!best || latest[z].stamp > best.stamp)) best = latest[z];
+          });
+          if (best && (!card.dataset.at || best.stamp >= Date.parse(card.dataset.at))) {
+            var time = new Date(best.at).toLocaleString("ru-RU", {
+              timeZone: "Europe/Moscow", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit"
+            });
+            if (best.state === "open") card.dataset.stateOpen = "Временные ограничения сняты — " + time + " МСК";
+            else card.dataset.stateClosed = "Действуют временные ограничения. Сообщение от " + time + " МСК";
+            setCard(card, best.state, best.at);
           }
         });
         redraw();
@@ -675,7 +720,8 @@ SEARCH_ICON = ('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" '
 
 def airports_page(rows: list[dict], updated: str) -> str:
     closed = [row for row in rows if row["closed"]]
-    working = [row for row in rows if not row["closed"]]
+    working = [row for row in rows if not row["closed"] and row.get("state") == "open"]
+    unknown = [row for row in rows if not row["closed"] and row.get("state") != "open"]
     url = f"{SITE}/aeroporty/"
     title = "Какие аэропорты закрыты сейчас — список Росавиации онлайн"
     if closed:
@@ -687,7 +733,7 @@ def airports_page(rows: list[dict], updated: str) -> str:
               f"Росавиации, история закрытий за 30 дней, поиск.")
     else:
         description = (
-            f"Сейчас закрытых аэропортов нет. Статус {len(rows)} аэропортов "
+            f"Свежих подтверждений действующих ограничений нет. Статус {len(rows)} аэропортов "
             f"по официальным сообщениям Росавиации онлайн, история "
             f"ограничений за 30 дней, поиск.")
 
@@ -696,7 +742,7 @@ def airports_page(rows: list[dict], updated: str) -> str:
             f"Сейчас закрыт{'ы' if len(closed) > 1 else ''} "
             f"{len(closed)} {plural(len(closed), 'аэропорт', 'аэропорта', 'аэропортов')} из {len(rows)}")
     else:
-        hero_class, hero_title = "good", "Все аэропорты работают"
+        hero_class, hero_title = ("quiet" if unknown else "good"), "Свежих подтверждений действующих ограничений нет"
     hero = (
         f'<div class="hero {hero_class}" id="hero"><span class="dot"></span>'
         f'<div><div class="title" id="hero-title">{escape(hero_title)}</div>'
@@ -739,10 +785,13 @@ def airports_page(rows: list[dict], updated: str) -> str:
         '<ul class="status" id="airports-closed">'
         + "".join(airport_card(row) for row in closed)
         + "</ul></div>")
-    working_html = ('<div class="band">РАБОТАЮТ</div>'
+    working_html = ('<div class="band">ОГРАНИЧЕНИЯ СНЯТЫ</div>'
                     '<ul class="status" id="airports-open">'
                     + "".join(airport_card(row) for row in working)
                     + "</ul>")
+    unknown_html = ('<div class="band">НЕТ СВЕЖЕГО ПОДТВЕРЖДЕНИЯ</div>'
+                    '<ul class="status" id="airports-unknown">'
+                    + "".join(airport_card(row) for row in unknown) + "</ul>")
     ld = [
         breadcrumb_ld("Аэропорты", url),
         faq_ld(faq),
@@ -764,6 +813,7 @@ def airports_page(rows: list[dict], updated: str) -> str:
       <div id="airports">
       {closed_html}
       {working_html}
+      {unknown_html}
       </div>
       <div class="note">
         <h2>Что значит «аэропорт закрыт»</h2>

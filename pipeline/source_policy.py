@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from .airport_time import FAVT_SOURCES
 
 AIR_THREATS = frozenset({"uav", "fpv", "rocket", "kab", "bek", "aviation"})
 OPASNOE_NEBO_RE = re.compile(r"\bопасное\s+небо\b", re.IGNORECASE)
@@ -37,10 +38,14 @@ EXPLICIT_ALERT_RE = re.compile(
 )
 
 
-def accepts_observation(observation, *, strict: bool = False) -> bool:
+def accepts_observation(observation, *, strict: bool = False,
+                        source_key: str | None = None) -> bool:
     """Разрешить наблюдение с учётом типа источника."""
     if not observation.relevant:
         return False
+    # Статус аэропорта подтверждает регулятор, а не число перепечаток.
+    if observation.threat_type == "airport":
+        return source_key in FAVT_SOURCES
     if not strict:
         return True
     if OPASNOE_NEBO_RE.search(observation.body):

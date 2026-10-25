@@ -51,6 +51,27 @@ def test_fresh_event_burns_at_full():
     assert zone_fade(ago(seconds=0), NOW) == 1.0
 
 
+def test_live_feed_retains_unresolved_airport_beyond_normal_window(tmp_path, monkeypatch):
+    from api import server
+    from pipeline.db import connect
+    path = tmp_path / "airports.db"
+    connection = connect(path)
+    connection.execute("INSERT INTO zones(id,level,name_ru) VALUES ('airport','place','Аэропорт')")
+    for eid, hours, resolved in (("long", 8, None), ("expired", 25, None),
+                                 ("old_opened", 8, ago(hours=7))):
+        connection.execute(
+            "INSERT INTO events(id,first_seen_at,last_seen_at,resolved_at,status,signal_type,threat_type,"
+            "severity,confidence,source_count,zone_id,zone_path) VALUES (?,?,?,?,'active','infra','airport',"
+            "2,0.72,1,'airport','[\"airport\"]')", (eid, ago(hours=hours), ago(hours=hours), resolved))
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(server, "DB_PATH", path)
+    monkeypatch.setattr(server, "now_utc", lambda: NOW)
+    state = server.build_state()
+    assert [event["id"] for event in state["events"]] == ["long"]
+    assert server.event_rows(NOW - server.ACTIVE_WINDOW) == []
+
+
 def test_district_goes_out_in_half_an_hour():
     """Борт пересекает средний район за полчаса.
 

@@ -150,6 +150,51 @@ def test_old_airport_closure_copy_does_not_overwrite_completed_history(db, geoco
     assert dict(db.execute("SELECT * FROM events").fetchone()) == before
 
 
+def test_new_official_airport_closure_is_not_echo_of_recent_opening(db, geocoder):
+    closed = "Аэропорт Азовский район. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов."
+    opened = closed.replace("ВВЕДЕНЫ", "СНЯТЫ")
+    for message_id, minute, text in ((1, 0, closed), (2, 2, opened), (3, 4, closed)):
+        post(db, message_id, "favt_info", minute, text=text)
+        sweep(db, geocoder, minute + 1)
+    events = db.execute("SELECT * FROM events ORDER BY first_seen_at").fetchall()
+    assert len(events) == 2
+    assert events[0]["resolved_at"] == (BASE + timedelta(minutes=2)).isoformat()
+    assert events[1]["resolved_at"] is None
+
+
+def test_ambiguous_civil_allclear_does_not_cancel_source_region(db, geocoder, monkeypatch):
+    from types import SimpleNamespace
+    import pipeline.incremental as incremental
+    source = SimpleNamespace(key="alpha", tier="regional", region="rostov")
+    monkeypatch.setattr(incremental, "sources_from_env", lambda: [source])
+    post(db, 1, "alpha", 0, text=DANGER)
+    sweep(db, geocoder, 1)
+    post(db, 2, "alpha", 2, text="Неизвестный посёлок и близлежащие — отбой опасности по БПЛА")
+    sweep(db, geocoder, 3)
+    assert db.execute("SELECT resolved_at FROM events").fetchone()[0] is None
+
+    import pipeline.rebuild as rebuilder
+    monkeypatch.setattr(rebuilder, "sources_from_env", lambda: [source])
+    rebuilder.rebuild(db)
+    assert db.execute("SELECT resolved_at FROM events").fetchone()[0] is None
+
+
+def test_full_airport_replay_orders_regulator_forward_by_original_time(db):
+    from pipeline.rebuild import rebuild
+    closed = "Аэропорт Азовский район. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов."
+    opened = closed.replace("ВВЕДЕНЫ", "СНЯТЫ")
+    for message_id, minute, text in ((1, 0, closed), (2, 30, opened),
+                                     (3, 480, opened), (4, 780, closed)):
+        post(db, message_id, "favt_info", minute, text=text)
+    db.execute("UPDATE raw_messages SET forwarded_at=? WHERE message_id=4",
+               ((BASE + timedelta(minutes=300)).isoformat(),))
+    db.commit()
+    rebuild(db)
+    events = db.execute("SELECT first_seen_at,resolved_at FROM events ORDER BY first_seen_at").fetchall()
+    assert len(events) == 2
+    assert events[1]["first_seen_at"] == (BASE + timedelta(minutes=300)).isoformat()
+    assert events[1]["resolved_at"] == (BASE + timedelta(minutes=480)).isoformat()
+
 def test_new_message_joins_event_from_previous_pass(db, geocoder):
     """Второй источник в окне слияния подтверждает событие, а не создает свое."""
     post(db, 1, "alpha", 0)

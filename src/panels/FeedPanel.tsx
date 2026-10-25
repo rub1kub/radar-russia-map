@@ -117,7 +117,7 @@ export function FeedPanel({
   };
 
   const live = apiOnline && state && !state.stale && !historyLabel;
-  const listed = zoneEvents.length ? zoneEvents : allEvents;
+  const listed = selectedZoneId || selectedName ? zoneEvents : allEvents;
 
   // Пока какая-то карточка раскрыта, порядок держится: читающему важнее,
   // чтобы список не уезжал под курсором, чем чтобы он был отсортирован

@@ -25,6 +25,20 @@ REGION_WIDE_CLEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+CIVIL_REGION_WIDE_CLEAR_RE = re.compile(
+    r"\b(?:по|на)\s+всей\s+территори\w*\s+(?:регион|област|кра[яй]|республик)\w*\b",
+    re.IGNORECASE,
+)
+
+CIVIL_CLEAR_NON_STATUS_RE = re.compile(
+    r"\b(?:скоро|будет|ожидается|планируется|возможен)\s+(?:\w+\s+){0,2}отбо\w*"
+    r"|\bотбо\w*\s+(?:ещ[её]\s+|пока\s+)?(?:нет|не\s+(?:было|объявлен|будет))"
+    r"|хотим\s+уточнить[^.!?]{0,100}?сигнал"
+    r"|мы\s+(?:вводим|используем)\s+сигнал"
+    r"|(?:сигнал|слово)[^.!?\n]{0,30}?(?:означает|обозначает)",
+    re.IGNORECASE,
+)
+
 # Регион в конструкции «Ртищево, примерно стык Саратовской/Пензенской
 # областей» уточняет положение точки, но не является самостоятельным
 # адресатом события. Если конкретного места нет, регионы сохраняются:
@@ -181,6 +195,29 @@ def resolve_observation_zones(geocoder, observation, home: str | None):
     zone = geocoder.zones[home]
     return [Resolved(home, "region", zone["name_ru"],
                      zone["lat"], zone["lon"], "источник")], True
+
+
+def civil_clear_guards(geocoder, observation, home: str | None,
+                       used_source_region: bool, tier: str) -> dict:
+    """Ограничения снятия гражданских предупреждений, не новых фиксаций."""
+    if observation.signal_type != "allclear":
+        return {}
+    from .geocode import preserved_zone_ids
+
+    excluded = preserved_zone_ids(geocoder, observation.place_phrases, home)
+    ancestors = {
+        ancestor for zone_id in excluded
+        for ancestor in geocoder.zone_path(zone_id)[1:]
+    }
+    explicit = (not used_source_region or (
+        tier == "official" and CIVIL_REGION_WIDE_CLEAR_RE.search(observation.body)))
+    if CIVIL_CLEAR_NON_STATUS_RE.search(observation.body):
+        explicit = False
+    return {
+        "civil_scope_explicit": bool(explicit),
+        "civil_excluded": frozenset(excluded),
+        "civil_excluded_ancestors": frozenset(ancestors),
+    }
 
 
 def build_fallback(connection: sqlite3.Connection, sources) -> dict[str, str]:

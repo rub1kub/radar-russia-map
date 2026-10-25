@@ -47,6 +47,7 @@ from api.push import deliver_loop, router as push_router
 from api.telegram import (deliver_loop as telegram_loop, router as telegram_router,
                           use_snapshot as telegram_snapshot)
 from pipeline.db import DB_PATH
+from pipeline.airport_time import AIRPORT_STATUS_TTL
 from pipeline.fuse import Fuser
 from pipeline.incremental import resolve_networks
 from pipeline.provenance import counted, walk
@@ -296,12 +297,15 @@ def latest_moment() -> datetime:
 
 
 def event_rows(since: datetime, limit: int = 400,
-               until: datetime | None = None) -> list[dict]:
+               until: datetime | None = None, *,
+               open_airports_only: bool = False) -> list[dict]:
     # until режет запрос сверху. Без него сутки двухмесячной давности
     # вытягивали ВСЕ события с того дня по сегодняшний — десятки тысяч
     # строк ради нескольких сотен нужных, и перемотка на дальний день
     # заметно висла.
     bound = " AND e.first_seen_at < ?" if until else ""
+    airport = (" AND e.threat_type = 'airport' AND e.resolved_at IS NULL"
+               if open_airports_only else "")
     params: tuple = (since.isoformat(), until.isoformat(), limit) if until \
         else (since.isoformat(), limit)
     rows = query(
@@ -314,7 +318,7 @@ def event_rows(since: datetime, limit: int = 400,
                parent.name_ru AS parent_name
         FROM events e JOIN zones z ON z.id = e.zone_id
         LEFT JOIN zones parent ON parent.id = z.parent_id
-        WHERE e.last_seen_at >= ?{bound}
+        WHERE e.last_seen_at >= ?{bound}{airport}
         ORDER BY e.last_seen_at DESC LIMIT ?
         """,
         params,
@@ -381,6 +385,10 @@ def build_state() -> dict:
     # выходить?» оставался без ответа. Закрытые события держим ещё полчаса —
     # лента показывает их как отбой, карту они не красят.
     fresh = event_rows(now - ACTIVE_WINDOW)
+    # Незавершённое ограничение аэропорта не исчезает из-за шестичасового
+    # окна ленты. Его срок совпадает с официальной страницей аэропортов.
+    airport_rows = event_rows(now - AIRPORT_STATUS_TTL, limit=100, open_airports_only=True)
+    fresh = list({row["id"]: row for row in [*fresh, *airport_rows]}.values())
     events = []
     # Один отбой на зону и угрозу. Отбой отменяет всё, что в этой зоне по
     # этой угрозе открыто, и закрывает разом несколько событий — в ленте
@@ -574,24 +582,33 @@ def history_days(limit: int = Query(60, ge=1, le=400)):
     """
     rows = query(
         f"""
+        WITH day_sources AS (
+            SELECT date(e.first_seen_at, '+3 hours') AS day, es.source_key
+            FROM events e JOIN event_sources es ON es.event_id = e.id
+            UNION
+            SELECT day, source_key FROM history_day_sources
+        ), coverage AS (
+            SELECT day, COUNT(*) AS sources FROM day_sources GROUP BY day
+        ), activity AS (
         SELECT date(datetime(e.first_seen_at, '+3 hours')) AS day,
-               COUNT(DISTINCT e.id) AS events,
+               COUNT(*) AS events,
                -- Точечные фиксации, перехваты и удары (severity >= 8 бывает
                -- только у них) — внутренняя шкала полосы дней. Счёт всех
                -- событий меряет болтовню эфира: 97 тревог тихого дня
                -- перевешивали ночной налёт. Числом наружу шкала не идёт:
                -- сколько бортов на самом деле, не знает никто.
-               COUNT(DISTINCT CASE WHEN e.severity >= 8
+               COUNT(CASE WHEN e.severity >= 8
                      AND z.level != 'region' THEN e.id END) AS heavy,
                MAX(e.severity) AS max_severity,
-               COUNT(DISTINCT es.source_key) AS sources,
-               COUNT(DISTINCT CASE WHEN e.source_count > 1 THEN e.id END) AS confirmed
+               COUNT(CASE WHEN e.source_count > 1 THEN e.id END) AS confirmed
         FROM events e
         LEFT JOIN zones z ON z.id = e.zone_id
-        LEFT JOIN event_sources es ON es.event_id = e.id
         GROUP BY day
-        HAVING sources >= {MIN_DAY_SOURCES}
-        ORDER BY day DESC
+        )
+        SELECT a.day, a.events, a.heavy, a.max_severity, c.sources, a.confirmed
+        FROM activity a JOIN coverage c ON c.day = a.day
+        WHERE c.sources >= {MIN_DAY_SOURCES}
+        ORDER BY a.day DESC
         LIMIT ?
         """,
         (limit,),

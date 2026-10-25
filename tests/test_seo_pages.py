@@ -77,6 +77,63 @@ def test_collects_region_city_and_daily_stats_in_one_pass(monkeypatch):
     assert days["2026-08-09"]["recent"][0][2] == "detection"
 
 
+def test_faq_does_not_call_danger_or_airport_restrictions_an_alarm(monkeypatch):
+    monkeypatch.setattr(seo, "now_utc", lambda: datetime(2026, 8, 9, 12, tzinfo=timezone.utc))
+    connection = _connection()
+    connection.execute("UPDATE events SET signal_type='danger' WHERE signal_type='alarm'")
+    connection.execute("UPDATE events SET signal_type='infra', threat_type='airport' WHERE signal_type='detection'")
+    regions, cities, _ = seo.collect_stats(connection)
+    for stats in (regions["region"], cities["gorodskoy_okrug_testograd_region"]):
+        assert stats["today"] == 5
+        assert stats["alarms_today"] == 0
+        html, structured = seo.faq_block("Тестовая область", stats)
+        qa = json.loads(structured)["mainEntity"]
+        today = next(q for q in qa if q["name"].startswith("Была ли сегодня"))
+        assert "не зарегистрировано" in today["acceptedAnswer"]["text"]
+        assert "Да:" not in today["acceptedAnswer"]["text"]
+        assert today["acceptedAnswer"]["text"] in html
+
+
+def test_faq_uses_alarm_times_and_excludes_resolved_and_future_status(monkeypatch):
+    monkeypatch.setattr(seo, "now_utc", lambda: datetime(2026, 8, 9, 12, tzinfo=timezone.utc))
+    connection = _connection()
+    connection.execute("DELETE FROM events")
+    for signal, at, resolved in (
+        ("alarm", "10:15", None),
+        ("alarm", "11:30", "2026-08-09T11:40:00+00:00"),
+        ("infra", "12:00", None),
+        ("alarm", "12:05", None),
+    ):
+        connection.execute(
+            "INSERT INTO events VALUES (?, 'testograd', ?, 'unknown', ?, ?)",
+            (json.dumps(["testograd", "gorodskoy_okrug_testograd_region", "region"]),
+             signal, f"2026-08-09T{at}:00+00:00", resolved))
+    regions, cities, _ = seo.collect_stats(connection)
+    for stats in (regions["region"], cities["gorodskoy_okrug_testograd_region"]):
+        assert stats["events"] == 3
+        assert stats["alarms_today"] == 2
+        assert stats["recent_open_alarms"] == 1
+        _, structured = seo.faq_block("Тестовая область", stats)
+        qa = json.loads(structured)["mainEntity"]
+        current = next(q for q in qa if q["name"].startswith("Есть ли сейчас"))["acceptedAnswer"]["text"]
+        today = next(q for q in qa if q["name"].startswith("Была ли сегодня"))["acceptedAnswer"]["text"]
+        assert "13:15" in current and "без зафиксированного отбоя" in current
+        assert "2 сообщения" in today and "14:30" in today
+        assert "15:00" not in today
+
+
+def test_alarm_day_is_counted_in_moscow_timezone(monkeypatch):
+    monkeypatch.setattr(seo, "now_utc", lambda: datetime(2026, 8, 9, 21, 30, tzinfo=timezone.utc))
+    connection = _connection()
+    connection.execute(
+        "INSERT INTO events VALUES (?, 'testograd', 'alarm', 'unknown', ?, NULL)",
+        (json.dumps(["testograd", "gorodskoy_okrug_testograd_region", "region"]),
+         "2026-08-09T21:05:00+00:00"))
+    regions, _, _ = seo.collect_stats(connection)
+    assert regions["region"]["alarms_today"] == 1
+    assert regions["region"]["last_alarm_today"] == "2026-08-09T21:05:00+00:00"
+
+
 def test_city_catalog_requires_real_activity_and_population(monkeypatch):
     monkeypatch.setattr(
         seo, "now_utc",

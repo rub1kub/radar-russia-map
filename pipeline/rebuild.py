@@ -18,9 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 
 from config import sources_from_env  # noqa: E402
 
-from .airport_time import AirportNoticeTimes  # noqa: E402
+from .airport_time import AirportNoticeTimes, order_airport_reposts  # noqa: E402
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
+from .history import remember_day_sources  # noqa: E402
 from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
                       destination_zone_ids, forecast_zone_ids)
 from .networks import load_networks  # noqa: E402
@@ -30,7 +31,7 @@ from .routes import extract_route, store_route  # noqa: E402
 from .source_policy import accepts_observation  # noqa: E402
 from .timeutil import now_utc, parse_utc  # noqa: E402
 from .source_region import (build_fallback,  # noqa: E402
-                            resolve_observation_zones)
+                            civil_clear_guards, resolve_observation_zones)
 
 TIERS = {source.key: source.tier for source in sources_from_env()}
 NETWORKS = {source.key: source.network for source in sources_from_env()}
@@ -83,6 +84,11 @@ def import_jsonl(connection, raw_dir: Path) -> int:
 
 
 def rebuild(connection) -> dict:
+    # Архив без исходников пересчитать невозможно, но удалять его нельзя.
+    archived = connection.execute(
+        "SELECT * FROM events e WHERE NOT EXISTS"
+        " (SELECT 1 FROM event_sources s WHERE s.event_id=e.id)").fetchall()
+    remember_day_sources(connection)
     reset_derived(connection)
     geocoder = Geocoder(connection)
     fallback = build_fallback(connection, sources_from_env())
@@ -93,13 +99,15 @@ def rebuild(connection) -> dict:
         "SELECT id, source_key, posted_at, forwarded_at, text FROM raw_messages ORDER BY posted_at"
     ).fetchall()
     airport_times = AirportNoticeTimes(connection)
+    order_airport_reposts(rows, airport_times)
 
     stats = {"messages": len(rows), "irrelevant": 0, "ungeocoded": 0, "observations": 0}
 
     for row in rows:
         observation = parse(row["text"])
         if not accepts_observation(
-            observation, strict=row["source_key"] in STRICT_ALERTS
+            observation, strict=row["source_key"] in STRICT_ALERTS,
+            source_key=row["source_key"],
         ):
             stats["irrelevant"] += 1
             continue
@@ -109,6 +117,9 @@ def rebuild(connection) -> dict:
         home = fallback.get(row["source_key"])
         resolved, used_source_region = resolve_observation_zones(
             geocoder, observation, home)
+        clear_guards = civil_clear_guards(
+            geocoder, observation, home, used_source_region,
+            TIERS.get(row["source_key"], "regional"))
         # Каталог городов, а не оповещение — см. такой же страж в incremental.
         if len(resolved) > MAX_RESOLVED_ZONES:
             stats["catalog"] = stats.get("catalog", 0) + 1
@@ -182,6 +193,7 @@ def rebuild(connection) -> dict:
                 lat=item.lat,
                 lon=item.lon,
                 level=item.level,
+                **clear_guards,
             )
             stats["observations"] += 1
 
@@ -207,9 +219,19 @@ def rebuild(connection) -> dict:
                 " VALUES (?,?,?,?,?)",
                 (event.id, raw_id, source_key, contributed.isoformat(), role),
             )
+    preserved = 0
+    if archived:
+        columns = archived[0].keys()
+        before = connection.total_changes
+        connection.executemany(
+            "INSERT OR IGNORE INTO events (" + ",".join(columns) + ") VALUES ("
+            + ",".join("?" for _ in columns) + ")",
+            [tuple(row) for row in archived])
+        preserved = connection.total_changes - before
     connection.commit()
 
-    stats["events"] = len(fuser.events)
+    stats["events"] = len(fuser.events) + preserved
+    stats["archived_events_preserved"] = preserved
     stats["multi_source"] = sum(1 for event in fuser.events if len(event.sources) > 1)
     return stats
 
