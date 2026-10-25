@@ -264,7 +264,7 @@ SOURCES: list[Source] = [
     Source("radar_sochiii", "radar_sochiii", "Радар Сочи(Адлер, Лазаревское, Сириус)", "regional", 64991, region="sochi", network=None),
     Source("sochiradar", "sochiradar", "📣 СОЧИ РАДАР", "regional", 35907, region="sochi", network=None),
     Source("sochi_radar", "sochi_radar", "Радар Сочи | Адлер", "regional", 5500, region="sochi", network=None),
-    Source("radar23region", "radar23region", "Радар Сочи Краснодарский край 🚨🚨🚨 БПЛА", "regional", 643, region="sochi", network=None),
+    # radar23region отключён владельцем 25.10.2026; исторический корпус сохранён.
     Source("radar_engels", "radar_engels", "Радар Энгельс", "regional", 26934, region="saratov", network=None),
     Source("radar_krasdar", "radar_krasdar", "Краснодарский Радар", "regional", 23101, region="krasnodar", network=None),
     Source("krasnodarsirens", "krasnodarsirens", "Радар Краснодарского края", "regional", 13432, region="krasnodar", network=None),
