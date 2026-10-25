@@ -78,3 +78,19 @@ def test_active_transaction_is_not_implicitly_committed(tmp_path):
         install(live, paths[1])
     assert live.in_transaction
     live.rollback()
+
+
+def test_failure_after_deleting_old_rows_restores_events_and_provenance(tmp_path):
+    paths, (live, shadow) = databases(tmp_path)
+    event(live, "old")
+    event(shadow, "new")
+    shadow.execute("INSERT INTO raw_messages(id,source_key,message_id,posted_at,text) "
+                   "VALUES (2,'source',2,'2026-10-25T10:01:00Z','missing in live')")
+    shadow.execute("UPDATE event_sources SET raw_message_id=2")
+    shadow.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        install(live, paths[1])
+    assert [row[0] for row in live.execute("SELECT id FROM events")] == ["old"]
+    assert [row[0] for row in live.execute("SELECT event_id FROM event_sources")] == ["old"]
+    assert live.execute("SELECT COUNT(*) FROM history_day_sources").fetchone()[0] == 0
+    assert not live.in_transaction
