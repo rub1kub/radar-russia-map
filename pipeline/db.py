@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS raw_messages (
     received_at  TEXT,
     text         TEXT    NOT NULL,
     views        INTEGER,
+    forwarded_at TEXT,
     UNIQUE (source_key, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_raw_posted ON raw_messages (posted_at);
@@ -116,6 +117,7 @@ DERIVED_TABLES = ("event_sources", "events", "routes")
 # существующую таблицу не трогает, поэтому новые поля доливаются вручную.
 MIGRATIONS = (
     ("events", "massive", "INTEGER NOT NULL DEFAULT 0"),
+    ("raw_messages", "forwarded_at", "TEXT"),
 )
 
 

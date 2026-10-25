@@ -23,7 +23,7 @@ from config import RAW_DIR, build_client, ensure_dirs, require_session, sources_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.db import connect  # noqa: E402
-from pipeline.timeutil import now_utc, utc_iso  # noqa: E402
+from pipeline.timeutil import forwarded_iso, now_utc, utc_iso  # noqa: E402
 
 
 def append(path, record: dict) -> None:
@@ -35,12 +35,13 @@ def store(connection, source_key: str, chat_id: int, message) -> None:
     """Сырое сообщение в raw_messages. Производное пересобирает rebuild.py."""
     connection.execute(
         "INSERT OR IGNORE INTO raw_messages"
-        " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
-        " VALUES (?,?,?,?,?,?,?)",
+        " (source_key, chat_id, message_id, posted_at, received_at, text, views, forwarded_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
         (source_key, chat_id, message.id,
          utc_iso(message.date) if message.date else now_utc().isoformat(),
          now_utc().isoformat(),
-         message.text or message.caption or "", message.views),
+         message.text or message.caption or "", message.views,
+         forwarded_iso(message)),
     )
     connection.commit()
 
@@ -80,6 +81,7 @@ async def main() -> None:
                 "message_id": message.id,
                 "date": utc_iso(message.date) if message.date else None,
                 "received_at": now_utc().isoformat(),
+                "forwarded_at": forwarded_iso(message),
                 "text": text,
             }
             append(live_path, record)

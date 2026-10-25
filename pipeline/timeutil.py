@@ -24,6 +24,13 @@ def utc_iso(value: datetime) -> str:
     return to_utc(value).isoformat()
 
 
+def forwarded_iso(message) -> str | None:
+    """Время оригинала Telegram без deprecated-свойства forward_date."""
+    origin = getattr(message, "forward_origin", None)
+    moment = getattr(origin, "date", None)
+    return utc_iso(moment) if moment else None
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 

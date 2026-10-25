@@ -38,13 +38,13 @@ from statistics import median
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.db import DB_PATH, ROOT
+from pipeline.airport_time import FAVT_SOURCES
 from pipeline.timeutil import MSK, now_utc
 
 SITE = "https://tihoenebo.com"
 OUT = ROOT / "dist"
 WINDOW_DAYS = 30
 BOT = "Tihoeneborobot"
-FAVT_SOURCES = ("favt_info", "ch1938794947")
 # Закрытие без снятия старше суток — скорее пропущенное сообщение, чем
 # сутки без полётов: такой аэропорт не показывается закрытым.
 STALE_CLOSE_HOURS = 24

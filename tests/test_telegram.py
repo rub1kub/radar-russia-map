@@ -23,15 +23,17 @@ def _fresh(minutes_ago: float = 0) -> str:
 
 
 @pytest.fixture
-def outbox(monkeypatch):
+def outbox(monkeypatch, tmp_path):
     """Перехватываем отправку: Bot API в тестах дёргать нечем и незачем."""
     sent = []
+    monkeypatch.setattr(telegram, "DB_PATH", tmp_path / "tg.db")
     monkeypatch.setattr(telegram, "send",
                         lambda chat_id, text, keyboard=None: sent.append((chat_id, text)))
     return sent
 
 
-def test_help_answers_unknown_command(outbox):
+def test_help_answers_unknown_command(outbox, monkeypatch):
+    monkeypatch.setattr(telegram, "find_zone", lambda query: None)
     telegram.handle_text(1, "/абракадабра")
     assert outbox and "Тихое небо" in outbox[0][1]
 

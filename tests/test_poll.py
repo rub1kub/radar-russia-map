@@ -75,6 +75,35 @@ def test_media_only_message_still_advances_cursor(tmp_path):
     assert last_seen(connection, "source") == 101
 
 
+def test_poll_preserves_original_forward_time_separately_from_post_date(tmp_path):
+    connection = connect(tmp_path / "radar.db")
+    ensure_state(connection)
+    original = datetime(2026, 8, 8, 2, 28, tzinfo=timezone.utc)
+    forwarded = message(101)
+    forwarded.date = original + timedelta(hours=7)
+    forwarded.forward_origin = SimpleNamespace(date=original)
+    source = Source("source", "source_name", "Источник")
+
+    asyncio.run(poll_source(HistoryClient([forwarded]), connection, source))
+
+    row = connection.execute("SELECT posted_at, forwarded_at FROM raw_messages").fetchone()
+    assert row["posted_at"] == forwarded.date.isoformat()
+    assert row["forwarded_at"] == original.isoformat()
+
+
+def test_push_preserves_original_forward_time(tmp_path):
+    from poll import live_handler
+
+    connection = connect(tmp_path / "radar.db")
+    forwarded = message(101)
+    forwarded.forward_origin = SimpleNamespace(date=forwarded.date - timedelta(hours=7))
+    handler = live_handler(connection, {-1001: "source"})
+    asyncio.run(handler(None, forwarded))
+
+    row = connection.execute("SELECT forwarded_at FROM raw_messages").fetchone()
+    assert row["forwarded_at"] == forwarded.forward_origin.date.isoformat()
+
+
 def test_tiered_cycle_polls_hot_always_and_cold_in_rotation(tmp_path):
     """Горячие — каждый круг, тихий хвост — каждый четвёртый, лежачие реже.
 

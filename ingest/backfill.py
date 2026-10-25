@@ -34,7 +34,7 @@ from pyrogram.errors import FloodWait, RPCError
 
 from config import build_client, ensure_dirs, require_session, sources_from_env
 from pipeline.db import connect
-from pipeline.timeutil import now_utc, parse_utc, to_utc, utc_iso
+from pipeline.timeutil import forwarded_iso, now_utc, parse_utc, to_utc, utc_iso
 from poll import known_chat_id
 
 # Нахлёст окна в режиме --gap. Сборщик мог оборваться посреди прохода:
@@ -174,6 +174,7 @@ async def scan_source(
             received_at,
             message.text or message.caption or "",
             message.views,
+            forwarded_iso(message),
         ))
     return rows, scanned
 
@@ -207,8 +208,8 @@ async def run(
                 if apply and rows:
                     cursor = connection.executemany(
                         "INSERT OR IGNORE INTO raw_messages"
-                        " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
-                        " VALUES (?,?,?,?,?,?,?)",
+                        " (source_key, chat_id, message_id, posted_at, received_at, text, views, forwarded_at)"
+                        " VALUES (?,?,?,?,?,?,?,?)",
                         rows,
                     )
                     connection.commit()

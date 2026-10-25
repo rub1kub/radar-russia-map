@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 
 from config import sources_from_env  # noqa: E402
 
+from .airport_time import AirportNoticeTimes  # noqa: E402
 from .db import connect  # noqa: E402
 from .fuse import CLEAR_ECHO, Event, Fuser  # noqa: E402
 from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
@@ -437,12 +438,14 @@ def run_once(
     # Порядок разбора — по времени публикации, как в rebuild: окна слияния
     # смотрят вперед, и перемешанная лента дала бы другие события.
     pending = connection.execute(
-        "SELECT id, source_key, posted_at, text FROM raw_messages"
+        "SELECT id, source_key, posted_at, forwarded_at, text FROM raw_messages"
         " WHERE id > ? ORDER BY posted_at, id",
         (last_id,),
     ).fetchall()
 
     rows, watermark = ready_batch(pending, now, grace)
+    airport_times = AirportNoticeTimes(
+        connection, min((parse_utc(row["posted_at"]) for row in rows), default=now))
 
     fuser, restored = restore_fuser(connection, tiers)
     # Регион источника: разводит тёзок при разборе и подхватывает сообщения
@@ -490,7 +493,7 @@ def run_once(
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)
 
-        moment = parse_utc(row["posted_at"])
+        moment = airport_times.moment(row, observation)
 
         # Зона-адресат («далее в направлении X») борт ещё не видит:
         # ей достаётся «опасность», а не сигнал сообщения.

@@ -2298,6 +2298,14 @@ def test_airport_clear_is_targeted():
     assert fuser3.events[0].resolved_at is None
 
 
+def test_reposted_airport_opening_does_not_cancel_more_recent_closure():
+    fuser = Fuser()
+    add(fuser, 0, "a", signal="infra", severity=2, threat="airport")
+    add(fuser, 5, "b", signal="infra", severity=2, threat="airport")
+    add(fuser, 2, "c", signal="allclear", severity=0, threat="airport")
+    assert fuser.events[0].resolved_at is None
+
+
 def test_infra_does_not_bridge_via_unknown():
     """«unknown» не мостит infra с чем угодно несвязанным.
 

@@ -113,6 +113,28 @@ def test_second_pass_without_new_messages_changes_nothing(db, geocoder):
     assert read_watermark(db) == 1
 
 
+def test_airport_reprint_uses_original_time_in_live_pipeline(db, geocoder):
+    closed = "Аэропорт Азовский район. ВВЕДЕНЫ временные ограничения на прием и выпуск воздушных судов."
+    opened = closed.replace("ВВЕДЕНЫ временные", "СНЯТЫ дополнительные временные")
+    post(db, 1, "favt_info", 0, text=closed)
+    sweep(db, geocoder, 1)
+    post(db, 2, "favt_info", 2, text=opened)
+    sweep(db, geocoder, 3)
+    event = db.execute("SELECT * FROM events").fetchone()
+    assert event["resolved_at"] == (BASE + timedelta(minutes=2)).isoformat()
+
+    # Новое закрытие позже оригинального открытия.
+    post(db, 3, "favt_info", 120, text=closed)
+    sweep(db, geocoder, 121)
+    post(db, 4, "beta", 180, text=opened)
+    sweep(db, geocoder, 181)
+
+    events = db.execute("SELECT * FROM events ORDER BY first_seen_at").fetchall()
+    assert len(events) == 2
+    assert events[1]["resolved_at"] is None
+    assert events[1]["last_seen_at"] == (BASE + timedelta(minutes=120)).isoformat()
+
+
 def test_new_message_joins_event_from_previous_pass(db, geocoder):
     """Второй источник в окне слияния подтверждает событие, а не создает свое."""
     post(db, 1, "alpha", 0)

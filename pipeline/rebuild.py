@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 
 from config import sources_from_env  # noqa: E402
 
+from .airport_time import AirportNoticeTimes  # noqa: E402
 from .db import connect, counts, reset_derived  # noqa: E402
 from .fuse import Fuser  # noqa: E402
 from .geocode import (Geocoder, coarsen_intercept,  # noqa: E402
@@ -67,13 +68,14 @@ def import_jsonl(connection, raw_dir: Path) -> int:
             source_key = row.get("source") or fallback_key
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO raw_messages"
-                " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
-                " VALUES (?,?,?,?,?,?,?)",
+                " (source_key, chat_id, message_id, posted_at, received_at, text, views, forwarded_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
                 # Метка нормализуется на входе: в JSONL могут лежать записи
                 # старого формата — наивное локальное время.
                 (source_key, row.get("chat_id"), row["message_id"],
                  parse_utc(row["date"]).isoformat(),
-                 row.get("received_at"), row["text"], row.get("views")),
+                 row.get("received_at"), row["text"], row.get("views"),
+                 row.get("forwarded_at")),
             )
             added += cursor.rowcount
     connection.commit()
@@ -88,8 +90,9 @@ def rebuild(connection) -> dict:
     fuser = Fuser()
 
     rows = connection.execute(
-        "SELECT id, source_key, posted_at, text FROM raw_messages ORDER BY posted_at"
+        "SELECT id, source_key, posted_at, forwarded_at, text FROM raw_messages ORDER BY posted_at"
     ).fetchall()
+    airport_times = AirportNoticeTimes(connection)
 
     stats = {"messages": len(rows), "irrelevant": 0, "ungeocoded": 0, "observations": 0}
 
@@ -123,7 +126,7 @@ def rebuild(connection) -> dict:
             store_route(connection, row["id"], row["source_key"],
                         row["posted_at"], observation, route)
 
-        moment = parse_utc(row["posted_at"])
+        moment = airport_times.moment(row, observation)
 
         # Зона-адресат («далее в направлении X») борт ещё не видит:
         # ей достаётся «опасность», а не сигнал сообщения.

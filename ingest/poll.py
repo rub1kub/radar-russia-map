@@ -27,7 +27,7 @@ from pyrogram.handlers import MessageHandler
 
 from config import build_client, ensure_dirs, require_session, sources_from_env
 from pipeline.db import connect
-from pipeline.timeutil import now_utc, utc_iso
+from pipeline.timeutil import forwarded_iso, now_utc, utc_iso
 
 # Сколько сообщений тянуть при первом знакомстве с каналом.
 FIRST_RUN_LIMIT = 40
@@ -111,6 +111,7 @@ async def fetch(client, source, peer, seen, limit) -> tuple[list[tuple], int]:
             source.key, message.chat.id, message.id,
             utc_iso(message.date) if message.date else now_utc().isoformat(),
             now_utc().isoformat(), text, message.views,
+            forwarded_iso(message),
         ))
     return rows, highest
 
@@ -151,8 +152,8 @@ async def poll_source(client, connection, source) -> int | None:
     if rows:
         connection.executemany(
             "INSERT OR IGNORE INTO raw_messages"
-            " (source_key, chat_id, message_id, posted_at, received_at, text, views)"
-            " VALUES (?,?,?,?,?,?,?)",
+            " (source_key, chat_id, message_id, posted_at, received_at, text, views, forwarded_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             rows,
         )
         remember_chat_id(connection, source.key, rows[0][1])
@@ -237,11 +238,12 @@ def live_handler(connection, key_by_chat: dict[int, str]):
         connection.execute(
             "INSERT OR IGNORE INTO raw_messages"
             " (source_key, chat_id, message_id, posted_at, received_at,"
-            " text, views)"
-            " VALUES (?,?,?,?,?,?,?)",
+            " text, views, forwarded_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             (source_key, message.chat.id, message.id,
              utc_iso(message.date) if message.date else now_utc().isoformat(),
-             now_utc().isoformat(), text, message.views),
+             now_utc().isoformat(), text, message.views,
+             forwarded_iso(message)),
         )
         connection.commit()
 

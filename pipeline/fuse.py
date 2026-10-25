@@ -279,6 +279,10 @@ class Fuser:
                 # подписчик получал отбой опасности, которой не видел.
                 if event.first_seen > moment:
                     continue
+                # Утреннее открытие, перепечатанное днём, не отменяет
+                # более позднее закрытие того же аэропорта.
+                if cleared == "airport" and event.last_seen > moment:
+                    continue
                 if observation.signal_type == "retracted":
                     if event.zone_id != zone_id:
                         continue
