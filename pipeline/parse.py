@@ -973,6 +973,14 @@ DETECTION_PATTERN = (
 )
 DETECTION_RE = re.compile(DETECTION_PATTERN, re.IGNORECASE)
 
+# Наблюдение вертолёта без утверждения об опасности не является угрозой.
+# Удаляется только нейтральная фраза; отдельное предупреждение сохраняется.
+NEUTRAL_SKY_RE = re.compile(
+    r"\bвертол[её]т\w*\s+в\s+небе\b"
+    r"|\bв\s+небе\s+вертол[её]т\w*\b",
+    re.IGNORECASE,
+)
+
 # Советы «сидите в укрытии» — маркеры тревоги, которые ленты дописывают к
 # любому сигналу. «БПЛА зафиксирован в районе… не подходите к окнам» —
 # фиксация с инструкцией, а не объявленная тревога: тревога стоит в очереди
@@ -2296,6 +2304,12 @@ def parse(text: str) -> Observation:
         if own_forces and threat == "unknown":
             threat = "uav"
     if signal == "unknown":
+        observation.relevant = False
+        return observation
+    if (signal == "detection" and threat == "unknown"
+            and NEUTRAL_SKY_RE.search(clean)
+            and classify_signal(NEUTRAL_SKY_RE.sub(" ", clean))[0] == "unknown"):
+        # Не allclear/retracted: ни категория, ни отмена здесь не названы.
         observation.relevant = False
         return observation
     # «Меры безопасности», «внимание по БПЛА», «не подходите к обломкам» —
