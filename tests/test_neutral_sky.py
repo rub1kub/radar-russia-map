@@ -26,10 +26,15 @@ def test_neutral_helicopter_report_does_not_create_alert_or_clear(text):
     assert observation.signal_type not in {"allclear", "retracted"}
 
 
-def test_green_emoji_alone_does_not_cancel_independent_civil_warning():
-    observation = parse("Объявлена воздушная тревога. Вертолёт в небе 🟢")
+@pytest.mark.parametrize("text,signal", [
+    ("Объявлена воздушная тревога. Вертолёт в небе 🟢", "alarm"),
+    ("Опасность по БПЛА. Вертолёт в небе 🟢", "danger"),
+    ("Объявлена воздушная тревога.\nРадар | Наш чат 🟢", "alarm"),
+])
+def test_green_emoji_alone_does_not_cancel_independent_civil_warning(text, signal):
+    observation = parse(text)
     assert observation.relevant
-    assert observation.signal_type == "alarm"
+    assert observation.signal_type == signal
 
 
 def test_explicit_civil_allclear_is_not_replaced_by_neutral_phrase():
