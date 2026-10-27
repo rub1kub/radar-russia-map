@@ -973,11 +973,15 @@ DETECTION_PATTERN = (
 )
 DETECTION_RE = re.compile(DETECTION_PATTERN, re.IGNORECASE)
 
-# Наблюдение вертолёта без утверждения об опасности не является угрозой.
+# Нейтральное наблюдение вертолёта или гражданского рейса не является угрозой.
 # Удаляется только нейтральная фраза; отдельное предупреждение сохраняется.
 NEUTRAL_SKY_RE = re.compile(
     r"\bвертол[её]т\w*\s+в\s+небе\b"
-    r"|\bв\s+небе\s+вертол[её]т\w*\b",
+    r"|\bв\s+небе\s+вертол[её]т\w*\b"
+    r"|(?:\bв\s+(?:небе|воздухе)\s+)?"
+    r"\b(?:гражданск\w+\s+(?:авиаци\w*|самол[её]т\w*|борт\w*)"
+    r"|пассажирск\w+\s+(?:самол[её]т\w*|борт\w*|рейс\w*))"
+    r"(?:\s+(?:в\s+(?:небе|воздухе)|заход\w+\s+на\s+посадк\w*))?",
     re.IGNORECASE,
 )
 
@@ -1957,6 +1961,10 @@ def parse(text: str) -> Observation:
                 " ", FILMING_BAN_RE.sub(
                     " ", INSTRUCTION_RE.sub(" ", body))))))))
 
+    # «Гражданская авиация» не задаёт враждебный тип даже рядом с
+    # самостоятельным статусом аэропорта или гражданским предупреждением.
+    clean = NEUTRAL_SKY_RE.sub(" ", clean)
+
     # «Будет открыт» и «не сняты» не утверждают состоявшееся открытие.
     if AIR_INFRA_RE.search(clean):
         clean = NONCURRENT_AIRPORT_OPEN_RE.sub(" ", clean)
@@ -2304,12 +2312,6 @@ def parse(text: str) -> Observation:
         if own_forces and threat == "unknown":
             threat = "uav"
     if signal == "unknown":
-        observation.relevant = False
-        return observation
-    if (signal == "detection" and threat == "unknown"
-            and NEUTRAL_SKY_RE.search(clean)
-            and classify_signal(NEUTRAL_SKY_RE.sub(" ", clean))[0] == "unknown"):
-        # Не allclear/retracted: ни категория, ни отмена здесь не названы.
         observation.relevant = False
         return observation
     # «Меры безопасности», «внимание по БПЛА», «не подходите к обломкам» —
